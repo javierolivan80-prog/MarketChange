@@ -288,6 +288,19 @@ fórmula EV×confianza que `ev_engine.py` (Etapa 7) ya calculaba y persistía en
 usaba un tamaño fijo (1.5%/5%) sin mirar ni el EV ni la confianza). Escribe en
 `portfolio_trades` + `portfolio_equity_curve`, junto con las otras 3:
 
+**Circuit-breaker de drawdown de cartera** (hallazgo de auditoría, prioridad
+máxima — protección de capital): si el drawdown pico-a-valle de la equity de
+UNA versión alcanza el 15%
+(`portfolio_simulator.DRAWDOWN_CIRCUIT_BREAKER_PCT`), esa versión deja de
+abrir posiciones nuevas hasta que la equity se recupere por encima del
+umbral — las posiciones ya abiertas se siguen gestionando con sus reglas
+normales (TP/SL/trailing/max holding), no se liquidan de golpe. La
+recuperación es automática (se recalcula día a día contra el pico histórico
+de la corrida, no hay ningún flag que resetear a mano dentro de una misma
+simulación — ver el docstring de la constante para el razonamiento
+completo). Se persiste día a día en `portfolio_equity_curve.circuit_breaker_active`
+y se resume en `n_days_circuit_breaker_active` del reporte por versión.
+
 ```bash
 python -m pipeline.backtest.portfolio_report
 ```

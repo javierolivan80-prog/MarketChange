@@ -10,6 +10,7 @@ import pytest
 
 from pipeline.backtest.portfolio_simulator import (
     COMMISSION_BPS_ROUND_TRIP,
+    DRAWDOWN_CIRCUIT_BREAKER_PCT,
     OpenPosition,
     _build_entry_plan,
     _resolve_forced_close,
@@ -18,6 +19,7 @@ from pipeline.backtest.portfolio_simulator import (
     compute_tp_sl_prices,
     consolidate_trade_record,
     gain_pct,
+    is_circuit_breaker_active,
     open_position,
     step_position_forward,
 )
@@ -416,3 +418,46 @@ def test_resolve_forced_close_skips_intermediate_gap_to_find_valid_price():
     assert exit_date == D0 + timedelta(days=2)
     assert exit_price == 110.0
     assert exit_reason == "MAX_HOLDING"
+
+
+# ---------------------------------------------------------------------------
+# is_circuit_breaker_active — circuit-breaker de drawdown de cartera
+# (hallazgo de auditoría, prioridad máxima: protección de capital). Ver
+# DRAWDOWN_CIRCUIT_BREAKER_PCT en el módulo para el razonamiento de diseño
+# (por qué 15%, por qué solo bloquea entradas, por qué la recuperación es
+# automática).
+# ---------------------------------------------------------------------------
+
+
+def test_circuit_breaker_inactive_when_no_drawdown():
+    assert is_circuit_breaker_active(peak_equity=100_000.0, current_equity=100_000.0) is False
+
+
+def test_circuit_breaker_inactive_below_threshold():
+    # -14.9% de drawdown, por debajo del 15% por defecto.
+    assert is_circuit_breaker_active(peak_equity=100_000.0, current_equity=85_100.0) is False
+
+
+def test_circuit_breaker_active_exactly_at_threshold():
+    # >= threshold, no > — el umbral en sí ya dispara el breaker.
+    assert is_circuit_breaker_active(peak_equity=100_000.0, current_equity=85_000.0) is True
+
+
+def test_circuit_breaker_active_above_threshold():
+    assert is_circuit_breaker_active(peak_equity=100_000.0, current_equity=70_000.0) is True
+
+
+def test_circuit_breaker_respects_custom_threshold_override():
+    """simulate_portfolio() puede pasar un circuit_breaker_pct distinto del
+    default de producción (ver su docstring) — confirma que un umbral más
+    laxo (30%) NO dispara donde el default (15%) sí lo haría."""
+    assert is_circuit_breaker_active(peak_equity=100_000.0, current_equity=70_000.0, threshold=0.50) is False
+    assert is_circuit_breaker_active(peak_equity=100_000.0, current_equity=70_000.0, threshold=DRAWDOWN_CIRCUIT_BREAKER_PCT) is True
+
+
+def test_circuit_breaker_degenerate_zero_peak_is_treated_as_active():
+    """peak_equity<=0 (cartera ya en cero o negativa) es un estado
+    degenerado — se trata como breaker activo en vez de dividir por cero
+    silenciosamente."""
+    assert is_circuit_breaker_active(peak_equity=0.0, current_equity=0.0) is True
+    assert is_circuit_breaker_active(peak_equity=-100.0, current_equity=-50.0) is True

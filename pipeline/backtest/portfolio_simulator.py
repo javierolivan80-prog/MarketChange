@@ -67,6 +67,53 @@ logger = logging.getLogger(__name__)
 
 COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
 
+# Circuit-breaker de drawdown de cartera (hallazgo de la auditoría — protección
+# de capital, prioridad máxima). Deliberadamente MÁS BAJO que
+# portfolio_report.MAX_DRAWDOWN_CEILING (0.25, el umbral al que un run se
+# declara "no recomendable" en el veredicto final): el propósito de un
+# circuit-breaker es frenar ANTES de llegar al punto en que la propia
+# estrategia se consideraría un fracaso, no coincidir con esa línea. Medido
+# pico-a-valle sobre la equity de LA VERSIÓN (Conservative/Aggressive/
+# Balanced/Dynamic se simulan por separado, cada una con su propio capital y
+# su propia curva de equity — no existe hoy un concepto de "cartera conjunta"
+# de las 4 versiones a la vez, así que el breaker es por versión, no global).
+#
+# Acción al saltar: SOLO bloquea entradas nuevas — las posiciones ya abiertas
+# se siguen gestionando con sus reglas normales (TP/SL/trailing/max holding).
+# Deliberado, no la opción más agresiva (forzar liquidación inmediata):
+# liquidar de golpe exigiría vender al close del día que dispara el breaker,
+# un precio que no se sabe si es ejecutable en la realidad (mismo principio
+# de "no inventar un precio" que ya sigue _resolve_forced_close) y añade su
+# propio riesgo de modelado. Bloquear entradas es el mecanismo más simple y
+# más difícil de implementar mal — para lo que existe, cortar la sangría de
+# CAPITAL NUEVO expuesto a una racha mala, es suficiente.
+#
+# Recuperación: automática por diseño, no por un flag persistente. El
+# drawdown se recalcula desde cero cada día contra el pico histórico de ESTA
+# corrida (peak_equity), así que en cuanto la equity se recupera por encima
+# del umbral, las entradas se reanudan solas al día siguiente — no hace falta
+# ningún "reset manual" dentro de una sola simulación. La noción de "reset
+# manual" tiene sentido para un futuro bot de trading EN VIVO con estado
+# persistente entre noches (algo que este proyecto no tiene todavía — el
+# pipeline recalcula la cartera completa desde cero en cada corrida nocturna,
+# ver portfolio_simulator.py y ARCHITECTURE_LEAN.md §2.5); el día que exista
+# ese estado persistente, "resetear" es simplemente volver a sembrar
+# peak_equity, y este mecanismo ya está preparado para eso (peak_equity es
+# una variable local, no algo hardcodeado).
+DRAWDOWN_CIRCUIT_BREAKER_PCT = 0.15  # 15%
+
+
+def is_circuit_breaker_active(peak_equity: float, current_equity: float, threshold: float = DRAWDOWN_CIRCUIT_BREAKER_PCT) -> bool:
+    """True si el drawdown actual (pico-a-valle, MISMA fórmula que
+    portfolio_metrics.compute_equity_metrics: (peak-balance)/peak) alcanza o
+    supera `threshold`. peak_equity<=0 es un estado degenerado (cartera ya
+    liquidada por completo) — se trata como breaker activo, no como división
+    por cero silenciosa."""
+    if peak_equity <= 0:
+        return True
+    drawdown = (peak_equity - current_equity) / peak_equity
+    return drawdown >= threshold
+
 
 def gain_pct(direction: str, entry_price: float, price: float) -> float:
     """Retorno %, con signo, del SUBYACENTE — misma convención que
@@ -446,12 +493,24 @@ def _resolve_forced_close(prices: dict[date, dict], entry_date: date, entry_pric
     return last_date, entry_price, "DATA_GAP"
 
 
-def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital: float = 100_000.0, sample: str | None = None) -> dict:
+def simulate_portfolio(
+    conn,
+    version: str,
+    run_batch_tag: str,
+    starting_capital: float = 100_000.0,
+    sample: str | None = None,
+    circuit_breaker_pct: float = DRAWDOWN_CIRCUIT_BREAKER_PCT,
+) -> dict:
     """Punto de entrada del backtest de cartera para UNA versión de
     estrategia. Ver docstring del módulo para la disciplina anti-look-ahead
     y las decisiones de diseño (orden de prioridad TP/SL/trailing, MTM de
     posiciones parcialmente cerradas, etc.). `sample`: ver
-    fetch_events_for_version — None (default) no filtra nada."""
+    fetch_events_for_version — None (default) no filtra nada.
+    `circuit_breaker_pct`: umbral del circuit-breaker de drawdown (ver
+    DRAWDOWN_CIRCUIT_BREAKER_PCT) — parametrizado explícitamente en vez de
+    leer siempre la constante, para poder probarlo con un umbral distinto
+    sin tocar el default de producción, y para que un operador pueda
+    experimentar con otro umbral sin editar código."""
     assert version in VERSIONS
 
     events = fetch_events_for_version(conn, version, sample=sample)
@@ -489,6 +548,8 @@ def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital:
     open_positions: dict[str, list[OpenPosition]] = {"CONSERVATIVE": [], "AGGRESSIVE": []}
     completed_trades: list[dict] = []
     equity_rows: list[dict] = []
+    peak_equity = starting_capital  # ver DRAWDOWN_CIRCUIT_BREAKER_PCT arriba
+    n_days_circuit_breaker_active = 0
 
     def portfolio_mtm(today: date) -> float:
         total = 0.0
@@ -522,28 +583,39 @@ def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital:
         # 2) Entradas — dimensionadas contra la equity de HOY tras las salidas
         # de hoy (spec: "rebalance: noche antes de apertura").
         equity_for_sizing = cash + portfolio_mtm(today)
-        for plan in entries_by_date.get(today, []):
-            style = plan["execution_style"]
-            if len(open_positions[style]) >= max_concurrent[style]:
-                continue  # sin hueco — la señal se descarta (max_concurrent del spec)
-            bar = ticker_cache[plan["ticker"]].get(today)
-            if bar is None or bar["open_raw"] is None:
-                continue
-            pos = open_position(
-                event_id=plan["event_id"], version=version, execution_style=style, direction=plan["direction"],
-                ticker=plan["ticker"], entry_date=today, entry_price=float(bar["open_raw"]), target_date=plan["target_date"],
-                balance_for_sizing=equity_for_sizing, confidence=plan["confidence"], ev=plan["ev"], prediction=plan["prediction"],
-                had_survivorship_warning=bool(bar["survivorship_warning"]),
-            )
-            if pos.position_size_dollars > cash:
-                logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)
-                pos.position_size_dollars = max(cash, 0.0)
-            cash -= pos.position_size_dollars
-            open_positions[style].append(pos)
+        peak_equity = max(peak_equity, equity_for_sizing)
+        circuit_breaker_active = is_circuit_breaker_active(peak_equity, equity_for_sizing, threshold=circuit_breaker_pct)
+        if circuit_breaker_active:
+            n_days_circuit_breaker_active += 1
+        else:
+            for plan in entries_by_date.get(today, []):
+                style = plan["execution_style"]
+                if len(open_positions[style]) >= max_concurrent[style]:
+                    continue  # sin hueco — la señal se descarta (max_concurrent del spec)
+                bar = ticker_cache[plan["ticker"]].get(today)
+                if bar is None or bar["open_raw"] is None:
+                    continue
+                pos = open_position(
+                    event_id=plan["event_id"], version=version, execution_style=style, direction=plan["direction"],
+                    ticker=plan["ticker"], entry_date=today, entry_price=float(bar["open_raw"]), target_date=plan["target_date"],
+                    balance_for_sizing=equity_for_sizing, confidence=plan["confidence"], ev=plan["ev"], prediction=plan["prediction"],
+                    had_survivorship_warning=bool(bar["survivorship_warning"]),
+                )
+                if pos.position_size_dollars > cash:
+                    logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)
+                    pos.position_size_dollars = max(cash, 0.0)
+                cash -= pos.position_size_dollars
+                open_positions[style].append(pos)
 
-        # 3) Curva de equity de hoy (tras salidas Y entradas de hoy).
+        # 3) Curva de equity de hoy (tras salidas Y entradas de hoy, si el
+        # circuit-breaker no las bloqueó).
         n_open = sum(len(v) for v in open_positions.values())
-        equity_rows.append({"trade_date": today, "balance": cash + portfolio_mtm(today), "n_open_positions": n_open})
+        equity_rows.append({
+            "trade_date": today,
+            "balance": cash + portfolio_mtm(today),
+            "n_open_positions": n_open,
+            "circuit_breaker_active": circuit_breaker_active,
+        })
 
     # Cierre forzado de lo que siga abierto al final de los datos disponibles.
     for style_positions in open_positions.values():
@@ -559,7 +631,12 @@ def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital:
             completed_trades.append(record)
 
     _store_portfolio_results(conn, version, run_batch_tag, completed_trades, equity_rows)
-    return {"version": version, "n_trades": len(completed_trades), "n_equity_days": len(equity_rows)}
+    return {
+        "version": version,
+        "n_trades": len(completed_trades),
+        "n_equity_days": len(equity_rows),
+        "n_days_circuit_breaker_active": n_days_circuit_breaker_active,
+    }
 
 
 def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: list[dict], equity_rows: list[dict]) -> None:
@@ -592,11 +669,12 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
         for row in equity_rows:
             cur.execute(
                 """
-                INSERT INTO portfolio_equity_curve (version, trade_date, balance, n_open_positions, run_batch_tag)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO portfolio_equity_curve (version, trade_date, balance, n_open_positions, circuit_breaker_active, run_batch_tag)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (version, trade_date, run_batch_tag) DO UPDATE SET
-                    balance = EXCLUDED.balance, n_open_positions = EXCLUDED.n_open_positions
+                    balance = EXCLUDED.balance, n_open_positions = EXCLUDED.n_open_positions,
+                    circuit_breaker_active = EXCLUDED.circuit_breaker_active
                 """,
-                (version, row["trade_date"], row["balance"], row["n_open_positions"], run_batch_tag),
+                (version, row["trade_date"], row["balance"], row["n_open_positions"], row["circuit_breaker_active"], run_batch_tag),
             )
     conn.commit()
