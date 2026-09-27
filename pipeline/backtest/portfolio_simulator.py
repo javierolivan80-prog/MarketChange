@@ -29,6 +29,23 @@ COMISIONES: 10 bps por vuelta completa (entrada+salida), constante y
 documentada — no es un barrido de sensibilidad como el slippage de la Fase 1
 (ARCHITECTURE_LEAN.md T7); aquí es un único supuesto fijo para poder generar
 la curva de equity. Ajustable en COMMISSION_BPS_ROUND_TRIP.
+
+CIERRE FORZADO CON DATOS DE PRECIO INCOMPLETOS (bug encontrado en auditoría,
+corregido aquí — ver _resolve_forced_close): el cierre forzado al final del
+panel de precios (lo que siga abierto cuando se acaba master_calendar) asumía
+que la fila más reciente de `prices` para ese ticker SIEMPRE tiene un
+close_raw válido. Falso en el caso real que motiva survivorship_warning
+(yfinance_backfill.py): un ticker que se deslista o entra en halt A MITAD de
+una posición abierta deja como última fila un centinela con close_raw=NULL
+(_flag_full_gap / _store_with_gap_detection). `float(None)` ahí revienta la
+corrida entera — no un resultado sesgado, un crash. La corrección busca hacia
+atrás la última fecha con precio válido; si no hay ninguna después de la
+entrada (deslistado al día siguiente de entrar), cierra en la última fecha
+disponible al precio de ENTRADA (retorno plano, mismo criterio conservador
+que ya usa portfolio_mtm() para marcar a mercado un día sin dato — "no
+inventar una ganancia ni una pérdida que no se puede observar"). Ambos casos
+se etiquetan 'DATA_GAP', distinto de 'MAX_HOLDING', para que no se confundan
+con un cierre normal por fin de holding period en los reportes.
 """
 from __future__ import annotations
 
@@ -388,6 +405,47 @@ def _build_entry_plan(conn, version: str, events: list[dict], ticker_cache: dict
     return plan
 
 
+def _resolve_forced_close(prices: dict[date, dict], entry_date: date, entry_price: float) -> tuple[date, float, str]:
+    """(exit_date, exit_price, exit_reason) para una posición que sigue
+    abierta al final de master_calendar — ver "CIERRE FORZADO CON DATOS DE
+    PRECIO INCOMPLETOS" en el docstring del módulo para el bug que esto
+    corrige.
+
+    `prices` es el ticker_cache de ESE ticker (fecha -> fila de prices).
+    entry_date/entry_price son los de la posición — necesarios porque el
+    fallback de "sin ningún precio válido tras la entrada" usa entry_price
+    (retorno plano), nunca un precio inventado.
+
+    Devuelve SIEMPRE una fecha > entry_date (nunca None): _build_entry_plan
+    ya garantiza que existe al menos una fecha posterior a entry_date en
+    `prices` antes de abrir la posición (ver su propio comentario sobre "sin
+    días posteriores para simular"), así que last_date de aquí abajo es una
+    cota superior segura incluso en el peor caso."""
+    last_date = max(prices.keys())
+    last_close = prices[last_date]["close_raw"]
+    if last_close is not None:
+        # Caso normal (sin gap en la última fila) — MISMO comportamiento que
+        # antes de este fix, byte a byte, para no alterar ningún resultado
+        # ya validado.
+        return last_date, float(last_close), "MAX_HOLDING"
+
+    # La última fila es un centinela de survivorship_warning (deslistado/halt
+    # sin resolver antes de que se acabaran los datos) — busca hacia atrás la
+    # fecha válida más reciente, siempre que siga siendo posterior a la
+    # entrada (cerrar EN o antes de la entrada violaría la disciplina
+    # anti-look-ahead: chk_portfolio_no_lookahead exige exit_date > entry_date).
+    for d in sorted((d for d in prices if d > entry_date), reverse=True):
+        close = prices[d]["close_raw"]
+        if close is not None:
+            return d, float(close), "DATA_GAP"
+
+    # Ningún precio válido en absoluto tras la entrada (el ticker se deslistó
+    # antes de que hubiera un solo día de cotización posterior) — cierra en
+    # la última fecha disponible (> entry_date, garantizado más arriba) al
+    # precio de ENTRADA: retorno plano, no una ganancia o pérdida inventada.
+    return last_date, entry_price, "DATA_GAP"
+
+
 def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital: float = 100_000.0, sample: str | None = None) -> dict:
     """Punto de entrada del backtest de cartera para UNA versión de
     estrategia. Ver docstring del módulo para la disciplina anti-look-ahead
@@ -490,9 +548,10 @@ def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital:
     # Cierre forzado de lo que siga abierto al final de los datos disponibles.
     for style_positions in open_positions.values():
         for pos in style_positions:
-            last_date = max(ticker_cache[pos.ticker].keys())
-            last_close = ticker_cache[pos.ticker][last_date]["close_raw"]
-            pos.closes.append((last_date, pos.remaining_fraction, float(last_close), "MAX_HOLDING"))
+            close_date, close_price, close_reason = _resolve_forced_close(
+                ticker_cache[pos.ticker], pos.entry_date, pos.entry_price
+            )
+            pos.closes.append((close_date, pos.remaining_fraction, close_price, close_reason))
             pos.remaining_fraction = 0.0
             record = consolidate_trade_record(pos)
             record["version"] = version
