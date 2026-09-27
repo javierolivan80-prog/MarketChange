@@ -11,12 +11,15 @@ import pytest
 from pipeline.backtest.portfolio_simulator import (
     COMMISSION_BPS_ROUND_TRIP,
     DRAWDOWN_CIRCUIT_BREAKER_PCT,
+    MAX_POSITION_PCT_OF_ADV,
     OpenPosition,
     _build_entry_plan,
     _resolve_forced_close,
+    cap_position_dollars_by_adv,
     compute_position_mtm_dollars,
     compute_target_date,
     compute_tp_sl_prices,
+    compute_trailing_adv_usd,
     consolidate_trade_record,
     gain_pct,
     is_circuit_breaker_active,
@@ -461,3 +464,125 @@ def test_circuit_breaker_degenerate_zero_peak_is_treated_as_active():
     silenciosamente."""
     assert is_circuit_breaker_active(peak_equity=0.0, current_equity=0.0) is True
     assert is_circuit_breaker_active(peak_equity=-100.0, current_equity=-50.0) is True
+
+
+# ---------------------------------------------------------------------------
+# compute_trailing_adv_usd / cap_position_dollars_by_adv — tope de posición
+# por %ADV (hallazgo de auditoría). Ver MAX_POSITION_PCT_OF_ADV en el módulo.
+# ---------------------------------------------------------------------------
+
+
+def _bar_with_volume(c=100.0, v=10_000):
+    return {"close_raw": c, "volume": v}
+
+
+def test_trailing_adv_usd_averages_the_window_before_as_of():
+    as_of = D0 + timedelta(days=100)
+    prices = {as_of - timedelta(days=i): _bar_with_volume(c=100.0, v=10_000) for i in range(1, 61)}
+    # ADV esperado: 100.0 * 10_000 = 1_000_000 exacto (todas las filas iguales)
+    adv = compute_trailing_adv_usd(prices, as_of)
+    assert adv == pytest.approx(1_000_000.0)
+
+
+def test_trailing_adv_usd_excludes_the_entry_day_itself():
+    """El volumen del propio día de entrada no se conoce hasta el cierre, y
+    la entrada es a la apertura — usarlo sería look-ahead. Una fila en
+    as_of con un volumen disparatado no debe mover el ADV."""
+    as_of = D0 + timedelta(days=100)
+    prices = {as_of - timedelta(days=i): _bar_with_volume(c=100.0, v=10_000) for i in range(1, 61)}
+    prices[as_of] = _bar_with_volume(c=100.0, v=999_999_999)  # NUNCA debe contar
+    adv = compute_trailing_adv_usd(prices, as_of)
+    assert adv == pytest.approx(1_000_000.0)
+
+
+def test_trailing_adv_usd_ignores_gap_sentinel_rows():
+    """Filas de survivorship_warning (close_raw/volume NULL) no cuentan como
+    día con datos — ni suman al promedio ni rellenan la ventana."""
+    as_of = D0 + timedelta(days=100)
+    prices = {as_of - timedelta(days=i): _bar_with_volume(c=100.0, v=10_000) for i in range(1, 61)}
+    # Sustituye 5 días por centinelas de gap — deben ignorarse, no promediarse como 0.
+    for i in range(1, 6):
+        prices[as_of - timedelta(days=i)] = {"close_raw": None, "volume": None}
+    adv = compute_trailing_adv_usd(prices, as_of)
+    assert adv == pytest.approx(1_000_000.0)  # los 55 días restantes, todos iguales
+
+
+def test_trailing_adv_usd_none_when_insufficient_history():
+    as_of = D0 + timedelta(days=100)
+    prices = {as_of - timedelta(days=i): _bar_with_volume() for i in range(1, 5)}  # solo 4 días
+    assert compute_trailing_adv_usd(prices, as_of) is None
+
+
+def test_trailing_adv_usd_none_when_no_history_at_all():
+    assert compute_trailing_adv_usd({}, D0) is None
+
+
+def test_max_position_pct_of_adv_matches_decided_value():
+    assert MAX_POSITION_PCT_OF_ADV == pytest.approx(0.05)
+
+
+def test_cap_position_dollars_by_adv_no_cap_when_adv_unknown():
+    """None (sin datos suficientes) = no se aplica ningún tope — este
+    mecanismo AÑADE una restricción, no sustituye al filtro de liquidez de
+    entrada (otro punto de la auditoría, no este)."""
+    dollars, capped = cap_position_dollars_by_adv(desired_dollars=50_000.0, adv_usd=None)
+    assert dollars == 50_000.0
+    assert capped is False
+
+
+def test_cap_position_dollars_by_adv_reduces_when_desired_exceeds_cap():
+    # ADV=$1M, tope 5% = $50k. Pedido $80k -> se reduce a $50k, nunca se descarta.
+    dollars, capped = cap_position_dollars_by_adv(desired_dollars=80_000.0, adv_usd=1_000_000.0)
+    assert dollars == pytest.approx(50_000.0)
+    assert capped is True
+
+
+def test_cap_position_dollars_by_adv_untouched_when_under_cap():
+    dollars, capped = cap_position_dollars_by_adv(desired_dollars=20_000.0, adv_usd=1_000_000.0)
+    assert dollars == 20_000.0
+    assert capped is False
+
+
+def test_cap_position_dollars_by_adv_respects_custom_max_pct():
+    # Tope al 10% de un ADV de $1M = $100k. Pedido $80k queda por debajo,
+    # así que NO se reduce (a diferencia del tope por defecto del 5% = $50k,
+    # que sí lo habría recortado — ver test de arriba).
+    dollars, capped = cap_position_dollars_by_adv(desired_dollars=80_000.0, adv_usd=1_000_000.0, max_pct=0.10)
+    assert dollars == 80_000.0
+    assert capped is False
+
+
+def test_open_position_reduces_size_and_flags_when_adv_cap_applies():
+    """open_position() debe aplicar el tope de extremo a extremo: tamaño
+    final reducido, position_size_pct recalculado sobre el tamaño REAL (no
+    el pre-tope), y had_adv_cap_applied=True."""
+    pos = open_position(
+        event_id=1, version="AGGRESSIVE", execution_style="AGGRESSIVE", direction="LONG",
+        ticker="ILLIQUID", entry_date=D0, entry_price=100.0, target_date=D0 + timedelta(days=20),
+        balance_for_sizing=1_000_000.0,  # 20% pedido = $200k
+        confidence=100.0, ev=0.01, prediction=0.7, had_survivorship_warning=False,
+        adv_usd_60d=500_000.0,  # tope 5% = $25k, muy por debajo de los $200k pedidos
+    )
+    assert pos.had_adv_cap_applied is True
+    assert pos.position_size_dollars == pytest.approx(25_000.0)
+    assert pos.position_size_pct == pytest.approx(2.5)  # 25k / 1M * 100
+
+
+def test_open_position_untouched_when_adv_is_none_or_generous():
+    pos_no_adv = open_position(
+        event_id=1, version="AGGRESSIVE", execution_style="AGGRESSIVE", direction="LONG",
+        ticker="X", entry_date=D0, entry_price=100.0, target_date=D0 + timedelta(days=20),
+        balance_for_sizing=1_000_000.0, confidence=100.0, ev=0.01, prediction=0.7,
+        had_survivorship_warning=False, adv_usd_60d=None,
+    )
+    assert pos_no_adv.had_adv_cap_applied is False
+    assert pos_no_adv.position_size_dollars == pytest.approx(200_000.0)  # 20% sin tocar
+
+    pos_liquid = open_position(
+        event_id=2, version="AGGRESSIVE", execution_style="AGGRESSIVE", direction="LONG",
+        ticker="LIQUID", entry_date=D0, entry_price=100.0, target_date=D0 + timedelta(days=20),
+        balance_for_sizing=1_000_000.0, confidence=100.0, ev=0.01, prediction=0.7,
+        had_survivorship_warning=False, adv_usd_60d=100_000_000.0,  # ADV enorme, tope 5%=$5M >> $200k pedidos
+    )
+    assert pos_liquid.had_adv_cap_applied is False
+    assert pos_liquid.position_size_dollars == pytest.approx(200_000.0)

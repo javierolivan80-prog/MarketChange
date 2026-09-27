@@ -115,6 +115,66 @@ def is_circuit_breaker_active(peak_equity: float, current_equity: float, thresho
     return drawdown >= threshold
 
 
+# Tope de posición por %ADV (hallazgo de auditoría — el backtest asumía que
+# cualquier tamaño de posición que el sizing por confianza/EV pidiera era
+# ejecutable, sin mirar si el ticker tenía volumen real para absorberlo).
+# 5%, decidido con el usuario: estándar razonable en trading retail/small-fund
+# para no mover el precio de forma apreciable al entrar/salir. Cuando el tope
+# es MENOR que el tamaño pedido, se REDUCE la posición (nunca se descarta la
+# señal — decisión explícita del usuario: un trade válido no se tira solo por
+# liquidez, se dimensiona con más cautela).
+MAX_POSITION_PCT_OF_ADV = 0.05  # 5%
+ADV_TRAILING_WINDOW_DAYS = 60  # mismo horizonte que universe.adv_usd_60d (universe_maintenance.py)
+ADV_MIN_TRADING_DAYS = 20  # por debajo de esto, la muestra es demasiado corta para fiarse (ver compute_trailing_adv_usd)
+
+
+def compute_trailing_adv_usd(prices: dict[date, dict], as_of: date, window_days: int = ADV_TRAILING_WINDOW_DAYS) -> float | None:
+    """ADV (volumen medio diario en $) de LOS `window_days` DÍAS DE
+    NEGOCIACIÓN ANTERIORES a `as_of` (estrictamente < as_of — el volumen del
+    propio día de entrada no se conoce hasta el cierre, y la entrada es a
+    la APERTURA: usarlo sería look-ahead).
+
+    Deliberadamente NO se usa universe.adv_usd_60d (calculado por
+    universe_maintenance.py) para esto: esa columna se recalcula sobre los
+    60 días MÁS RECIENTES respecto a HOY (el momento en que corre el
+    refresh), no respecto a la fecha del evento — aplicarla a un trade
+    histórico de hace años sería sizear una posición del pasado con la
+    liquidez de HOY, un look-ahead sutil del mismo tipo que ya se corrigió
+    en edgar_scraper.py (ACCEPTANCE-DATETIME). Aquí se calcula directamente
+    sobre el panel de precios que el propio backtest ya tiene cargado
+    (ticker_cache), con una ventana móvil anclada en `as_of` — el mismo
+    principio anti-look-ahead que el resto del módulo.
+
+    None si hay menos de ADV_MIN_TRADING_DAYS con volumen y precio válidos
+    en la ventana — muestra demasiado corta para fiarse (no se inventa un
+    ADV de 3 días). Filas con close_raw/volume nulos (gaps de
+    survivorship_warning) se ignoran, no cuentan como día con datos."""
+    valid_days = sorted(d for d in prices if d < as_of)[-window_days:]
+    dollar_volumes = []
+    for d in valid_days:
+        bar = prices[d]
+        close_raw, volume = bar.get("close_raw"), bar.get("volume")
+        if close_raw is not None and volume is not None:
+            dollar_volumes.append(float(close_raw) * float(volume))
+    if len(dollar_volumes) < ADV_MIN_TRADING_DAYS:
+        return None
+    return sum(dollar_volumes) / len(dollar_volumes)
+
+
+def cap_position_dollars_by_adv(desired_dollars: float, adv_usd: float | None, max_pct: float = MAX_POSITION_PCT_OF_ADV) -> tuple[float, bool]:
+    """(tamaño_final, se_aplicó_el_tope). adv_usd=None (sin datos suficientes
+    para estimarlo, ver compute_trailing_adv_usd) -> no se aplica ningún
+    tope, se devuelve desired_dollars sin tocar: este mecanismo AÑADE una
+    restricción de liquidez, no sustituye al filtro de liquidez de entrada
+    (ese es otro punto de la auditoría, no este)."""
+    if adv_usd is None:
+        return desired_dollars, False
+    cap = adv_usd * max_pct
+    if desired_dollars > cap:
+        return cap, True
+    return desired_dollars, False
+
+
 def gain_pct(direction: str, entry_price: float, price: float) -> float:
     """Retorno %, con signo, del SUBYACENTE — misma convención que
     backtest/backtester.py:compute_trade_return (Fase 1), reutilizada aquí
@@ -153,6 +213,7 @@ class OpenPosition:
     ev: float
     prediction: float
     had_survivorship_warning: bool
+    had_adv_cap_applied: bool = False
     remaining_fraction: float = 1.0
     tiers_hit: frozenset = field(default_factory=frozenset)
     used_trailing_stop: bool = False
@@ -266,6 +327,7 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
         "prediction": position.prediction,
         "actual_move_pct": actual_move_pct,
         "had_survivorship_warning": position.had_survivorship_warning,
+        "had_adv_cap_applied": position.had_adv_cap_applied,
     }
 
 
@@ -283,12 +345,19 @@ def open_position(
     ev: float,
     prediction: float,
     had_survivorship_warning: bool,
+    adv_usd_60d: float | None = None,
 ) -> OpenPosition:
     """Construye una OpenPosition con el sizing y los umbrales TP/SL/trailing
     de execution_style (STRATEGIES[execution_style] — para BALANCED, ver
     compute_balanced_position_size_pct; para DYNAMIC, ver
     compute_ev_weighted_position_size_pct; ambas en vez de
-    compute_position_size_pct)."""
+    compute_position_size_pct).
+
+    `adv_usd_60d`: ADV histórico as-of la entrada (ver
+    compute_trailing_adv_usd — el caller lo calcula, esta función no toca la
+    BD). Si el tamaño pedido por confianza/EV supera MAX_POSITION_PCT_OF_ADV
+    de esa cifra, se reduce (nunca se descarta el trade) — ver
+    cap_position_dollars_by_adv. None (sin datos suficientes) = sin tope."""
     config = STRATEGIES[execution_style]
     if version == "DYNAMIC":
         size_pct = compute_ev_weighted_position_size_pct(ev, confidence, execution_style)
@@ -297,6 +366,9 @@ def open_position(
     else:
         size_pct = compute_position_size_pct(confidence, config)
     size_dollars = balance_for_sizing * (size_pct / 100)
+    size_dollars, adv_cap_applied = cap_position_dollars_by_adv(size_dollars, adv_usd_60d)
+    if balance_for_sizing > 0:
+        size_pct = size_dollars / balance_for_sizing * 100  # refleja el tamaño REAL, no el pre-tope
     tp_price, sl_price = compute_tp_sl_prices(direction, entry_price, config.take_profit_pct, config.stop_loss_pct)
 
     return OpenPosition(
@@ -317,6 +389,7 @@ def open_position(
         ev=ev,
         prediction=prediction,
         had_survivorship_warning=had_survivorship_warning,
+        had_adv_cap_applied=adv_cap_applied,
     )
 
 
@@ -382,7 +455,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
 def _load_ticker_prices(conn, ticker: str) -> dict[date, dict]:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT trade_date, open_raw, high_raw, low_raw, close_raw, survivorship_warning "
+            "SELECT trade_date, open_raw, high_raw, low_raw, close_raw, volume, survivorship_warning "
             "FROM prices WHERE ticker = %s ORDER BY trade_date",
             (ticker,),
         )
@@ -595,11 +668,12 @@ def simulate_portfolio(
                 bar = ticker_cache[plan["ticker"]].get(today)
                 if bar is None or bar["open_raw"] is None:
                     continue
+                adv_usd_60d = compute_trailing_adv_usd(ticker_cache[plan["ticker"]], today)
                 pos = open_position(
                     event_id=plan["event_id"], version=version, execution_style=style, direction=plan["direction"],
                     ticker=plan["ticker"], entry_date=today, entry_price=float(bar["open_raw"]), target_date=plan["target_date"],
                     balance_for_sizing=equity_for_sizing, confidence=plan["confidence"], ev=plan["ev"], prediction=plan["prediction"],
-                    had_survivorship_warning=bool(bar["survivorship_warning"]),
+                    had_survivorship_warning=bool(bar["survivorship_warning"]), adv_usd_60d=adv_usd_60d,
                 )
                 if pos.position_size_dollars > cash:
                     logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)
@@ -648,12 +722,12 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
                     event_id, version, execution_style, direction, entry_date, entry_price,
                     exit_date, exit_price, exit_reason, pnl_pct, pnl_abs, position_size_pct,
                     position_size_dollars, confidence, ev, prediction, actual_move_pct,
-                    had_survivorship_warning, run_batch_tag
+                    had_survivorship_warning, had_adv_cap_applied, run_batch_tag
                 ) VALUES (
                     %(event_id)s, %(version)s, %(execution_style)s, %(direction)s, %(entry_date)s, %(entry_price)s,
                     %(exit_date)s, %(exit_price)s, %(exit_reason)s, %(pnl_pct)s, %(pnl_abs)s, %(position_size_pct)s,
                     %(position_size_dollars)s, %(confidence)s, %(ev)s, %(prediction)s, %(actual_move_pct)s,
-                    %(had_survivorship_warning)s, %(run_batch_tag)s
+                    %(had_survivorship_warning)s, %(had_adv_cap_applied)s, %(run_batch_tag)s
                 )
                 ON CONFLICT (event_id, version, run_batch_tag) DO UPDATE SET
                     execution_style = EXCLUDED.execution_style, direction = EXCLUDED.direction,
@@ -662,7 +736,8 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
                     exit_reason = EXCLUDED.exit_reason, pnl_pct = EXCLUDED.pnl_pct, pnl_abs = EXCLUDED.pnl_abs,
                     position_size_pct = EXCLUDED.position_size_pct, position_size_dollars = EXCLUDED.position_size_dollars,
                     confidence = EXCLUDED.confidence, ev = EXCLUDED.ev, prediction = EXCLUDED.prediction,
-                    actual_move_pct = EXCLUDED.actual_move_pct, had_survivorship_warning = EXCLUDED.had_survivorship_warning
+                    actual_move_pct = EXCLUDED.actual_move_pct, had_survivorship_warning = EXCLUDED.had_survivorship_warning,
+                    had_adv_cap_applied = EXCLUDED.had_adv_cap_applied
                 """,
                 t,
             )

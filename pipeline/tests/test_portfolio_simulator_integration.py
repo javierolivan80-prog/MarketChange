@@ -509,6 +509,79 @@ class TestDrawdownCircuitBreaker:
         assert rows[cal[6]] is False   # el día de la recuperación ya está inactivo
 
 
+class TestPositionSizeCappedByADV:
+    """Tope de posición por %ADV (hallazgo de auditoría). Dos tickers,
+    misma confianza (tamaño pedido idéntico: 20% de Aggressive) pero
+    volumen muy distinto — el ADV real, calculado desde el propio panel de
+    precios del backtest (no desde universe.adv_usd_60d, ver
+    compute_trailing_adv_usd), decide si el tamaño se recorta o no."""
+
+    def _seed_ticker_with_volume(self, conn, ticker: str, dates: list[date], close: float, volume: int) -> None:
+        with conn.cursor() as cur:
+            for d in dates:
+                cur.execute(
+                    "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, volume, adj_factor, survivorship_warning) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, 1.0, FALSE)",
+                    (ticker, d, close, close, close * 1.01, close * 0.99, volume),
+                )
+        conn.commit()
+
+    def test_illiquid_ticker_gets_reduced_and_flagged(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 40)
+        d0 = cal[25]  # entry_date = cal[26] -> 26 días de historial previo, >= ADV_MIN_TRADING_DAYS (20)
+
+        _seed_event_with_analysis(
+            conn, "1", "ILLIQUID", d0,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.7, confidence=100.0,  # 20% pedido (máximo Aggressive)
+            ev_conservative=0.0, ev_aggressive=0.01, ev_balanced=0.0,
+        )
+        # close=$50, volumen=1,000 -> ADV ~ $50,000/día. Tope 5% = $2,500,
+        # muy por debajo del 20% de $100k ($20,000) que pediría el sizing normal.
+        self._seed_ticker_with_volume(conn, "ILLIQUID", cal[: 37], close=50.0, volume=1_000)
+
+        simulate_portfolio(conn, "AGGRESSIVE", run_batch_tag="test-adv-1", starting_capital=100_000.0)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT position_size_dollars, position_size_pct, had_adv_cap_applied "
+                "FROM portfolio_trades WHERE run_batch_tag = 'test-adv-1'"
+            )
+            trade = cur.fetchone()
+        assert trade["had_adv_cap_applied"] is True
+        assert float(trade["position_size_dollars"]) == pytest.approx(2_500.0, rel=0.05)
+        assert float(trade["position_size_pct"]) < 20.0  # muy por debajo del 20% pedido
+
+    def test_liquid_ticker_untouched(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 40)
+        d0 = cal[25]
+
+        _seed_event_with_analysis(
+            conn, "1", "LIQUID", d0,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.7, confidence=100.0,
+            ev_conservative=0.0, ev_aggressive=0.01, ev_balanced=0.0,
+        )
+        # close=$100, volumen=1,000,000 -> ADV ~ $100M/día. Tope 5% = $5M,
+        # muchísimo más que el 20% de $100k ($20,000) pedido -> sin recorte.
+        self._seed_ticker_with_volume(conn, "LIQUID", cal[:37], close=100.0, volume=1_000_000)
+
+        simulate_portfolio(conn, "AGGRESSIVE", run_batch_tag="test-adv-2", starting_capital=100_000.0)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT position_size_dollars, position_size_pct, had_adv_cap_applied "
+                "FROM portfolio_trades WHERE run_batch_tag = 'test-adv-2'"
+            )
+            trade = cur.fetchone()
+        assert trade["had_adv_cap_applied"] is False
+        assert float(trade["position_size_pct"]) == pytest.approx(20.0)  # tamaño máximo normal, sin tocar
+
+
 class TestAggressiveTrailingStopPath:
     def test_aggressive_trade_partially_closes_via_trailing_stop(self, conn):
         from pipeline.backtest.portfolio_simulator import simulate_portfolio
