@@ -12,6 +12,7 @@ from pipeline.backtest.portfolio_simulator import (
     COMMISSION_BPS_ROUND_TRIP,
     OpenPosition,
     _build_entry_plan,
+    _resolve_forced_close,
     compute_position_mtm_dollars,
     compute_target_date,
     compute_tp_sl_prices,
@@ -342,3 +343,76 @@ def test_build_entry_plan_includes_event_when_at_least_one_day_after_entry_exist
     assert len(plan) == 1
     assert plan[0]["entry_date"] == entry_date
     assert plan[0]["target_date"] > entry_date
+
+
+# ---------------------------------------------------------------------------
+# _resolve_forced_close — bug de auditoría: cierre forzado cuando la última
+# fila de precios de un ticker es un centinela de survivorship_warning
+# (close_raw=NULL). Ver "CIERRE FORZADO CON DATOS DE PRECIO INCOMPLETOS" en
+# el docstring del módulo.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_forced_close_normal_case_unchanged_behavior():
+    """Última fila con close_raw válido -> MAX_HOLDING a ese precio, EXACTO
+    comportamiento de antes del fix (sin gap, nada cambia)."""
+    entry_date = D0
+    prices = {
+        D0: _bar(c=100.0),
+        D0 + timedelta(days=1): _bar(c=103.0),
+        D0 + timedelta(days=2): _bar(c=105.0),
+    }
+    exit_date, exit_price, exit_reason = _resolve_forced_close(prices, entry_date, entry_price=100.0)
+    assert exit_date == D0 + timedelta(days=2)
+    assert exit_price == 105.0
+    assert exit_reason == "MAX_HOLDING"
+
+
+def test_resolve_forced_close_full_gap_sentinel_used_to_crash():
+    """Reproduce el bug tal cual: la ÚLTIMA fila es un centinela de
+    survivorship_warning con close_raw=NULL (yfinance_backfill.py:
+    _flag_full_gap) — antes del fix, float(None) reventaba aquí."""
+    entry_date = D0
+    prices = {
+        D0: _bar(c=100.0),
+        D0 + timedelta(days=1): _bar(c=102.0),
+        D0 + timedelta(days=2): {"open_raw": None, "high_raw": None, "low_raw": None, "close_raw": None, "survivorship_warning": True},
+    }
+    exit_date, exit_price, exit_reason = _resolve_forced_close(prices, entry_date, entry_price=100.0)
+    # Cierra en la última fecha CON precio válido, no en la fecha del centinela.
+    assert exit_date == D0 + timedelta(days=1)
+    assert exit_price == 102.0
+    assert exit_reason == "DATA_GAP"
+
+
+def test_resolve_forced_close_no_valid_price_after_entry_falls_back_to_entry_price():
+    """Caso extremo: el ticker se deslista al día siguiente de la entrada —
+    NINGUNA fecha posterior a entry_date tiene precio válido. Cierra en la
+    última fecha disponible (sigue siendo > entry_date) al precio de
+    ENTRADA — retorno plano, no un precio inventado."""
+    entry_date = D0
+    only_gap_day = D0 + timedelta(days=1)
+    prices = {
+        D0: _bar(c=100.0),
+        only_gap_day: {"open_raw": None, "high_raw": None, "low_raw": None, "close_raw": None, "survivorship_warning": True},
+    }
+    exit_date, exit_price, exit_reason = _resolve_forced_close(prices, entry_date, entry_price=100.0)
+    assert exit_date == only_gap_day  # > entry_date, nunca None ni <= entry_date
+    assert exit_price == 100.0  # precio de entrada, retorno plano
+    assert exit_reason == "DATA_GAP"
+
+
+def test_resolve_forced_close_skips_intermediate_gap_to_find_valid_price():
+    """El gap está en medio, no al final: la última fila SÍ tiene precio
+    válido -> MAX_HOLDING normal, el gap intermedio no afecta (ya lo maneja
+    el bucle día a día de simulate_portfolio, no esta función)."""
+    entry_date = D0
+    prices = {
+        D0: _bar(c=100.0),
+        D0 + timedelta(days=1): {"open_raw": None, "high_raw": None, "low_raw": None, "close_raw": None, "survivorship_warning": True},
+        D0 + timedelta(days=2): _bar(c=110.0),
+    }
+    exit_date, exit_price, exit_reason = _resolve_forced_close(prices, entry_date, entry_price=100.0)
+    assert exit_date == D0 + timedelta(days=2)
+    assert exit_price == 110.0
+    assert exit_reason == "MAX_HOLDING"

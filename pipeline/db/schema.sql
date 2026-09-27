@@ -605,3 +605,21 @@ ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_version_check
 ALTER TABLE portfolio_equity_curve DROP CONSTRAINT IF EXISTS portfolio_equity_curve_version_check;
 ALTER TABLE portfolio_equity_curve ADD CONSTRAINT portfolio_equity_curve_version_check
     CHECK (version IN ('CONSERVATIVE', 'AGGRESSIVE', 'BALANCED', 'DYNAMIC'));
+
+-- ============================================================================
+-- DATA_GAP (exit_reason nuevo — bug de auditoría corregido en
+-- portfolio_simulator.py:_resolve_forced_close): el cierre forzado al final
+-- del panel de precios asumía que la última fila de `prices` de un ticker
+-- SIEMPRE tiene close_raw válido — falso cuando el ticker se deslista o
+-- entra en halt a mitad de una posición abierta (la última fila es un
+-- centinela de survivorship_warning con close_raw=NULL, ver
+-- yfinance_backfill.py:_flag_full_gap). `float(None)` ahí no sesgaba el
+-- resultado: reventaba la corrida entera. DATA_GAP marca ese cierre como
+-- distinto de un MAX_HOLDING normal — un trade cerrado por falta de datos
+-- posteriores (deslistado/halt sin resolver), no porque venciera el holding
+-- period con precios normales — para que no se confundan al leer los
+-- reportes ni al auditar sesgos.
+-- ============================================================================
+ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS portfolio_trades_exit_reason_check;
+ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
+    CHECK (exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'MAX_HOLDING', 'TRAILING_STOP', 'DATA_GAP'));

@@ -85,6 +85,21 @@ def _seed_event_with_analysis(
     return event_id
 
 
+def _seed_gap_sentinel(conn, ticker: str, d: date) -> None:
+    """Fila centinela de survivorship_warning con close_raw=NULL — exactamente
+    lo que yfinance_backfill.py:_flag_full_gap/_store_with_gap_detection
+    inserta para un ticker deslistado/en halt. Es el dato que reproduce el
+    bug de _resolve_forced_close cuando cae como ÚLTIMA fila del ticker."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO prices (ticker, trade_date, close_raw, adj_factor, volume, survivorship_warning) "
+            "VALUES (%s, %s, NULL, NULL, NULL, TRUE) "
+            "ON CONFLICT (ticker, trade_date) DO UPDATE SET survivorship_warning = TRUE, close_raw = NULL",
+            (ticker, d),
+        )
+    conn.commit()
+
+
 def _business_days(start: date, n: int) -> list[date]:
     days = []
     d = start
@@ -338,6 +353,72 @@ class TestSampleSplitFiltering:
         oos_tickers = {e["ticker"] for e in fetch_events_for_version(conn, "CONSERVATIVE", sample="oos")}
         assert in_sample_tickers == {"LASTINSAMPLE"}
         assert oos_tickers == {"FIRSTOOS"}
+
+
+class TestForcedCloseWithDataGap:
+    """Bug de auditoría: el cierre forzado al final del panel de precios
+    asumía que la última fila SIEMPRE tiene close_raw válido. Falso cuando el
+    ticker se deslista/entra en halt a mitad de una posición abierta (fila
+    centinela de survivorship_warning, close_raw=NULL) — antes del fix,
+    simulate_portfolio() reventaba con TypeError: float() argument must be
+    a string or a real number, not 'NoneType'."""
+
+    def test_ticker_delisted_mid_holding_does_not_crash_and_tags_data_gap(self, conn):
+        """Precio plano hasta el día 3 (nada dispara TP/SL/trailing), luego
+        el ticker desaparece del todo — la última fila que ve
+        simulate_portfolio es el centinela NULL. No debe reventar, y el
+        trade forzado debe salir marcado DATA_GAP, no MAX_HOLDING."""
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 5)
+        d0 = cal[0]
+        _seed_event_with_analysis(
+            conn, "1", "DELISTED", d0,
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.7, confidence=80.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        # Precios normales para los primeros días (sin cruzar TP +2%/SL -1.5%
+        # de Conservative), y el último día del panel es el gap total.
+        flat_days = cal[1:4]
+        _seed_price_series(conn, "DELISTED", flat_days, [100.5] * len(flat_days))
+        _seed_gap_sentinel(conn, "DELISTED", cal[4])
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="test-datagap-1", starting_capital=100_000.0)
+        assert result["n_trades"] == 1
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT exit_reason, exit_date, exit_price, pnl_pct FROM portfolio_trades WHERE run_batch_tag='test-datagap-1'")
+            trade = cur.fetchone()
+        assert trade["exit_reason"] == "DATA_GAP"
+        assert trade["exit_date"] == flat_days[-1]  # última fecha CON precio válido, no la del centinela
+        assert float(trade["exit_price"]) == 100.5
+
+    def test_ticker_delisted_the_day_after_entry_falls_back_to_entry_price(self, conn):
+        """Caso extremo: ni un solo día con precio válido tras la entrada —
+        cierra en la última fecha disponible (el propio centinela) al precio
+        de entrada, retorno plano (menos comisión), nunca inventado."""
+        from pipeline.backtest.portfolio_simulator import COMMISSION_BPS_ROUND_TRIP, simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 3)
+        d0 = cal[0]
+        _seed_event_with_analysis(
+            conn, "1", "GONEFAST", d0,
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.7, confidence=80.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        entry_day = cal[1]
+        _seed_price_series(conn, "GONEFAST", [entry_day], [100.0])
+        _seed_gap_sentinel(conn, "GONEFAST", cal[2])
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="test-datagap-2", starting_capital=100_000.0)
+        assert result["n_trades"] == 1
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT exit_reason, entry_price, exit_price, pnl_pct FROM portfolio_trades WHERE run_batch_tag='test-datagap-2'")
+            trade = cur.fetchone()
+        assert trade["exit_reason"] == "DATA_GAP"
+        assert float(trade["exit_price"]) == float(trade["entry_price"])  # retorno plano
+        assert float(trade["pnl_pct"]) == pytest.approx(-COMMISSION_BPS_ROUND_TRIP / 100)  # solo la comisión
 
 
 class TestAggressiveTrailingStopPath:
