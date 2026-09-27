@@ -581,3 +581,27 @@ CREATE TABLE IF NOT EXISTS notifications_sent (
     channel            TEXT NOT NULL DEFAULT 'telegram',
     sent_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================================
+-- DYNAMIC (4ª versión de portfolio_simulator.py — ver nota 5 del docstring
+-- de pipeline/backtest/portfolio_strategies.py): amplía los CHECK de
+-- `version` en portfolio_trades/portfolio_equity_curve para admitirla. Vía
+-- ALTER (DROP + ADD), no editando el CHECK del CREATE TABLE de arriba —
+-- mismo motivo que el resto de ALTERs de este fichero: CREATE TABLE IF NOT
+-- EXISTS es un no-op sobre una tabla que ya existe, así que el CHECK
+-- original se quedaría desactualizado en cualquier base que no sea una
+-- instalación nueva. DYNAMIC reutiliza trade_decision_balanced (no hay columna
+-- trade_decision_dynamic ni falta añadirla), así que backtest_runs.strategy_version
+-- (Fase 1, backtester.py — un sistema distinto y anterior a
+-- portfolio_simulator.py) y paper_trades.version (Fase 4 paper trading, que
+-- no simula sizing en dólares — ver la nota 2 de paper_trading/simulator.py,
+-- así que DYNAMIC no le aporta nada nuevo ahí) se quedan tal cual, sin
+-- DYNAMIC.
+-- ============================================================================
+ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS portfolio_trades_version_check;
+ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_version_check
+    CHECK (version IN ('CONSERVATIVE', 'AGGRESSIVE', 'BALANCED', 'DYNAMIC'));
+
+ALTER TABLE portfolio_equity_curve DROP CONSTRAINT IF EXISTS portfolio_equity_curve_version_check;
+ALTER TABLE portfolio_equity_curve ADD CONSTRAINT portfolio_equity_curve_version_check
+    CHECK (version IN ('CONSERVATIVE', 'AGGRESSIVE', 'BALANCED', 'DYNAMIC'));

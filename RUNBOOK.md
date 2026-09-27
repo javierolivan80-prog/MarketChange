@@ -279,8 +279,14 @@ confundir los dos.
 
 Requiere que `event_analyses` tenga filas con `trade_decision_* != 'NO_TRADE'`
 (Fase 2/3.8) y precios con `open_raw` (yfinance_backfill.py ya lo descarga —
-ver §3.6 más arriba). Corre las 3 versiones (Conservative/Aggressive/Balanced)
-y escribe en `portfolio_trades` + `portfolio_equity_curve`:
+ver §3.6 más arriba). Corre **4 versiones** (Conservative/Aggressive/Balanced,
+del spec original, más **DYNAMIC**, añadida después — ver nota 5 del
+docstring de `pipeline/backtest/portfolio_strategies.py`: reutiliza el mismo
+`trade_decision_balanced` que Balanced, pero dimensiona cada posición con la
+fórmula EV×confianza que `ev_engine.py` (Etapa 7) ya calculaba y persistía en
+`event_analyses.ev_calculation` sin que ningún backtest la usara — Balanced
+usaba un tamaño fijo (1.5%/5%) sin mirar ni el EV ni la confianza). Escribe en
+`portfolio_trades` + `portfolio_equity_curve`, junto con las otras 3:
 
 ```bash
 python -m pipeline.backtest.portfolio_report

@@ -108,10 +108,20 @@ def _threshold_check(ev: float, strategy: str) -> str:
     return f"EV={ev * 100:.2f}% {'>' if ev > threshold else '<='} {threshold * 100:.1f}% → {decision}"
 
 
-def _position_size(ev: float, confidence_in_conviction: float, strategy: str) -> float:
+def position_size_pct(ev: float, confidence_in_conviction: float, strategy: str) -> float:
     """Tamaño de posición en % de cartera. Escala con |EV| y con la confianza
     del Judge, con un tope duro por versión (nunca se apuesta el máximo solo
-    porque el EV puntual sea alto — la confianza también tiene que acompañar)."""
+    porque el EV puntual sea alto — la confianza también tiene que acompañar).
+
+    Pública (no `_position_size`) a propósito: además de alimentar
+    `EVResult.position_sizing_*` de aquí abajo (solo informativo, para el
+    campo `ev_calculation` del dashboard), la reutiliza directamente
+    pipeline/backtest/portfolio_strategies.py:compute_ev_weighted_position_size_pct
+    para la versión de cartera DYNAMIC — antes esta cifra se calculaba en
+    cada evento y se descartaba: portfolio_simulator.py nunca la leía, así
+    que ninguna versión del backtest (ni dinero real) se beneficiaba del
+    sizing ponderado por EV que esta Etapa 7 ya sabía calcular. Una sola
+    fuente de verdad para la fórmula, usada en los dos sitios."""
     raw = abs(ev) * 100 * _SIZING_SCALE * (confidence_in_conviction / 100)
     return min(raw, _MAX_POSITION_SIZE_PCT[strategy])
 
@@ -143,9 +153,9 @@ def compute_ev(
         ev_conservative=ev_conservative,
         ev_aggressive=ev_aggressive,
         ev_balanced=ev_balanced,
-        position_sizing_conservative_pct=_position_size(ev_conservative, confidence_in_conviction, "CONSERVATIVE"),
-        position_sizing_aggressive_pct=_position_size(ev_aggressive, confidence_in_conviction, "AGGRESSIVE"),
-        position_sizing_balanced_pct=_position_size(ev_balanced, confidence_in_conviction, "BALANCED"),
+        position_sizing_conservative_pct=position_size_pct(ev_conservative, confidence_in_conviction, "CONSERVATIVE"),
+        position_sizing_aggressive_pct=position_size_pct(ev_aggressive, confidence_in_conviction, "AGGRESSIVE"),
+        position_sizing_balanced_pct=position_size_pct(ev_balanced, confidence_in_conviction, "BALANCED"),
         threshold_conservative=_threshold_check(ev_conservative, "CONSERVATIVE"),
         threshold_aggressive=_threshold_check(ev_aggressive, "AGGRESSIVE"),
         threshold_balanced=_threshold_check(ev_balanced, "BALANCED"),

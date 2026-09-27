@@ -6,6 +6,7 @@ from pipeline.backtest.portfolio_strategies import (
     STRATEGIES,
     classify_balanced_execution_style,
     compute_balanced_position_size_pct,
+    compute_ev_weighted_position_size_pct,
     compute_position_size_pct,
     generate_trailing_stop_tiers,
 )
@@ -121,3 +122,37 @@ def test_balanced_conservative_wins_when_both_qualify():
 def test_balanced_position_size_is_the_fixed_spec_value_not_interpolated():
     assert compute_balanced_position_size_pct("CONSERVATIVE") == pytest.approx(1.5)
     assert compute_balanced_position_size_pct("AGGRESSIVE") == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# compute_ev_weighted_position_size_pct — sizing de DYNAMIC (nota 5 del
+# docstring del módulo). Delega en ev_engine.position_size_pct: se prueba
+# aquí que delega con los argumentos correctos, no se reprueba la fórmula en
+# sí (eso ya lo cubre test_ev_engine.py).
+# ---------------------------------------------------------------------------
+
+
+def test_ev_weighted_position_size_matches_ev_engine_directly():
+    from pipeline.analyze.ev_engine import position_size_pct
+
+    for style in ("CONSERVATIVE", "AGGRESSIVE"):
+        assert compute_ev_weighted_position_size_pct(0.01, 80.0, style) == pytest.approx(
+            position_size_pct(0.01, 80.0, style)
+        )
+
+
+def test_ev_weighted_position_size_scales_with_ev_unlike_fixed_balanced_sizing():
+    """A diferencia de compute_balanced_position_size_pct (fijo por estilo),
+    esta SÍ debe cambiar con el EV — es la razón de ser de DYNAMIC."""
+    low_ev = compute_ev_weighted_position_size_pct(0.003, 80.0, "AGGRESSIVE")
+    high_ev = compute_ev_weighted_position_size_pct(0.03, 80.0, "AGGRESSIVE")
+    assert low_ev < high_ev
+
+
+def test_ev_weighted_position_size_respects_ev_engine_caps():
+    # Tope de ev_engine para AGGRESSIVE es 8.0 (ver _MAX_POSITION_SIZE_PCT),
+    # NO el 20.0 de STRATEGIES["AGGRESSIVE"].position_size_max_pct — DYNAMIC
+    # usa deliberadamente los topes más conservadores del motor de EV, no las
+    # bandas de las versiones literal-spec (ver nota 5 del docstring).
+    size = compute_ev_weighted_position_size_pct(ev=1.0, confidence=100.0, execution_style="AGGRESSIVE")
+    assert size == pytest.approx(8.0)
