@@ -123,6 +123,11 @@ def build_version_report(conn, version: str, run_batch_tag: str, starting_capita
         # esta versión pasó por una racha lo bastante mala como para
         # bloquear entradas nuevas.
         "n_days_circuit_breaker_active": sum(1 for r in equity_curve if r["circuit_breaker_active"]),
+        # Trades cuyo tamaño se redujo por el tope de %ADV (ver
+        # portfolio_simulator.MAX_POSITION_PCT_OF_ADV) — cuántas señales se
+        # operaron con menos capital del que el sizing por confianza/EV
+        # habría pedido, por falta de liquidez real en el ticker.
+        "n_trades_with_adv_cap_applied": sum(1 for t in trades if t.get("had_adv_cap_applied")),
         "metrics_by_event_type": by_event_type,
         "confidence_calibration": confidence_calibration,
         "calibration": calibration,
@@ -152,6 +157,7 @@ def _serialize_trade(t: dict) -> dict:
         "pnl_pct": float(t["pnl_pct"]),
         "confidence": float(t["confidence"]),
         "ev": float(t["ev"]),
+        "had_adv_cap_applied": bool(t.get("had_adv_cap_applied", False)),
     }
 
 

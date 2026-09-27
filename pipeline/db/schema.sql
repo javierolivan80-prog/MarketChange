@@ -637,3 +637,19 @@ ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
 -- activo, no solo si estuvo activo alguna vez.
 -- ============================================================================
 ALTER TABLE portfolio_equity_curve ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ============================================================================
+-- had_adv_cap_applied (portfolio_trades): hallazgo de la auditoría — tope de
+-- posición por %ADV (portfolio_simulator.MAX_POSITION_PCT_OF_ADV, 5% del
+-- volumen medio diario en $ de los 60 días de negociación ANTERIORES a la
+-- entrada — calculado desde el propio panel de precios del backtest, NO
+-- desde universe.adv_usd_60d, que se recalcula sobre los 60 días más
+-- recientes respecto a HOY y aplicarlo a un trade histórico sería un
+-- look-ahead sutil; ver compute_trailing_adv_usd). TRUE cuando el tamaño que
+-- el sizing por confianza/EV pedía se tuvo que REDUCIR por falta de
+-- liquidez real del ticker (nunca se descarta el trade, solo se dimensiona
+-- con más cautela — decisión explícita del usuario). Se persiste por trade
+-- para poder auditar cuántas señales se operaron con menos capital del
+-- pedido y en qué tickers/clases de evento concentra el problema.
+-- ============================================================================
+ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS had_adv_cap_applied BOOLEAN NOT NULL DEFAULT FALSE;

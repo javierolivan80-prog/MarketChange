@@ -301,6 +301,20 @@ simulación — ver el docstring de la constante para el razonamiento
 completo). Se persiste día a día en `portfolio_equity_curve.circuit_breaker_active`
 y se resume en `n_days_circuit_breaker_active` del reporte por versión.
 
+**Tope de posición por %ADV** (hallazgo de auditoría, decidido con el
+usuario: 5%, reduce en vez de descartar): ningún tamaño de posición puede
+superar el 5% del ADV (volumen medio diario en $) de los 60 días de
+negociación **anteriores a la entrada** — calculado directamente desde el
+propio panel de precios del backtest (`portfolio_simulator.compute_trailing_adv_usd`),
+**no** desde `universe.adv_usd_60d` (esa columna se recalcula sobre los 60
+días más recientes respecto a HOY, así que usarla para sizear un trade
+histórico de hace años sería aplicar la liquidez de hoy al pasado — un
+look-ahead sutil). Cuando el tamaño pedido por confianza/EV supera el tope,
+se reduce (nunca se descarta el trade); se marca en
+`portfolio_trades.had_adv_cap_applied` y se resume en
+`n_trades_with_adv_cap_applied` del reporte por versión. Sin datos
+suficientes de volumen (menos de 20 días válidos) no se aplica ningún tope.
+
 ```bash
 python -m pipeline.backtest.portfolio_report
 ```
