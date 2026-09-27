@@ -26,6 +26,7 @@ from pipeline.backtest.portfolio_metrics import (
 )
 from pipeline.backtest.portfolio_simulator import VERSIONS, simulate_portfolio
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
+from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, tag_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +146,20 @@ def _serialize_trade(t: dict) -> dict:
     }
 
 
-def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_000.0) -> dict:
-    """Corre las 3 versiones y ensambla el reporte completo — el punto de
-    entrada único para el "output día 4-5" del spec."""
+def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_000.0, sample: str | None = None) -> dict:
+    """Corre las 4 versiones y ensambla el reporte completo — el punto de
+    entrada único para el "output día 4-5" del spec.
+
+    `sample`: None (default) = sin partición, todo el rango de eventos
+    disponible — el comportamiento de siempre. 'in_sample' / 'oos' acotan
+    por d0_close_date (ver pipeline/backtest/sample_split.py). El reporte
+    resultante lleva el campo "sample" y, si sample='oos', un "oos_warning"
+    visible — para que un reporte OOS nunca se confunda con uno in-sample
+    ni en el JSON que persiste ni en lo que renderiza el dashboard."""
     version_reports = {}
     for version in VERSIONS:
-        logger.info("Simulando cartera %s (tag=%s)", version, run_batch_tag)
-        simulate_portfolio(conn, version, run_batch_tag, starting_capital)
+        logger.info("Simulando cartera %s (tag=%s, sample=%s)", version, run_batch_tag, sample)
+        simulate_portfolio(conn, version, run_batch_tag, starting_capital, sample=sample)
         version_reports[version] = build_version_report(conn, version, run_batch_tag, starting_capital)
 
     bias_report = compute_bias_report(conn)
@@ -160,10 +168,13 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
     report = {
         "run_batch_tag": run_batch_tag,
         "starting_capital": starting_capital,
+        "sample": sample,
         "versions": version_reports,
         "bias_report": bias_report,
         "recommendation": recommendation,
     }
+    if sample == SAMPLE_OOS:
+        report["oos_warning"] = OOS_WARNING
     _store_report(conn, run_batch_tag, report)
     return report
 
@@ -241,24 +252,58 @@ def generate_recommendation(version_reports: dict[str, dict]) -> dict:
 
 
 if __name__ == "__main__":
+    import argparse
     import json
     import subprocess
 
     logging.basicConfig(level=logging.INFO)
     from pipeline.db.connection import get_connection
 
+    parser = argparse.ArgumentParser()
+    _sample_group = parser.add_mutually_exclusive_group()
+    _sample_group.add_argument(
+        "--oos",
+        action="store_true",
+        help=(
+            "SOLO invocación manual — nunca en el cron nocturno (ver "
+            "nightly_pipeline.yml, que usa --full-range). Corre sobre "
+            "Out-of-Sample (config.OOS_START en adelante) en vez del default "
+            "IN_SAMPLE. Ver ARCHITECTURE_LEAN.md T6: se evalúa UNA SOLA VEZ — "
+            "si ajustas parámetros después de mirar este resultado, el holdout "
+            "ya no vale para nada."
+        ),
+    )
+    _sample_group.add_argument(
+        "--full-range",
+        action="store_true",
+        help=(
+            "Sin partición In-Sample/Out-of-Sample — todo el rango de eventos "
+            "disponible (sample=None, el comportamiento de antes de que este "
+            "split existiera). Es lo que usa el cron nocturno: el split OOS es "
+            "un concepto de VALIDACIÓN de investigación (evaluar una vez, no "
+            "reajustar), no algo que deba capar para siempre lo que ve el "
+            "pipeline de producción según van llegando eventos reales."
+        ),
+    )
+    args = parser.parse_args()
+    sample = None if args.full_range else (SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE)
+
     # run_batch_tag: fecha + git sha corto, igual que backtest_runs (Fase 1,
-    # T9 de ARCHITECTURE_LEAN.md — reproducibilidad).
+    # T9 de ARCHITECTURE_LEAN.md — reproducibilidad). Sufijo -OOS visible en
+    # el propio nombre del run cuando --oos, además del campo "sample"/
+    # "oos_warning" dentro del JSON (ver run_full_backtest).
     try:
         git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     except Exception:
         git_sha = "unknown"
-    tag = f"{date.today().isoformat()}-{git_sha}"
+    tag = f"{date.today().isoformat()}-{git_sha}{tag_suffix(sample)}"
 
     conn = get_connection()
-    report = run_full_backtest(conn, run_batch_tag=tag)
+    report = run_full_backtest(conn, run_batch_tag=tag, sample=sample)
 
-    print(f"=== Backtest de cartera — {tag} ===")
+    if sample == SAMPLE_OOS:
+        print(f"\n{'=' * 70}\n⚠️  {OOS_WARNING}\n{'=' * 70}\n")
+    print(f"=== Backtest de cartera — {tag} (sample={sample}) ===")
     print(json.dumps(report["recommendation"], indent=2, ensure_ascii=False))
     for version, v_report in report["versions"].items():
         print(f"\n--- {version} ---")

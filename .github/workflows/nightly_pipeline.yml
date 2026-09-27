@@ -284,16 +284,27 @@ jobs:
       # haya fallado (por ejemplo por falta de ANTHROPIC_API_KEY), en vez de
       # caerse con él. El run sigue marcándose como fallido — lo que no se
       # pierde es el resto del trabajo.
-      - name: Backtest de cartera (3 versiones — portfolio_simulator.py)
+      - name: Backtest de cartera (4 versiones — portfolio_simulator.py)
         if: ${{ !cancelled() }}
-        # Corre las 3 versiones sobre TODOS los eventos con trade_decision de
+        # Corre las 4 versiones sobre TODOS los eventos con trade_decision de
         # event_analyses. Es acumulativo por diseño de simulate_portfolio
         # (usa fetch_events_for_version, no filtra por "nuevos desde ayer"),
         # así que reejecutarlo cada noche recalcula la cartera completa con
         # el run_batch_tag del día — no es incremental como los pasos previos.
+        #
+        # --full-range (sample=None, sin partición In-Sample/Out-of-Sample):
+        # el split OOS (pipeline/backtest/sample_split.py, config.IN_SAMPLE_END/
+        # OOS_START) es un concepto de VALIDACIÓN de investigación — "ajusta
+        # parámetros solo mirando IN_SAMPLE, evalúa OOS una única vez"
+        # (ARCHITECTURE_LEAN.md T6) — no algo que deba capar para siempre lo
+        # que ve el pipeline de producción según van llegando eventos reales.
+        # Sin este flag, el cron dejaría de reflejar en portfolio_reports
+        # cualquier evento posterior a config.IN_SAMPLE_END. --oos y
+        # --sample in_sample quedan como flags de invocación MANUAL
+        # (investigación), nunca para este workflow.
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m pipeline.backtest.portfolio_report
+        run: python -m pipeline.backtest.portfolio_report --full-range
 
       - name: Validación estadística (Fase 6 — event study, sensibilidad, veredicto)
         if: ${{ !cancelled() }}
@@ -304,9 +315,15 @@ jobs:
         # automáticos, así que un fichero escrito aquí se perdería al acabar
         # el job (mismo motivo por el que price_backfill_manual no escribe
         # nada a disco tampoco). Ver pipeline/validation/report.py:persist_validation_report.
+        #
+        # --full-range: tiene que coincidir con el flag del paso de backtest
+        # de arriba (mismo run_batch_tag exacto, ver tag_suffix en
+        # sample_split.py) — si uno lleva --oos/--sample in_sample y el otro
+        # no, los tags no coinciden y persist_validation_report recalcularía
+        # el backtest entero en vez de reutilizar el de este mismo run.
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m pipeline.validation.report --persist-only
+        run: python -m pipeline.validation.report --persist-only --full-range
 
       - name: Paper trading semanal (Fase 4 — paper_trading/report.py)
         if: ${{ !cancelled() }}

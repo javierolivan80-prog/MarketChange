@@ -171,6 +171,50 @@ def test_run_full_backtest_persists_report_json_for_dashboard(conn):
         assert cur.fetchone()["n"] == 1
 
 
+def test_run_full_backtest_default_sample_is_none_and_no_oos_warning(conn):
+    """sample=None (default) = sin partición — comportamiento de siempre.
+    No debe llevar oos_warning (solo aparece con sample='oos')."""
+    from pipeline.backtest.portfolio_report import run_full_backtest
+
+    report = run_full_backtest(conn, run_batch_tag="sample-none-1", starting_capital=100_000.0)
+    assert report["sample"] is None
+    assert "oos_warning" not in report
+
+
+def test_run_full_backtest_oos_sample_carries_visible_warning(conn):
+    """sample='oos' debe quedar marcado en el propio reporte (campo "sample"
+    + "oos_warning") — es la salvaguarda del punto 3 del plan: que un
+    reporte OOS nunca se confunda con uno in-sample, incluso mirando solo
+    el JSON persistido, sin abrir ningún dashboard."""
+    from pipeline.backtest.portfolio_report import run_full_backtest
+    from pipeline.backtest.sample_split import OOS_WARNING
+
+    report = run_full_backtest(conn, run_batch_tag="sample-oos-1", starting_capital=100_000.0, sample="oos")
+    assert report["sample"] == "oos"
+    assert report["oos_warning"] == OOS_WARNING
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT report_json FROM portfolio_reports WHERE run_batch_tag = %s", ("sample-oos-1",))
+        stored = cur.fetchone()["report_json"]
+    assert stored["oos_warning"] == OOS_WARNING
+
+
+def test_run_full_backtest_in_sample_excludes_events_after_2023(conn):
+    """El filtro realmente se aplica de extremo a extremo (no solo se
+    etiqueta el reporte): un evento de 2024 no debe generar trades cuando
+    sample='in_sample'."""
+    from pipeline.backtest.portfolio_report import run_full_backtest
+
+    cal_oos = _business_days(date(2024, 1, 2), 40)
+    _seed_ticker_prices(conn, "FUTURE", cal_oos, [100.0] * len(cal_oos))
+    _seed_event(conn, "cik-future", "FUTURE", cal_oos[0], decision="LONG", net_conviction=0.7, confidence=80.0, ev=0.01)
+    conn.commit()
+
+    report = run_full_backtest(conn, run_batch_tag="in-sample-excl-1", starting_capital=100_000.0, sample="in_sample")
+    for version in report["versions"]:
+        assert report["versions"][version]["trade_metrics"]["total_trades"] == 0
+
+
 def test_generate_recommendation_flags_lookahead_violations_as_blocking():
     from pipeline.backtest.portfolio_report import generate_recommendation
 

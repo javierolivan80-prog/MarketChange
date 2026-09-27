@@ -44,6 +44,7 @@ from pipeline.backtest.portfolio_strategies import (
     compute_ev_weighted_position_size_pct,
     compute_position_size_pct,
 )
+from pipeline.backtest.sample_split import date_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -280,14 +281,20 @@ VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC")
 _TRADE_DECISION_SOURCE_VERSION = {"DYNAMIC": "BALANCED"}
 
 
-def fetch_events_for_version(conn, version: str) -> list[dict]:
+def fetch_events_for_version(conn, version: str, sample: str | None = None) -> list[dict]:
     """Eventos con trade_decision != NO_TRADE para `version`. Trae SIEMPRE
     los 3 ev_* (no solo el de la versión) porque BALANCED y DYNAMIC necesitan
     ev_conservative Y ev_aggressive para decidir el estilo de ejecución
     (classify_balanced_execution_style) — pedirlos todos es más simple que
-    dos queries distintas según la versión."""
+    dos queries distintas según la versión.
+
+    `sample`: None (default) = sin filtro, todo el rango — el comportamiento
+    de siempre, para no romper ninguna llamada existente. 'in_sample' /
+    'oos' acotan por d0_close_date según pipeline/backtest/sample_split.py
+    (que a su vez lee config.IN_SAMPLE_END / OOS_START)."""
     assert version in VERSIONS, f"versión desconocida: {version}"
     trade_decision_col = f"trade_decision_{_TRADE_DECISION_SOURCE_VERSION.get(version, version).lower()}"
+    start, end = date_bounds(sample)
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -299,8 +306,11 @@ def fetch_events_for_version(conn, version: str) -> list[dict]:
             FROM events e
             JOIN event_analyses ea ON ea.event_id = e.event_id
             WHERE ea.{trade_decision_col} != 'NO_TRADE'
+              AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
+              AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
             ORDER BY e.d0_close_date
-            """
+            """,
+            {"start": start, "end": end},
         )
         return cur.fetchall()
 
@@ -378,14 +388,15 @@ def _build_entry_plan(conn, version: str, events: list[dict], ticker_cache: dict
     return plan
 
 
-def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital: float = 100_000.0) -> dict:
+def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital: float = 100_000.0, sample: str | None = None) -> dict:
     """Punto de entrada del backtest de cartera para UNA versión de
     estrategia. Ver docstring del módulo para la disciplina anti-look-ahead
     y las decisiones de diseño (orden de prioridad TP/SL/trailing, MTM de
-    posiciones parcialmente cerradas, etc.)."""
+    posiciones parcialmente cerradas, etc.). `sample`: ver
+    fetch_events_for_version — None (default) no filtra nada."""
     assert version in VERSIONS
 
-    events = fetch_events_for_version(conn, version)
+    events = fetch_events_for_version(conn, version, sample=sample)
     if not events:
         logger.warning("Sin eventos con trade_decision para %s — nada que simular", version)
         return {"version": version, "n_trades": 0, "n_equity_days": 0}
