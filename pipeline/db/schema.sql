@@ -541,3 +541,38 @@ CREATE TABLE IF NOT EXISTS validation_reports (
     report_json     JSONB NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================================
+-- notified_at (event_analyses): marca de "ya se avisó por Telegram de esta
+-- señal" (pipeline/notify/signals_notifier.py). Vía ALTER, no en el CREATE
+-- TABLE de arriba — mismo motivo que high_low_range_pct/filing_text más
+-- arriba: CREATE TABLE IF NOT EXISTS es un no-op sobre una tabla que ya
+-- existe en cualquier base que no sea una instalación nueva. NULL = todavía
+-- no notificado; se pone a now() justo después de un envío correcto, nunca
+-- antes, para que un fallo de red a mitad del envío no se pierda: si el
+-- paso falla a mitad, la próxima pasada reintenta las filas que se
+-- quedaron en NULL.
+-- ============================================================================
+ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+
+-- ============================================================================
+-- notifications_sent: deduplicación de avisos que, a diferencia de una señal
+-- de trading (una fila de event_analyses, notificada una única vez), pueden
+-- recalcularse idénticos noche tras noche — las alerts de paper trading
+-- (pipeline/paper_trading/analysis.py:compute_alerts) se recomputan sobre la
+-- MISMA semana en cada pasada nocturna (run_batch_tag es por semana, no por
+-- día — ver paper_trading/report.py), así que sin esta tabla el mismo
+-- "2 pérdidas consecutivas en BALANCED" se reenviaría cada noche mientras la
+-- semana siga abierta.
+--
+-- notification_id es una clave estable construida por el notificador
+-- (típicamente run_batch_tag + version + type + un hash corto del mensaje) —
+-- el INSERT ... ON CONFLICT DO NOTHING RETURNING sirve de "compare-and-set"
+-- atómico: si la fila ya existía, no se devuelve nada y el notificador sabe
+-- que ese aviso concreto ya se mandó y no lo repite.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS notifications_sent (
+    notification_id   TEXT PRIMARY KEY,
+    channel            TEXT NOT NULL DEFAULT 'telegram',
+    sent_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);

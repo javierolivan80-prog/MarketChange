@@ -297,6 +297,23 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.paper_trading.report
 
+      - name: Avisos por Telegram (señales nuevas + alerts de paper trading)
+        # Va al final a propósito: depende de que event_analysis_pipeline (señales
+        # nuevas) y paper_trading.report (alerts) ya hayan corrido y persistido.
+        # Sin TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID configurados en los secrets del
+        # repo, ambos módulos se omiten en silencio (ver pipeline/notify/telegram.py)
+        # — no hace falta condicionar el step en sí. `!cancelled()` para que un
+        # fallo en el análisis de eventos (p. ej. sin ANTHROPIC_API_KEY) no
+        # impida notificar las alerts de paper trading que sí llegaron a persistirse.
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -m pipeline.notify.signals_notifier
+          python -m pipeline.notify.alerts_notifier
+
   # El backfill de precios (yfinance) va en un job SEPARADO, manual, no en el
   # cron nocturno normal: es la etapa lenta y frágil (ARCHITECTURE_LEAN.md §7)
   # y solo hace falta ejecutarla una vez para el histórico, más incrementos
