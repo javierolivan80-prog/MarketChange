@@ -260,6 +260,86 @@ class TestDynamicEvWeightedSizing:
         assert rows["HIGHEV"] > rows["LOWEV"]
 
 
+class TestSampleSplitFiltering:
+    """fetch_events_for_version + sample — ver pipeline/backtest/sample_split.py.
+    Dos eventos idénticos salvo la fecha (uno IN_SAMPLE, uno OOS): confirma
+    que el filtro de fecha real contra Postgres coincide con lo que
+    test_sample_split.py ya prueba en puro (aritmética de fechas)."""
+
+    def test_sample_none_returns_both_in_sample_and_oos_events(self, conn):
+        from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+        _seed_event_with_analysis(
+            conn, "1", "INSAMPLE", date(2023, 6, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "2", "OOSEVENT", date(2024, 6, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+
+        events = fetch_events_for_version(conn, "CONSERVATIVE", sample=None)
+        assert {e["ticker"] for e in events} == {"INSAMPLE", "OOSEVENT"}
+
+    def test_sample_in_sample_excludes_2024_event(self, conn):
+        from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+        _seed_event_with_analysis(
+            conn, "1", "INSAMPLE", date(2023, 6, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "2", "OOSEVENT", date(2024, 6, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+
+        events = fetch_events_for_version(conn, "CONSERVATIVE", sample="in_sample")
+        assert {e["ticker"] for e in events} == {"INSAMPLE"}
+
+    def test_sample_oos_excludes_2023_event(self, conn):
+        from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+        _seed_event_with_analysis(
+            conn, "1", "INSAMPLE", date(2023, 6, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "2", "OOSEVENT", date(2024, 6, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+
+        events = fetch_events_for_version(conn, "CONSERVATIVE", sample="oos")
+        assert {e["ticker"] for e in events} == {"OOSEVENT"}
+
+    def test_boundary_dates_land_on_the_correct_side(self, conn):
+        """31-dic-2023 (IN_SAMPLE_END, inclusive) y 1-ene-2024 (OOS_START,
+        inclusive) son el corte exacto que pide el plan — ambos deben caer
+        cada uno en su partición, ninguno se pierde ni se duplica."""
+        from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+        _seed_event_with_analysis(
+            conn, "1", "LASTINSAMPLE", date(2023, 12, 31),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "2", "FIRSTOOS", date(2024, 1, 1),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+
+        in_sample_tickers = {e["ticker"] for e in fetch_events_for_version(conn, "CONSERVATIVE", sample="in_sample")}
+        oos_tickers = {e["ticker"] for e in fetch_events_for_version(conn, "CONSERVATIVE", sample="oos")}
+        assert in_sample_tickers == {"LASTINSAMPLE"}
+        assert oos_tickers == {"FIRSTOOS"}
+
+
 class TestAggressiveTrailingStopPath:
     def test_aggressive_trade_partially_closes_via_trailing_stop(self, conn):
         from pipeline.backtest.portfolio_simulator import simulate_portfolio

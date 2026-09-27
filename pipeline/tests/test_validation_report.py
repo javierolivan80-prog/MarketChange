@@ -113,6 +113,65 @@ def test_generate_full_validation_report_end_to_end(conn, tmp_path):
     assert "PARTE 7 — Next steps" in content
     assert result["best_decision"]["label"] in content
 
+
+def test_generate_full_validation_report_oos_uses_separate_filename_and_banner(conn, tmp_path):
+    """Misma fixture que el test de arriba (eventos todos en 2024, es decir,
+    todos OOS) pero pidiendo sample='oos' explícitamente: debe escribir
+    VALIDATION_REPORT_OOS.md (nunca pisar VALIDATION_REPORT.md) y llevar la
+    cabecera de aviso visible — punto 3 del plan."""
+    from pipeline.validation.report import generate_full_validation_report
+
+    cal = _business_days(date(2024, 1, 2), 60)
+    classes = ["8K_2.02_EARNINGS", "8K_1.01_MATERIAL_AGREEMENT", "8K_5.02_OFFICER_CHANGE"]
+    for i in range(15):
+        d0 = cal[i]
+        ticker = f"O{i}"
+        closes = [100.0 + i * 0.5 + j * 0.2 for j in range(len(cal))]
+        _seed_full_event(
+            conn, f"o{i}", ticker, d0, cal, closes,
+            decision="LONG" if i % 4 != 0 else "NO_TRADE",
+            confidence=60.0 + i, ev=0.01, event_class=classes[i % 3], vix_d0=15.0 + i,
+        )
+
+    result = generate_full_validation_report(conn, run_batch_tag="validation-oos-1", docs_dir=str(tmp_path), sample="oos")
+
+    oos_path = tmp_path / "VALIDATION_REPORT_OOS.md"
+    in_sample_path = tmp_path / "VALIDATION_REPORT.md"
+    assert oos_path.exists()
+    assert not in_sample_path.exists()  # nunca se escribe el default en una corrida OOS
+    assert result["report_path"] == str(oos_path)
+
+    content = oos_path.read_text()
+    assert "OUT-OF-SAMPLE" in content
+    assert "NO USAR PARA AJUSTAR PARÁMETROS" in content
+
+
+def test_generate_full_validation_report_in_sample_excludes_2024_events(conn, tmp_path):
+    """Misma fixture (todos los eventos en 2024) pero pidiendo sample='in_sample':
+    ninguno debe sobrevivir el filtro — el Event Study de PARTE 1 debe salir
+    vacío, no solo el backtest de PARTE 2 (ver event_study.py:run_event_study,
+    que también acepta `sample` para no filtrar solo la mitad del reporte)."""
+    from pipeline.validation.report import generate_full_validation_report
+
+    cal = _business_days(date(2024, 1, 2), 60)
+    for i in range(5):
+        d0 = cal[i]
+        ticker = f"I{i}"
+        closes = [100.0 + i for _ in cal]
+        _seed_full_event(
+            conn, f"i{i}", ticker, d0, cal, closes,
+            decision="LONG", confidence=70.0, ev=0.01, event_class="8K_2.02_EARNINGS", vix_d0=18.0,
+        )
+
+    result = generate_full_validation_report(conn, run_batch_tag="validation-insample-1", docs_dir=str(tmp_path), sample="in_sample")
+    for version in ("CONSERVATIVE", "AGGRESSIVE", "BALANCED"):
+        assert result["decisions"][version]["reasons"]  # todavía calcula una decisión (n=0)...
+    content = (tmp_path / "VALIDATION_REPORT.md").read_text()
+    # ...pero la tabla de Event Study (PARTE 1) no debe listar ninguna clase:
+    # todos los eventos sembrados son de 2024 (OOS), sample='in_sample' los
+    # excluye antes de llegar a car_results.
+    assert "8K_2.02_EARNINGS" not in content.split("PARTE 2")[0]
+
     if result["n_trades_exported"] > 0:
         csv_path = tmp_path / f"trades_validation-test-1.csv"
         assert csv_path.exists()

@@ -1,0 +1,68 @@
+"""sample_split.py — partición In-Sample / Out-of-Sample (ARCHITECTURE_LEAN.md
+§8, T6 — "fuera de muestra, una sola vez", marcado como bloqueante).
+
+Por qué existe: `config.py` ya declaraba `IN_SAMPLE_END` y `OOS_START`, con un
+comentario explícito ("ajustar SOLO en IN_SAMPLE, evaluar UNA VEZ en OOS. No
+se debe ejecutar el backtest sobre OOS más de una vez") — pero ningún módulo
+las leía. `portfolio_simulator.py`, `portfolio_report.py` y
+`validation/report.py` corrían siempre sobre el rango completo de eventos, así
+que cualquier umbral ajustado a mano (EV thresholds, confidence floors,
+bandas de sizing...) se afinaba con visión de dataset completo — el holdout
+que el propio diseño del proyecto marca como innegociable no se aplicaba en
+ningún sitio. Este módulo es el único punto que traduce esas dos fechas de
+config.py a un filtro de consulta, para que in_sample/oos signifiquen
+exactamente lo mismo en todos los módulos que los usan.
+
+DISEÑO DELIBERADO — el filtro NO es el default de las funciones de librería:
+`sample=None` (el default en fetch_events_for_version, simulate_portfolio,
+run_full_backtest, run_event_study, persist_validation_report,
+generate_full_validation_report) significa "sin filtro, todo el rango
+configurado" — el comportamiento EXACTO de antes de este cambio, para no
+romper ningún test ni ninguna llamada existente que no pida explícitamente
+una muestra. Es cada **CLI** (`if __name__ == "__main__":` de portfolio_report.py
+y validation/report.py) quien por defecto elige SAMPLE_IN_SAMPLE y solo pasa
+a SAMPLE_OOS con el flag explícito `--oos` — "todo comando corre sobre
+IN_SAMPLE salvo que se pida OOS a propósito" es una decisión de los puntos de
+entrada, no de las funciones que reutilizan los tests.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+from pipeline import config
+
+SAMPLE_IN_SAMPLE = "in_sample"
+SAMPLE_OOS = "oos"
+SAMPLES = (SAMPLE_IN_SAMPLE, SAMPLE_OOS)
+
+IN_SAMPLE_END: date = date.fromisoformat(config.IN_SAMPLE_END)
+OOS_START: date = date.fromisoformat(config.OOS_START)
+
+# Cabecera visible en cualquier reporte/output generado con sample=SAMPLE_OOS
+# — el punto 3 del plan: que no se pueda confundir con un reporte in-sample
+# ni "colarse" a mirarlo sin darse cuenta de qué se está mirando.
+OOS_WARNING = "OUT-OF-SAMPLE — NO USAR PARA AJUSTAR PARÁMETROS"
+
+
+def validate_sample(sample: str | None) -> None:
+    if sample is not None and sample not in SAMPLES:
+        raise ValueError(f"sample desconocido: {sample!r} (usar uno de {SAMPLES}, o None para sin filtro)")
+
+
+def date_bounds(sample: str | None) -> tuple[date | None, date | None]:
+    """(start_inclusive, end_inclusive) del filtro sobre d0_close_date.
+    None en un extremo = sin límite por ese lado. sample=None = (None, None),
+    es decir, sin filtro en absoluto (ver nota de diseño del docstring del
+    módulo)."""
+    validate_sample(sample)
+    if sample is None:
+        return None, None
+    if sample == SAMPLE_IN_SAMPLE:
+        return None, IN_SAMPLE_END
+    return OOS_START, None
+
+
+def tag_suffix(sample: str | None) -> str:
+    """Sufijo para run_batch_tag/nombres de fichero — visible incluso si
+    alguien solo mira el nombre del run sin abrir el contenido."""
+    return "-OOS" if sample == SAMPLE_OOS else ""

@@ -15,6 +15,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from pipeline.backtest.portfolio_report import run_full_backtest
+from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, tag_suffix
 from pipeline.backtest.sensitivity import run_sensitivity_analysis
 from pipeline.validation.decision import generate_decision
 from pipeline.validation.event_study import run_event_study
@@ -172,6 +173,21 @@ def render_validation_report_markdown(
 ) -> str:
     bias = portfolio_report["bias_report"]
     generated_at = datetime.now().isoformat(timespec="seconds")
+    # sample viene del propio portfolio_report (run_full_backtest ya lo
+    # persiste ahí) — una sola fuente de verdad, en vez de un parámetro
+    # nuevo que pudiera desincronizarse de con qué datos se calculó todo lo
+    # demás de este documento.
+    oos_banner = (
+        f"\n> ## ⚠️ {OOS_WARNING}\n>\n"
+        "> Este documento se generó sobre la partición OUT-OF-SAMPLE "
+        "(`config.OOS_START` en adelante). Por diseño (`ARCHITECTURE_LEAN.md` "
+        "T6), esta evaluación se mira **una sola vez**: si después de leer "
+        "este resultado se ajusta cualquier umbral, banda de sizing o regla "
+        "de abstención y se vuelve a correr, el holdout queda invalidado — "
+        "ese ajuste ya no sería \"a ciegas\" respecto a estos datos.\n"
+        if portfolio_report.get("sample") == SAMPLE_OOS
+        else ""
+    )
 
     top_trades = []
     for version in VERSION_ORDER:
@@ -195,7 +211,7 @@ def render_validation_report_markdown(
     )
 
     return f"""# VALIDATION_REPORT.md
-
+{oos_banner}
 _Generado automáticamente por `pipeline/validation/report.py` el {generated_at}._
 
 **Advertencia de honestidad, léela antes que el resto del documento**: los
@@ -324,21 +340,30 @@ def _fetch_portfolio_report(conn, run_batch_tag: str) -> dict | None:
     return row["report_json"] if row else None
 
 
-def persist_validation_report(conn, run_batch_tag: str) -> dict:
+def persist_validation_report(conn, run_batch_tag: str, sample: str | None = None) -> dict:
     """Guarda event_study + sensitivity + decisión en validation_reports
     (JSONB), leyendo el portfolio_report ya persistido por el paso de
     backtest de la misma corrida en vez de recalcularlo. Pensado para el
     cron nocturno (ver nightly_pipeline.yml) — no escribe ningún fichero,
     solo Postgres, que es lo único que sobrevive a un runner efímero (ver
-    cabecera de la tabla validation_reports en schema.sql)."""
+    cabecera de la tabla validation_reports en schema.sql).
+
+    `sample`: None (default) / 'in_sample' / 'oos' — ver sample_split.py. Se
+    usa SOLO en la rama de defensa (cuando no hay portfolio_report todavía
+    y hay que calcularlo aquí) y para run_event_study: si el portfolio_report
+    de este run_batch_tag ya existe, su propio campo "sample" manda (fue
+    calculado con el que se le pasó a portfolio_report.py en su momento);
+    este parámetro es para cuando este mismo módulo es quien dispara ese
+    primer cálculo."""
     portfolio_report = _fetch_portfolio_report(conn, run_batch_tag)
     if portfolio_report is None:
         # Defensa: si por lo que sea no hay portfolio_report para este tag
         # (ej. se llama fuera del flujo nocturno normal), lo calcula aquí —
         # más caro, pero nunca deja el paso en un estado roto.
-        portfolio_report = run_full_backtest(conn, run_batch_tag=run_batch_tag)
+        portfolio_report = run_full_backtest(conn, run_batch_tag=run_batch_tag, sample=sample)
 
-    event_study = run_event_study(conn, window_days=20)
+    effective_sample = portfolio_report.get("sample")
+    event_study = run_event_study(conn, window_days=20, sample=effective_sample)
     sensitivity = run_sensitivity_analysis(conn, run_batch_tag=run_batch_tag)
     decisions = evaluate_all_versions_decision(portfolio_report)
     best_version, best_decision = overall_verdict(decisions)
@@ -346,6 +371,7 @@ def persist_validation_report(conn, run_batch_tag: str) -> dict:
     payload = {
         "run_batch_tag": run_batch_tag,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "sample": effective_sample,
         "event_study": event_study,
         "sensitivity": sensitivity,
         "decisions": decisions,
@@ -353,6 +379,8 @@ def persist_validation_report(conn, run_batch_tag: str) -> dict:
         "best_decision": best_decision,
         "bias_report": portfolio_report["bias_report"],
     }
+    if effective_sample == SAMPLE_OOS:
+        payload["oos_warning"] = OOS_WARNING
 
     with conn.cursor() as cur:
         cur.execute(
@@ -367,14 +395,21 @@ def persist_validation_report(conn, run_batch_tag: str) -> dict:
     return payload
 
 
-def generate_full_validation_report(conn, run_batch_tag: str | None = None, docs_dir: str = "docs") -> dict:
+def generate_full_validation_report(conn, run_batch_tag: str | None = None, docs_dir: str = "docs", sample: str | None = None) -> dict:
     """Punto de entrada único — corre el backtest (si hace falta), el event
     study, la sensibilidad, calcula las 3 decisiones, escribe
-    docs/VALIDATION_REPORT.md y el CSV de trades junto a él."""
+    docs/VALIDATION_REPORT.md (o VALIDATION_REPORT_OOS.md si sample='oos' —
+    nunca pisa el in-sample) y el CSV de trades junto a él.
+
+    `sample`: None (default) / 'in_sample' / 'oos' — ver sample_split.py.
+    Solo se autogenera el sufijo -OOS en run_batch_tag cuando este mismo
+    caller lo construye (run_batch_tag=None); si el caller pasa un tag
+    explícito, se respeta tal cual (mismo criterio que el resto del
+    proyecto: el caller que nombra el tag es responsable de su forma)."""
     if run_batch_tag is None:
-        run_batch_tag = f"validation-{date.today().isoformat()}"
-    portfolio_report = run_full_backtest(conn, run_batch_tag=run_batch_tag)
-    event_study = run_event_study(conn, window_days=20)
+        run_batch_tag = f"validation-{date.today().isoformat()}{tag_suffix(sample)}"
+    portfolio_report = run_full_backtest(conn, run_batch_tag=run_batch_tag, sample=sample)
+    event_study = run_event_study(conn, window_days=20, sample=sample)
     sensitivity = run_sensitivity_analysis(conn, run_batch_tag=run_batch_tag)
     decisions = evaluate_all_versions_decision(portfolio_report)
     best_version, best_decision = overall_verdict(decisions)
@@ -383,7 +418,8 @@ def generate_full_validation_report(conn, run_batch_tag: str | None = None, docs
 
     docs_path = Path(docs_dir)
     docs_path.mkdir(parents=True, exist_ok=True)
-    report_path = docs_path / "VALIDATION_REPORT.md"
+    report_filename = "VALIDATION_REPORT_OOS.md" if sample == SAMPLE_OOS else "VALIDATION_REPORT.md"
+    report_path = docs_path / report_filename
     report_path.write_text(markdown)
 
     csv_path = docs_path / f"trades_{run_batch_tag}.csv"
@@ -419,24 +455,40 @@ if __name__ == "__main__":
             "corrida ya dejó en la BD (ver persist_validation_report)."
         ),
     )
+    parser.add_argument(
+        "--oos",
+        action="store_true",
+        help=(
+            "Corre sobre Out-of-Sample en vez del default IN_SAMPLE — ver el mismo "
+            "flag en backtest/portfolio_report.py. Con --persist-only, tiene que "
+            "coincidir con el --oos (o su ausencia) de la corrida de portfolio_report.py "
+            "de este mismo run_batch_tag, o el tag no coincidirá y se recalculará todo."
+        ),
+    )
     args = parser.parse_args()
+    sample = SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE
 
     conn = get_connection()
 
     if args.persist_only:
-        # Mismo esquema de tag que backtest/portfolio_report.py:__main__ —
-        # tiene que coincidir exactamente para encontrar el portfolio_report
-        # de esta misma corrida en vez de calcular uno nuevo.
+        # Mismo esquema de tag (incluido el sufijo -OOS) que
+        # backtest/portfolio_report.py:__main__ — tiene que coincidir
+        # exactamente para encontrar el portfolio_report de esta misma
+        # corrida en vez de calcular uno nuevo.
         try:
             git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
         except Exception:
             git_sha = "unknown"
-        tag = f"{date.today().isoformat()}-{git_sha}"
-        payload = persist_validation_report(conn, tag)
+        tag = f"{date.today().isoformat()}-{git_sha}{tag_suffix(sample)}"
+        payload = persist_validation_report(conn, tag, sample=sample)
+        if payload.get("sample") == SAMPLE_OOS:
+            print(f"\n{'=' * 70}\n⚠️  {OOS_WARNING}\n{'=' * 70}\n")
         print(f"validation_reports actualizado para {tag}")
         print(f"Veredicto: {payload['best_decision']['label']} ({payload['best_version']})")
     else:
-        result = generate_full_validation_report(conn)
+        result = generate_full_validation_report(conn, sample=sample)
+        if sample == SAMPLE_OOS:
+            print(f"\n{'=' * 70}\n⚠️  {OOS_WARNING}\n{'=' * 70}\n")
         print(f"Reporte escrito en {result['report_path']}")
         print(f"CSV con {result['n_trades_exported']} trades en {result['csv_path']}")
         print(f"Veredicto: {result['best_decision']['label']} ({result['best_version']})")

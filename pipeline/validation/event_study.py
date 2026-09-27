@@ -20,6 +20,8 @@ from __future__ import annotations
 import numpy as np
 from scipy import stats
 
+from pipeline.backtest.sample_split import date_bounds
+
 MDE_POWER_CONSTANT = 2.8  # ver docstring del módulo — AUDIT_LEAN.md §2.2.3
 SIGNIFICANCE_ALPHA = 0.05
 MIN_N_FOR_ANY_STATISTIC = 3  # por debajo de esto, ni sigma tiene sentido
@@ -32,16 +34,19 @@ def compute_mde(sigma: float, n: int) -> float | None:
     return MDE_POWER_CONSTANT * sigma / np.sqrt(n)
 
 
-def _fetch_car_by_class(conn, window_days: int) -> dict[str, list[float]]:
+def _fetch_car_by_class(conn, window_days: int, sample: str | None = None) -> dict[str, list[float]]:
+    start, end = date_bounds(sample)
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT e.event_class, cr.car
             FROM car_results cr
             JOIN events e ON e.event_id = cr.event_id
-            WHERE cr.window_days = %s
+            WHERE cr.window_days = %(window_days)s
+              AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
+              AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
             """,
-            (window_days,),
+            {"window_days": window_days, "start": start, "end": end},
         )
         rows = cur.fetchall()
     by_class: dict[str, list[float]] = {}
@@ -108,10 +113,18 @@ def compute_event_study_for_class(car_values: list[float]) -> dict:
     }
 
 
-def run_event_study(conn, window_days: int = 20) -> dict[str, dict]:
+def run_event_study(conn, window_days: int = 20, sample: str | None = None) -> dict[str, dict]:
     """Punto de entrada — una fila de compute_event_study_for_class por
     event_class presente en car_results para la ventana dada. window_days=20
     por defecto (deriva histórica, no la reacción inmediata de 5 días) —
-    mismo horizonte que AUDIT_LEAN.md §2.2.3 usa en su tabla de ejemplo."""
-    by_class = _fetch_car_by_class(conn, window_days)
+    mismo horizonte que AUDIT_LEAN.md §2.2.3 usa en su tabla de ejemplo.
+
+    `sample`: None (default, sin filtro) / 'in_sample' / 'oos' — ver
+    pipeline/backtest/sample_split.py. Se acota aquí también (no solo en el
+    backtest de portfolio_report.py) para que un reporte de validación OOS
+    no filtre información de la partición in-sample a través del Event
+    Study (PARTE 1 del reporte): sin este filtro, un run con --oos habría
+    mostrado igualmente el CAR calculado sobre TODOS los eventos, in-sample
+    incluido, deshaciendo el propósito del holdout en la mitad del reporte."""
+    by_class = _fetch_car_by_class(conn, window_days, sample=sample)
     return {event_class: compute_event_study_for_class(values) for event_class, values in by_class.items()}
