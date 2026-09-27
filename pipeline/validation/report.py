@@ -455,18 +455,31 @@ if __name__ == "__main__":
             "corrida ya dejó en la BD (ver persist_validation_report)."
         ),
     )
-    parser.add_argument(
+    _sample_group = parser.add_mutually_exclusive_group()
+    _sample_group.add_argument(
         "--oos",
         action="store_true",
         help=(
-            "Corre sobre Out-of-Sample en vez del default IN_SAMPLE — ver el mismo "
-            "flag en backtest/portfolio_report.py. Con --persist-only, tiene que "
-            "coincidir con el --oos (o su ausencia) de la corrida de portfolio_report.py "
-            "de este mismo run_batch_tag, o el tag no coincidirá y se recalculará todo."
+            "SOLO invocación manual — nunca en el cron nocturno (ver "
+            "nightly_pipeline.yml, que usa --full-range). Corre sobre "
+            "Out-of-Sample en vez del default IN_SAMPLE — ver el mismo flag en "
+            "backtest/portfolio_report.py. Con --persist-only, tiene que "
+            "coincidir con el --oos/--full-range (o su ausencia) de la corrida "
+            "de portfolio_report.py de este mismo run_batch_tag, o el tag no "
+            "coincidirá y se recalculará todo."
+        ),
+    )
+    _sample_group.add_argument(
+        "--full-range",
+        action="store_true",
+        help=(
+            "Sin partición In-Sample/Out-of-Sample (sample=None) — el mismo "
+            "flag y el mismo razonamiento que backtest/portfolio_report.py. Es "
+            "lo que usa el cron nocturno."
         ),
     )
     args = parser.parse_args()
-    sample = SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE
+    sample = None if args.full_range else (SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE)
 
     conn = get_connection()
 

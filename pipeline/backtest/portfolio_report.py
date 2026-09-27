@@ -260,18 +260,33 @@ if __name__ == "__main__":
     from pipeline.db.connection import get_connection
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    _sample_group = parser.add_mutually_exclusive_group()
+    _sample_group.add_argument(
         "--oos",
         action="store_true",
         help=(
-            "Corre sobre Out-of-Sample (config.OOS_START en adelante) en vez del "
-            "default IN_SAMPLE. Ver ARCHITECTURE_LEAN.md T6: se evalúa UNA SOLA VEZ "
-            "— si ajustas parámetros después de mirar este resultado, el holdout ya "
-            "no vale para nada."
+            "SOLO invocación manual — nunca en el cron nocturno (ver "
+            "nightly_pipeline.yml, que usa --full-range). Corre sobre "
+            "Out-of-Sample (config.OOS_START en adelante) en vez del default "
+            "IN_SAMPLE. Ver ARCHITECTURE_LEAN.md T6: se evalúa UNA SOLA VEZ — "
+            "si ajustas parámetros después de mirar este resultado, el holdout "
+            "ya no vale para nada."
+        ),
+    )
+    _sample_group.add_argument(
+        "--full-range",
+        action="store_true",
+        help=(
+            "Sin partición In-Sample/Out-of-Sample — todo el rango de eventos "
+            "disponible (sample=None, el comportamiento de antes de que este "
+            "split existiera). Es lo que usa el cron nocturno: el split OOS es "
+            "un concepto de VALIDACIÓN de investigación (evaluar una vez, no "
+            "reajustar), no algo que deba capar para siempre lo que ve el "
+            "pipeline de producción según van llegando eventos reales."
         ),
     )
     args = parser.parse_args()
-    sample = SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE
+    sample = None if args.full_range else (SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE)
 
     # run_batch_tag: fecha + git sha corto, igual que backtest_runs (Fase 1,
     # T9 de ARCHITECTURE_LEAN.md — reproducibilidad). Sufijo -OOS visible en
