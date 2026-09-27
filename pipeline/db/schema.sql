@@ -623,3 +623,17 @@ ALTER TABLE portfolio_equity_curve ADD CONSTRAINT portfolio_equity_curve_version
 ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS portfolio_trades_exit_reason_check;
 ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
     CHECK (exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'MAX_HOLDING', 'TRAILING_STOP', 'DATA_GAP'));
+
+-- ============================================================================
+-- circuit_breaker_active (portfolio_equity_curve): hallazgo de la auditoría,
+-- prioridad máxima — protección de capital real. Marca, día a día, si el
+-- circuit-breaker de drawdown (portfolio_simulator.DRAWDOWN_CIRCUIT_BREAKER_PCT,
+-- 15% pico-a-valle sobre la equity de ESA versión) estaba activo y por tanto
+-- bloqueando entradas nuevas (las posiciones ya abiertas se siguen
+-- gestionando con sus reglas normales — ver el docstring de la constante en
+-- portfolio_simulator.py para el porqué de "solo bloquear entradas" en vez
+-- de forzar liquidación). Se persiste día a día, no solo un resumen
+-- agregado, para poder mostrar en el dashboard EXACTAMENTE cuándo estuvo
+-- activo, no solo si estuvo activo alguna vez.
+-- ============================================================================
+ALTER TABLE portfolio_equity_curve ADD COLUMN IF NOT EXISTS circuit_breaker_active BOOLEAN NOT NULL DEFAULT FALSE;

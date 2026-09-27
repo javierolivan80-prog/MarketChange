@@ -62,7 +62,7 @@ def _fetch_trades(conn, version: str, run_batch_tag: str) -> list[dict]:
 def _fetch_equity_curve(conn, version: str, run_batch_tag: str) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT trade_date, balance, n_open_positions FROM portfolio_equity_curve "
+            "SELECT trade_date, balance, n_open_positions, circuit_breaker_active FROM portfolio_equity_curve "
             "WHERE version = %s AND run_batch_tag = %s ORDER BY trade_date",
             (version, run_batch_tag),
         )
@@ -113,7 +113,16 @@ def build_version_report(conn, version: str, run_batch_tag: str, starting_capita
         "run_batch_tag": run_batch_tag,
         "trade_metrics": trade_metrics,
         "equity_metrics": equity_metrics,
-        "equity_curve": [{"trade_date": r["trade_date"].isoformat(), "balance": float(r["balance"])} for r in equity_curve],
+        "equity_curve": [
+            {"trade_date": r["trade_date"].isoformat(), "balance": float(r["balance"]), "circuit_breaker_active": bool(r["circuit_breaker_active"])}
+            for r in equity_curve
+        ],
+        # Días con el circuit-breaker de drawdown activo (ver
+        # portfolio_simulator.DRAWDOWN_CIRCUIT_BREAKER_PCT) — visible aquí
+        # para no tener que abrir la curva de equity entera para saber si
+        # esta versión pasó por una racha lo bastante mala como para
+        # bloquear entradas nuevas.
+        "n_days_circuit_breaker_active": sum(1 for r in equity_curve if r["circuit_breaker_active"]),
         "metrics_by_event_type": by_event_type,
         "confidence_calibration": confidence_calibration,
         "calibration": calibration,
