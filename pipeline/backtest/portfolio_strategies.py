@@ -33,10 +33,28 @@ número exacto. Se documenta cada decisión aquí, no se oculta en el código:
    confidence_in_conviction entre el umbral de la estrategia (-> min) y 100
    (-> max). Ata el tamaño a la convicción del Judge, que es la única señal
    de "qué tan fuerte es esta idea" disponible en la decisión.
+
+5. DYNAMIC no es una versión del spec original — es una 4ª versión añadida
+   después, para cerrar un hueco real: pipeline/analyze/ev_engine.py (Etapa
+   7) ya calcula un tamaño de posición ponderado por |EV|×confianza
+   (`position_size_pct`, con topes 3%/5%/8% por versión) y lo persiste en
+   event_analyses.ev_calculation — pero ninguna versión del backtest lo leía
+   nunca; se calculaba y se descartaba. DYNAMIC reutiliza el criterio de SI
+   operar de BALANCED (mismo trade_decision_balanced, mismo
+   classify_balanced_execution_style para TP/SL/holding period) y sustituye
+   SOLO el sizing: en vez del fijo 1.5%/5% de Balanced o el interpolado por
+   confianza de Conservative/Aggressive, usa compute_ev_weighted_position_size_pct
+   de aquí abajo. Es deliberadamente una versión SEPARADA y no un cambio a
+   las 3 anteriores: así se puede comparar en el backtest/paper trading antes
+   de confiar en ella con capital real, sin invalidar lo ya auditado de
+   CONSERVATIVE/AGGRESSIVE/BALANCED (ver sus tests, que fijan ese
+   comportamiento a propósito).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from pipeline.analyze.ev_engine import position_size_pct as _ev_engine_position_size_pct
 
 EXECUTION_STYLES = ("CONSERVATIVE", "AGGRESSIVE")
 
@@ -143,3 +161,18 @@ def compute_balanced_position_size_pct(execution_style: str) -> float:
     """Balanced NO interpola por confianza (el spec da un número fijo por
     estilo: 1.5% / 5%) — se respeta literalmente."""
     return BALANCED_POSITION_SIZE_PCT[execution_style]
+
+
+def compute_ev_weighted_position_size_pct(ev: float, confidence: float, execution_style: str) -> float:
+    """Sizing de la versión DYNAMIC (ver nota 5 del docstring del módulo).
+
+    `execution_style` es 'CONSERVATIVE' o 'AGGRESSIVE' (la salida de
+    classify_balanced_execution_style, NO 'BALANCED' — ev_engine.position_size_pct
+    solo conoce topes para los 3 nombres de versión oficiales, y aquí
+    reutilizamos el tope de la versión cuyo estilo de ejecución se está
+    imitando, mismo razonamiento que ya usa compute_balanced_position_size_pct
+    para Balanced). `ev` es el ev_conservative o ev_aggressive ya seleccionado
+    por el caller según ese mismo estilo (mismo valor que usa
+    open_position() para el resto de la posición — un solo ev por trade,
+    no dos)."""
+    return _ev_engine_position_size_pct(ev, confidence, execution_style)

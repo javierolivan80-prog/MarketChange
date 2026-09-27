@@ -113,7 +113,7 @@ def test_run_full_backtest_end_to_end_produces_complete_report(conn):
 
     report = run_full_backtest(conn, run_batch_tag="full-test-1", starting_capital=100_000.0)
 
-    assert set(report["versions"].keys()) == {"CONSERVATIVE", "AGGRESSIVE", "BALANCED"}
+    assert set(report["versions"].keys()) == {"CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC"}
     cons = report["versions"]["CONSERVATIVE"]
     assert cons["trade_metrics"]["total_trades"] > 0
     assert cons["no_lookahead_violations"] == []
@@ -123,7 +123,7 @@ def test_run_full_backtest_end_to_end_produces_complete_report(conn):
         "NO todavía",
         "SÍ, con capital de prueba pequeño y solo en la(s) versión(es) que superan los 3 criterios",
     )
-    assert len(report["recommendation"]["findings"]) == 3  # una entrada por versión
+    assert len(report["recommendation"]["findings"]) == 4  # una entrada por versión (incl. DYNAMIC)
 
     assert report["bias_report"]["n_total_tickers"] == 25
 

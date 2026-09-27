@@ -195,6 +195,71 @@ class TestBalancedExecutionStyleSplit:
         assert float(trade["position_size_pct"]) == pytest.approx(1.5)  # tamaño fijo de Balanced-Conservative
 
 
+class TestDynamicEvWeightedSizing:
+    def test_dynamic_reuses_balanced_trade_decision_but_sizes_by_ev(self, conn):
+        """DYNAMIC no tiene su propia trade_decision_dynamic (no existe esa
+        columna) — reutiliza trade_decision_balanced (mismo evento, mismo
+        estilo CONSERVATIVE por la misma clasificación), pero el tamaño debe
+        salir de compute_ev_weighted_position_size_pct (ponderado por EV), NO
+        del 1.5% fijo que usaría BALANCED para el mismo evento."""
+        from pipeline.analyze.ev_engine import position_size_pct
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        d0 = cal[0]
+        _seed_event_with_analysis(
+            conn, "1", "TESTCO", d0,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="LONG",
+            net_conviction=0.8, confidence=90.0,  # mismo caso que el test de BALANCED de arriba -> estilo CONSERVATIVE
+            ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        flat_closes = [100.0] * len(cal)
+        _seed_price_series(conn, "TESTCO", cal, flat_closes)
+
+        result = simulate_portfolio(conn, "DYNAMIC", run_batch_tag="test-dynamic-1", starting_capital=100_000.0)
+        assert result["n_trades"] == 1
+        with conn.cursor() as cur:
+            cur.execute("SELECT execution_style, position_size_pct FROM portfolio_trades WHERE run_batch_tag='test-dynamic-1'")
+            trade = cur.fetchone()
+        assert trade["execution_style"] == "CONSERVATIVE"  # mismo criterio que BALANCED
+        expected_size = position_size_pct(0.01, 90.0, "CONSERVATIVE")
+        assert float(trade["position_size_pct"]) == pytest.approx(expected_size)
+        assert float(trade["position_size_pct"]) != pytest.approx(1.5)  # NO el fijo de BALANCED
+
+    def test_dynamic_sizes_up_with_higher_ev_same_confidence(self, conn):
+        """Dos eventos idénticos salvo el EV: DYNAMIC debe apostar más al de
+        mayor EV — justo lo que BALANCED (tamaño fijo) no puede hacer."""
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        d0 = cal[0]
+        _seed_event_with_analysis(
+            conn, "1", "LOWEV", d0,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="LONG",
+            net_conviction=0.8, confidence=90.0,
+            ev_conservative=0.003, ev_aggressive=0.003, ev_balanced=0.003,
+        )
+        _seed_event_with_analysis(
+            conn, "2", "HIGHEV", d0,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="LONG",
+            net_conviction=0.8, confidence=90.0,
+            ev_conservative=0.02, ev_aggressive=0.02, ev_balanced=0.02,
+        )
+        flat_closes = [100.0] * len(cal)
+        _seed_price_series(conn, "LOWEV", cal, flat_closes)
+        _seed_price_series(conn, "HIGHEV", cal, flat_closes)
+
+        simulate_portfolio(conn, "DYNAMIC", run_batch_tag="test-dynamic-2", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT e.ticker, pt.position_size_pct FROM portfolio_trades pt "
+                "JOIN events e ON e.event_id = pt.event_id "
+                "WHERE pt.run_batch_tag='test-dynamic-2' ORDER BY e.ticker"
+            )
+            rows = {r["ticker"]: float(r["position_size_pct"]) for r in cur.fetchall()}
+        assert rows["HIGHEV"] > rows["LOWEV"]
+
+
 class TestAggressiveTrailingStopPath:
     def test_aggressive_trade_partially_closes_via_trailing_stop(self, conn):
         from pipeline.backtest.portfolio_simulator import simulate_portfolio

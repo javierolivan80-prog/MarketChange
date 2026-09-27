@@ -41,6 +41,7 @@ from pipeline.backtest.portfolio_strategies import (
     STRATEGIES,
     classify_balanced_execution_style,
     compute_balanced_position_size_pct,
+    compute_ev_weighted_position_size_pct,
     compute_position_size_pct,
 )
 
@@ -220,9 +221,13 @@ def open_position(
 ) -> OpenPosition:
     """Construye una OpenPosition con el sizing y los umbrales TP/SL/trailing
     de execution_style (STRATEGIES[execution_style] — para BALANCED, ver
-    compute_balanced_position_size_pct en vez de compute_position_size_pct)."""
+    compute_balanced_position_size_pct; para DYNAMIC, ver
+    compute_ev_weighted_position_size_pct; ambas en vez de
+    compute_position_size_pct)."""
     config = STRATEGIES[execution_style]
-    if version == "BALANCED":
+    if version == "DYNAMIC":
+        size_pct = compute_ev_weighted_position_size_pct(ev, confidence, execution_style)
+    elif version == "BALANCED":
         size_pct = compute_balanced_position_size_pct(execution_style)
     else:
         size_pct = compute_position_size_pct(confidence, config)
@@ -266,17 +271,23 @@ def compute_target_date(entry_date: date, holding_period_max_days: int, ticker_t
 # Orquestación contra Postgres — fetch de eventos, bucle día a día, escritura.
 # ============================================================================
 
-VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED")
+VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC")
+
+# DYNAMIC no tiene su propia columna trade_decision_dynamic (no hay 4ª
+# columna en event_analyses, y no hace falta una — ver nota 5 del docstring
+# de portfolio_strategies.py): reutiliza trade_decision_balanced, el mismo
+# criterio de SI operar que Balanced. Solo cambia el sizing.
+_TRADE_DECISION_SOURCE_VERSION = {"DYNAMIC": "BALANCED"}
 
 
 def fetch_events_for_version(conn, version: str) -> list[dict]:
     """Eventos con trade_decision != NO_TRADE para `version`. Trae SIEMPRE
-    los 3 ev_* (no solo el de la versión) porque BALANCED necesita
+    los 3 ev_* (no solo el de la versión) porque BALANCED y DYNAMIC necesitan
     ev_conservative Y ev_aggressive para decidir el estilo de ejecución
     (classify_balanced_execution_style) — pedirlos todos es más simple que
     dos queries distintas según la versión."""
     assert version in VERSIONS, f"versión desconocida: {version}"
-    trade_decision_col = f"trade_decision_{version.lower()}"
+    trade_decision_col = f"trade_decision_{_TRADE_DECISION_SOURCE_VERSION.get(version, version).lower()}"
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -341,7 +352,7 @@ def _build_entry_plan(conn, version: str, events: list[dict], ticker_cache: dict
             continue
 
         direction = "LONG" if float(ev["prediction"]) > 0 else "SHORT"
-        if version == "BALANCED":
+        if version in ("BALANCED", "DYNAMIC"):
             style = classify_balanced_execution_style(float(ev["confidence"]), float(ev["ev_conservative"]), float(ev["ev_aggressive"]))
             ev_value = float(ev["ev_conservative"]) if style == "CONSERVATIVE" else float(ev["ev_aggressive"])
         else:
@@ -395,7 +406,10 @@ def simulate_portfolio(conn, version: str, run_batch_tag: str, starting_capital:
     first_entry = min(p["entry_date"] for p in entry_plan)
     master_calendar = sorted(d for d in all_dates if d >= first_entry)
 
-    if version == "BALANCED":
+    if version in ("BALANCED", "DYNAMIC"):
+        # Mismo reparto 3+2 que BALANCED: ambas comparten fuente de trade
+        # decision y clasificación de estilo (ver _TRADE_DECISION_SOURCE_VERSION),
+        # así que no hay un tercer criterio de concurrencia que inventar.
         max_concurrent = dict(BALANCED_MAX_CONCURRENT)
     elif version == "CONSERVATIVE":
         max_concurrent = {"CONSERVATIVE": STRATEGIES["CONSERVATIVE"].max_concurrent, "AGGRESSIVE": 0}
