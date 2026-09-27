@@ -32,6 +32,17 @@ ANALYZER_MODEL = "claude-haiku-4-5"  # Bull/Bear (Etapas 3-4) — "rápido", ped
 # disponible (claude-sonnet-5). Ver adversarial_analyzer.py.
 JUDGE_MODEL = "claude-sonnet-4-6"
 
+# --- Telegram (pipeline/notify/telegram.py) ---
+# Bot creado con @BotFather (gratis, sin verificación) — ver RUNBOOK.md para
+# el paso a paso de cómo sacar el token y el chat_id. Ausentes por defecto:
+# sin ellas, telegram.send_message no falla el pipeline, solo se omite (ver
+# su docstring) — así este mismo sandbox de desarrollo, que no las tiene
+# definidas, puede seguir corriendo el resto del código sin tropezar aquí.
+_telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_TOKEN = _telegram_token.strip() if _telegram_token else None
+_telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_ID = _telegram_chat_id.strip() if _telegram_chat_id else None
+
 # --- EDGAR ---
 # La SEC exige un User-Agent identificable con contacto real. No es opcional:
 # sin esto, EDGAR devuelve 403. https://www.sec.gov/os/webmaster-faq#developers

@@ -93,6 +93,35 @@ En el repo: **Settings → Secrets and variables → Actions → New repository 
 | `DATABASE_URL` | La cadena de conexión de Neon/Supabase (incluye usuario/contraseña) |
 | `ANTHROPIC_API_KEY` | Tu clave de console.anthropic.com |
 | `EDGAR_USER_AGENT` | `"Tu Nombre tu@email.com"` — la SEC exige un contacto real, o bloquea con 403 |
+| `TELEGRAM_BOT_TOKEN` | Token del bot (ver 2.1) — opcional, sin él el pipeline sigue corriendo, solo no manda avisos |
+| `TELEGRAM_CHAT_ID` | Tu chat_id (ver 2.1) — opcional, igual que arriba |
+
+### 2.1 Bot de Telegram para avisos (opcional, gratis, 2 minutos)
+
+Manda las señales `TRADE` nuevas y las alerts de paper trading
+(`pipeline/notify/`) a tu Telegram en cuanto el pipeline nocturno termina.
+Sin esto configurado, el pipeline corre exactamente igual — solo se omiten
+esos dos pasos (`pipeline/notify/telegram.py:is_configured`).
+
+1. Habla con **[@BotFather](https://t.me/BotFather)** en Telegram, manda
+   `/newbot`, sigue las instrucciones (nombre + username terminado en `bot`).
+   Te da un token con forma `123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
+   — ese es `TELEGRAM_BOT_TOKEN`.
+2. Manda cualquier mensaje a tu bot recién creado (búscalo por el username
+   que le pusiste) para que Telegram registre la conversación.
+3. Consigue tu `chat_id` abriendo en el navegador, sustituyendo el token:
+   `https://api.telegram.org/bot<TU_TOKEN>/getUpdates` — busca
+   `"chat":{"id": ...}` en la respuesta JSON. Ese número es
+   `TELEGRAM_CHAT_ID`.
+4. Añade ambos como secrets del repo (tabla de arriba).
+
+Para probarlo a mano antes de esperar al cron nocturno:
+
+```bash
+export TELEGRAM_BOT_TOKEN="tu-token"
+export TELEGRAM_CHAT_ID="tu-chat-id"
+python -c "from pipeline.notify.telegram import send_message; print(send_message('Prueba desde Money'))"
+```
 
 ## 3. Primer arranque (en este orden — no te lo saltes)
 
