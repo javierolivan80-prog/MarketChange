@@ -135,14 +135,24 @@ def _event_study_table(event_study: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def _backtest_table(portfolio_report: dict) -> str:
+def _backtest_table(portfolio_report: dict, decisions: dict[str, dict]) -> str:
+    """La columna "Rec" reutiliza el MISMO veredicto de PARTE 6
+    (`decisions`, ya calculado por `evaluate_all_versions_decision` con los
+    umbrales GREENLIGHT/YELLOWLIGHT/REDLIGHT de `decision.py`) — hallazgo de
+    auditoría (IMPROVEMENT_PLAN.md R2): antes calculaba su propio criterio
+    ad hoc, inline y más laxo (`win_rate>0.55 and sharpe>1.0`, sin mirar
+    drawdown, calibración, n_trades ni violaciones anti-look-ahead), lo que
+    podía mostrar "YES" aquí y "REDLIGHT" en PARTE 6 para la MISMA versión en
+    el MISMO documento, sin explicación. Una sola fuente de verdad por
+    veredicto, no dos criterios distintos en el mismo reporte."""
     lines = ["| Versión | Total Return | Sharpe | Max DD | Win Rate | N | Rec |", "|---|---|---|---|---|---|---|"]
     for version in VERSION_ORDER:
         v = portfolio_report["versions"].get(version)
         if not v:
             continue
         em, tm = v["equity_metrics"], v["trade_metrics"]
-        rec = "YES" if (tm["win_rate"] or 0) > 0.55 and (em["sharpe_ratio"] or 0) > 1.0 else "NO"
+        decision = decisions.get(version)
+        rec = decision["option"] if decision else "—"
         lines.append(
             f"| {version} | {_fmt_pct(em['total_return'])} | {_fmt_num(em['sharpe_ratio'])} | "
             f"{_fmt_pct(em['max_drawdown'])} | {_fmt_pct(tm['win_rate'])} | {tm['total_trades']} | {rec} |"
@@ -260,7 +270,9 @@ puede tener un efecto real más pequeño que el MDE actual, no cero.
 
 ## PARTE 2 — Backtesting (viabilidad operativa)
 
-{_backtest_table(portfolio_report)}
+{_backtest_table(portfolio_report, decisions)}
+
+Rec = la misma decisión de PARTE 6 (A=GREENLIGHT, B=YELLOWLIGHT, C=REDLIGHT) — un único criterio, no un umbral aparte para esta tabla.
 
 Reporte de sesgos (sobre todo el universo, no por versión): {bias.get('n_delisted', '—')}/{bias.get('n_total_tickers', '—')} tickers deslistados ({_fmt_num(bias.get('survivorship_bias_pct'), 1)}% posible sesgo de supervivencia) · {bias.get('n_price_gaps', '—')}/{bias.get('n_price_rows', '—')} filas de precio con gap ({_fmt_num(bias.get('data_gap_pct'), 1)}%).
 

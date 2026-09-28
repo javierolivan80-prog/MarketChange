@@ -114,6 +114,46 @@ def test_generate_full_validation_report_end_to_end(conn, tmp_path):
     assert result["best_decision"]["label"] in content
 
 
+def test_backtest_table_rec_column_matches_parte_6_decision(conn, tmp_path):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R2): la columna "Rec" de la
+    tabla de PARTE 2 usaba antes su propio criterio ad hoc e inline
+    (win_rate>55% and sharpe>1.0, sin mirar drawdown/calibración/n_trades),
+    pudiendo mostrar "YES" en PARTE 2 y "REDLIGHT" en PARTE 6 para la MISMA
+    versión en el MISMO documento. Ahora reutiliza el mismo `decisions[version]`
+    de PARTE 6 — este test falla si algún día alguien vuelve a bifurcar la
+    lógica: reproduce exactamente la letra A/B/C, para cada versión con datos,
+    a partir del propio Markdown generado."""
+    from pipeline.validation.report import generate_full_validation_report
+
+    cal = _business_days(date(2024, 1, 2), 60)
+    classes = ["8K_2.02_EARNINGS", "8K_1.01_MATERIAL_AGREEMENT", "8K_5.02_OFFICER_CHANGE"]
+    for i in range(15):
+        d0 = cal[i]
+        ticker = f"R{i}"
+        closes = [100.0 + i * 0.5 + j * 0.2 for j in range(len(cal))]
+        _seed_full_event(
+            conn, f"r{i}", ticker, d0, cal, closes,
+            decision="LONG" if i % 4 != 0 else "NO_TRADE",
+            confidence=60.0 + i, ev=0.01, event_class=classes[i % 3], vix_d0=15.0 + i,
+        )
+
+    result = generate_full_validation_report(conn, run_batch_tag="validation-rec-match", docs_dir=str(tmp_path))
+    content = (tmp_path / "VALIDATION_REPORT.md").read_text()
+
+    parte2 = content.split("## PARTE 2")[1].split("## PARTE 3")[0]
+    checked_any = False
+    for version, decision in result["decisions"].items():
+        row = next((line for line in parte2.splitlines() if line.startswith(f"| {version} |")), None)
+        assert row is not None, f"fila de {version} no encontrada en la tabla de PARTE 2"
+        rec_cell = row.rstrip("|").rsplit("|", 1)[-1].strip()
+        assert rec_cell == decision["option"], (
+            f"{version}: PARTE 2 muestra Rec={rec_cell!r} pero PARTE 6 decidió "
+            f"option={decision['option']!r} ({decision['label']}) — deben coincidir siempre"
+        )
+        checked_any = True
+    assert checked_any, "ninguna versión tenía datos para comparar — fixture insuficiente"
+
+
 def test_generate_full_validation_report_oos_uses_separate_filename_and_banner(conn, tmp_path):
     """Misma fixture que el test de arriba (eventos todos en 2024, es decir,
     todos OOS) pero pidiendo sample='oos' explícitamente: debe escribir
