@@ -653,3 +653,15 @@ ALTER TABLE portfolio_equity_curve ADD COLUMN IF NOT EXISTS circuit_breaker_acti
 -- pedido y en qué tickers/clases de evento concentra el problema.
 -- ============================================================================
 ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS had_adv_cap_applied BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ============================================================================
+-- adv_usd_60d (event_enrichment): hallazgo de la auditoría — segundo
+-- componente del proxy de liquidez de abstention_engine.py (junto a
+-- high_low_range_pct, ver su docstring). ADV en $ de los 60 días de
+-- negociación ANTERIORES al evento (enrichment.py:compute_enrichment) —
+-- mismo cálculo point-in-time que portfolio_simulator.compute_trailing_adv_usd,
+-- deliberadamente NO universe.adv_usd_60d por el mismo motivo documentado
+-- ahí (esa columna usa los 60 días más recientes respecto a HOY, no
+-- respecto a la fecha del evento).
+-- ============================================================================
+ALTER TABLE event_enrichment ADD COLUMN IF NOT EXISTS adv_usd_60d NUMERIC;

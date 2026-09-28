@@ -134,6 +134,59 @@ def test_high_low_range_pct_computed_at_d0():
     assert result.high_low_range_pct == pytest.approx(20.0)  # (110-90)/100 * 100
 
 
+# ---------------------------------------------------------------------------
+# adv_usd_60d — proxy de liquidez point-in-time para abstention_engine.py
+# (hallazgo de auditoría). Ver compute_enrichment y su comentario sobre por
+# qué NO es universe.adv_usd_60d.
+# ---------------------------------------------------------------------------
+
+
+def test_adv_usd_60d_averages_close_times_volume_of_trailing_window():
+    ticker = _panel(320, 100.0, 0.0, seed=21, volume=10_000)  # volume=10_000 constante, close es un random walk
+    d0_idx = 300
+    d0 = ticker.index[d0_idx].date()
+    spy, sector, vix = _panel(320, 400.0, 0.0, seed=22), _panel(320, 50.0, 0.0, seed=23), _panel(320, 18.0, 0.0, seed=24)
+    factors = _factors(320)
+
+    result = compute_enrichment(ticker, spy, sector, vix, factors, d0, "XLK")
+    # Valor esperado calculado directamente del propio panel (no un número
+    # fijo): el random walk de _panel hace que close varíe día a día, así
+    # que el ADV real depende de los 60 valores concretos de esta semilla.
+    d0_ts = pd.Timestamp(d0)
+    window = ticker[ticker.index < d0_ts].tail(60)
+    expected = float((window["close_raw"] * window["volume"]).mean())
+    assert result.adv_usd_60d == pytest.approx(expected)
+
+
+def test_adv_usd_60d_excludes_the_event_day_itself():
+    """El volumen del propio D0 no debe entrar en el promedio — solo días
+    ESTRICTAMENTE anteriores (mismo criterio anti-look-ahead que
+    portfolio_simulator.compute_trailing_adv_usd)."""
+    ticker = _panel(320, 100.0, 0.0, seed=25, volume=10_000)
+    d0_idx = 300
+    d0 = ticker.index[d0_idx].date()
+    d0_ts = pd.Timestamp(d0)
+    window_before_change = ticker[ticker.index < d0_ts].tail(60)
+    expected = float((window_before_change["close_raw"] * window_before_change["volume"]).mean())
+    ticker.loc[d0_ts, "volume"] = 999_999_999  # NUNCA debe contar — si contase, dispararía el ADV muchísimo
+    spy, sector, vix = _panel(320, 400.0, 0.0, seed=26), _panel(320, 50.0, 0.0, seed=27), _panel(320, 18.0, 0.0, seed=28)
+    factors = _factors(320)
+
+    result = compute_enrichment(ticker, spy, sector, vix, factors, d0, "XLK")
+    assert result.adv_usd_60d == pytest.approx(expected)
+
+
+def test_adv_usd_60d_none_when_insufficient_history():
+    ticker = _panel(10, 100.0, 0.0, seed=29, volume=10_000)  # solo 10 días en total
+    d0_idx = 9
+    d0 = ticker.index[d0_idx].date()
+    spy, sector, vix = _panel(10, 400.0, 0.0, seed=30), _panel(10, 50.0, 0.0, seed=31), _panel(10, 18.0, 0.0, seed=32)
+    factors = _factors(10)
+
+    result = compute_enrichment(ticker, spy, sector, vix, factors, d0, "XLK")
+    assert result.adv_usd_60d is None
+
+
 def test_survivorship_warning_propagates_when_present_near_d0():
     ticker = _panel(320, 100.0, 0.0, seed=17)
     d0_idx = 300
