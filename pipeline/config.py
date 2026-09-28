@@ -98,3 +98,66 @@ OOS_START = "2024-01-01"
 
 # --- Costes de transacción (T7: barrido de sensibilidad) ---
 SLIPPAGE_BPS_SWEEP = [0, 10, 25, 50]
+
+# --- Memoria de tesis (hallazgo de auditoría: el sistema no recordaba por qué
+# emitió una alerta ayer). Ver pipeline/backtest/thesis_engine.py para la
+# lógica completa. Desactivada por defecto — se activa explícitamente para
+# comparar con/sin memoria en el mismo backtest; el cron nocturno sigue
+# llamando a simulate_portfolio() sin pasar este flag, así que el
+# comportamiento en producción no cambia hasta que se decida lo contrario
+# con datos reales de esa comparación. ---
+THESIS_MEMORY_ENABLED = False
+
+# Umbral de saturación: "movimiento típico" de la clase de evento = la
+# MEDIANA (percentil 50, no la media — más robusta a colas largas) del |CAR|
+# histórico de esa clase, calculada SOLO con analogos anteriores a la fecha
+# de la tesis (reutiliza analyze/historical_analogues.get_historical_analogues,
+# ya point-in-time). Saturada = movimiento realizado (a favor de la tesis)
+# >= este múltiplo de esa mediana.
+THESIS_SATURATION_TYPICAL_MOVE_PERCENTILE = 50
+THESIS_SATURATION_MULTIPLE = 2.0
+# Igual que historical_analogues.MIN_ANALOGUES_FOR_ANY_CONFIDENCE: por debajo
+# de esto, el percentil histórico es ruido, no se calcula (saturación por
+# precio deshabilitada para esa clase, la señal de volumen sigue en pie).
+THESIS_SATURATION_MIN_ANALOGUES = 5
+# Segundo componente de saturación (independiente del precio, ver
+# thesis_engine.py): volumen del día del evento nuevo frente a su propia
+# media de los ADV_TRAILING_WINDOW_DAYS/ADV_MIN_TRADING_DAYS anteriores
+# (portfolio_simulator.py) — MISMA ventana que el tope de posición por ADV,
+# reutilizada aquí en vez de inventar una tercera.
+THESIS_ABNORMAL_VOLUME_RATIO = 3.0
+
+# Confianza del juicio ciego (Judge, Etapa 5) necesaria para que un evento
+# nuevo CONTRADIGA una tesis abierta. Dos umbrales, no uno: por encima del
+# alto, el código decide vender (INVALIDATED) sin intervención humana en el
+# criterio; entre el bajo y el alto, se reduce la posición (REDUCE) en vez de
+# liquidarla — una contradicción real pero no contundente merece cautela, no
+# pánico. Mismos valores que abstention_engine.CONTRADICTION_CONFIDENCE_FLOOR
+# / CONFIDENCE_FLOOR, reutilizados a propósito (misma escala, mismo
+# significado: "el Judge está seguro de lo que dice").
+THESIS_CONTRADICTION_CONFIDENCE_FLOOR = 60.0
+THESIS_MILD_CONTRADICTION_CONFIDENCE_FLOOR = 40.0
+# Fracción de la posición que se cierra en una reducción por contradicción
+# débil (ver arriba). No es 100% (eso sería INVALIDATED) ni 0% (eso sería
+# HOLD) — un recorte a la mitad es la respuesta intermedia más simple.
+THESIS_REDUCE_FRACTION = 0.5
+
+# Clases de evento que invalidan una tesis por su sola aparición (regla
+# objetiva "evento contrario de clase X" del spec), indexadas por la
+# DIRECCIÓN de la tesis, no por la clase de origen: un hecho casi
+# universalmente negativo (bancarrota, restatement contable) invalidaría
+# cualquier tesis LONG sea cual sea el evento que la originó, y viceversa con
+# una aprobación de la FDA para una tesis SHORT. Deliberadamente conservador
+# y no exhaustivo — es más seguro no marcar como "invalidante" una clase
+# ambigua que inventar una tabla de equivalencias caso por caso sin base de
+# datos que la respalde. Punto de extensión: ampliar esta tabla es un cambio
+# de una línea, no de lógica.
+THESIS_INVALIDATING_EVENT_CLASSES = {
+    "LONG": ("8K_1.03_BANKRUPTCY", "8K_4.02_RESTATEMENT", "FDA_CRL"),
+    "SHORT": ("FDA_APPROVAL",),
+}
+
+# Presupuesto de contexto acotado (spec): al reconciliar, como mucho se citan
+# las N actualizaciones más recientes de la tesis en el snapshot/rationale,
+# no el historial completo.
+THESIS_UPDATES_CONTEXT_WINDOW = 5

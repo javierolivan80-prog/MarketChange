@@ -328,6 +328,54 @@ se reduce (nunca se descarta el trade); se marca en
 `n_trades_with_adv_cap_applied` del reporte por versión. Sin datos
 suficientes de volumen (menos de 20 días válidos) no se aplica ningún tope.
 
+**Memoria de tesis** (hallazgo de auditoría — el sistema no recordaba por qué
+emitió una alerta ayer): desactivada por defecto
+(`config.THESIS_MEMORY_ENABLED = False`, sin ningún cambio de comportamiento
+hasta activarla explícitamente vía `simulate_portfolio(..., thesis_memory_enabled=True)`).
+Con la memoria activada, cada posición abierta genera una **tesis**
+(`theses`, una fila por posición: dirección, precio de entrada,
+`expected_move_pct` de `analyze.historical_analogues` — nunca inventado por
+el LLM —, condiciones de invalidación fijadas al entrar). Un evento NUEVO en
+el mismo ticker (de cualquier `trade_decision`, no solo los que generarían su
+propia entrada) dispara una **reconciliación determinista** (ver
+`pipeline/backtest/thesis_engine.py`) en vez de abrir una segunda posición
+independiente:
+
+1. FULFILLED — el movimiento realizado ya alcanzó `expected_move_pct`.
+2. SATURATED — el movimiento realizado supera un múltiplo del movimiento
+   típico histórico de la clase de evento origen, y/o volumen anormal
+   extremo (`config.THESIS_ABNORMAL_VOLUME_RATIO`).
+3. INVALIDATED — evento de una clase que contradice objetivamente la
+   dirección de la tesis (`config.THESIS_INVALIDATING_EVENT_CLASSES`), o
+   ruptura de un nivel de precio (soportado en el código, pero no poblado
+   automáticamente en esta versión — ver el docstring de la tabla `theses`
+   en `schema.sql` sobre por qué: queda subsumido matemáticamente por
+   STOP_LOSS, que se comprueba antes con el low/high intradía del día).
+4. Contradicción fuerte del juicio ciego (Judge, ya calculado por
+   `event_analysis_pipeline.py` sin cambios — nunca ve la tesis) → vende
+   igualmente.
+5. Contradicción moderada → reduce la posición a la mitad sin liquidarla.
+6. Nada de lo anterior → mantiene.
+
+Las 3 primeras (código puro) **siempre ganan** sobre lo que diga el juicio
+ciego — nunca al revés. Deliberadamente **no** es una tercera llamada de IA:
+`portfolio_simulator.py` recalcula la cartera completa desde cero en cada
+corrida nocturna (ver la nota del circuit-breaker más arriba), así que una
+reconciliación por IA repetiría la llamada cada noche para cada evento con
+tesis abierta de los 5 años de historia, no solo para los nuevos. STOP_LOSS
+sigue siendo siempre lo primero: si se cruza el mismo día que llegaría una
+reconciliación, la posición ya no está abierta cuando le toca el turno a la
+memoria de tesis (el orden del bucle diario ya lo garantiza sin código
+adicional). El plazo de vida de una tesis (`EVENT_WINDOWS_DAYS[0]`, 5 días de
+negociación) compite con el `holding_period_max_days` de la propia
+estrategia — se aplica el más estricto, etiquetado sin ambigüedad como
+EXPIRED o MAX_HOLDING respectivamente. 4 `exit_reason` nuevos en
+`portfolio_trades` (`FULFILLED`/`INVALIDATED`/`SATURATED`/`EXPIRED`), log
+append-only de cada reconciliación en `thesis_updates`, y desglose por motivo
+de salida en `n_trades_by_exit_reason` del reporte por versión — para poder
+comparar, con datos reales, si la memoria aporta o no antes de activarla en
+producción.
+
 ```bash
 python -m pipeline.backtest.portfolio_report
 ```

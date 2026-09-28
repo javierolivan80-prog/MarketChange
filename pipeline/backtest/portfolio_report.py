@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from datetime import date, timedelta
 
 from pipeline.backtest.portfolio_metrics import (
@@ -128,6 +129,15 @@ def build_version_report(conn, version: str, run_batch_tag: str, starting_capita
         # operaron con menos capital del que el sizing por confianza/EV
         # habría pedido, por falta de liquidez real en el ticker.
         "n_trades_with_adv_cap_applied": sum(1 for t in trades if t.get("had_adv_cap_applied")),
+        # Desglose por motivo de salida (memoria de tesis, ver
+        # backtest/thesis_engine.py) — incluye tanto los motivos de siempre
+        # (TAKE_PROFIT/STOP_LOSS/MAX_HOLDING/TRAILING_STOP/DATA_GAP) como los
+        # nuevos de thesis_engine (FULFILLED/INVALIDATED/SATURATED/EXPIRED),
+        # cero (dict vacío en la práctica salvo por los de siempre) cuando
+        # THESIS_MEMORY_ENABLED estaba desactivado en la corrida — es lo que
+        # permite comparar con/sin memoria: ¿cuántos trades habría cerrado la
+        # memoria antes de que TP/SL/tiempo lo hicieran, y con qué resultado?
+        "n_trades_by_exit_reason": dict(Counter(t["exit_reason"] for t in trades)),
         "metrics_by_event_type": by_event_type,
         "confidence_calibration": confidence_calibration,
         "calibration": calibration,
