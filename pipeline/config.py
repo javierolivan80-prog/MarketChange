@@ -84,6 +84,19 @@ ANALYSIS_MIN_MARKET_CAP_USD = _env_float("ANALYSIS_MIN_MARKET_CAP_USD", MIN_MARK
 ANALYSIS_MAX_EVENTS_PER_RUN = _env_int("ANALYSIS_MAX_EVENTS_PER_RUN", 500) or None
 ANALYSIS_EST_COST_PER_EVENT_USD = 0.011
 
+# Cota máxima de espera al polling de la Batch API (IMPROVEMENT_PLAN.md R6 +
+# M1) — sin esto, adversarial_analyzer.run_batch_and_collect hacía
+# `while True: ...; time.sleep(30)` sin límite: si la Batch API se queda
+# atascada en "in_progress" (un incidente del lado de Anthropic, no del
+# pipeline), el paso de GitHub Actions se queda colgado hasta el
+# timeout-minutes del job (sin definir hasta esta sesión -> 360 min por
+# defecto de GitHub), quemando horas de CI sin ningún aviso de que algo va
+# mal. Los batches reales de este proyecto tardan minutos-decenas de
+# minutos (ver el docstring de process_chunk sobre el run 34964242549, ~20
+# min para dos batches) — 2 horas da margen de sobra sin acercarse al
+# timeout del job.
+BATCH_MAX_WAIT_SECONDS = 2 * 60 * 60
+
 # --- Ventanas de evento (ARCHITECTURE_LEAN.md §3, §5) ---
 ESTIMATION_WINDOW_DAYS = (-250, -30)
 EVENT_WINDOWS_DAYS = [5, 20]

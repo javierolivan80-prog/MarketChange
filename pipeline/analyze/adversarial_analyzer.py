@@ -277,10 +277,23 @@ def run_batch_and_collect(client, requests_) -> tuple[dict[str, dict], str | Non
     batch = client.messages.batches.create(requests=requests_)
     logger.info("Batch creado: %s (%d requests)", batch.id, len(requests_))
 
+    # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + M1): antes este bucle
+    # era `while True`, sin cota — un incidente del lado de Anthropic que
+    # deje el batch atascado en "in_progress" para siempre colgaba el paso
+    # de GitHub Actions hasta el timeout-minutes del job (ver config.py:
+    # BATCH_MAX_WAIT_SECONDS), quemando horas de CI sin ningún aviso.
+    start = time.monotonic()
     while True:
         batch = client.messages.batches.retrieve(batch.id)
         if batch.processing_status == "ended":
             break
+        elapsed = time.monotonic() - start
+        if elapsed > config.BATCH_MAX_WAIT_SECONDS:
+            raise TimeoutError(
+                f"Batch {batch.id} sigue en '{batch.processing_status}' tras "
+                f"{elapsed / 60:.0f} min (> {config.BATCH_MAX_WAIT_SECONDS / 60:.0f} min de cota) — "
+                "probable incidente del lado de la API de Anthropic, no del pipeline."
+            )
         logger.info("Batch %s: %s", batch.id, batch.processing_status)
         time.sleep(30)
 
