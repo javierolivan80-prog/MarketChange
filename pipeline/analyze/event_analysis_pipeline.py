@@ -33,7 +33,7 @@ import logging
 from datetime import date, timedelta
 
 from pipeline import config
-from pipeline.analyze.abstention_engine import NOVELTY_FLOOR, AbstentionInputs, as_json as abstention_as_json, decide_all_strategies
+from pipeline.analyze.abstention_engine import AbstentionInputs, as_json as abstention_as_json, decide_all_strategies, objective_no_trade_reason
 from pipeline.analyze.adversarial_analyzer import (
     EventContext,
     build_bull_bear_batch,
@@ -199,18 +199,22 @@ def process_chunk(conn, client, event_rows: list[dict]):
         else:
             needs_llm.append(ev)
 
-    # Pre-filtro de novelty (Etapa 2, adelantada): abstention_engine.py aplica
-    # `if novelty_score < NOVELTY_FLOOR: NO_TRADE` como la PRIMERA de sus 7
-    # condiciones, antes incluso de mirar lo que dijeron Bull/Bear/Judge. Eso
-    # significa que para un evento con novelty baja, el resultado final es
-    # NO_TRADE en las 3 estrategias SIN IMPORTAR qué responda el debate de
-    # IA — pagar ese debate no cambia ni una sola decisión, solo gasta
-    # tokens. novelty se calcula aquí (enrichment + guidance/rumor, ambos
-    # solo Postgres, sin coste) ANTES de construir el batch, para no invocar
-    # Bull/Bear/Judge en los eventos que van a descartarse igual.
+    # Pre-filtro de condiciones objetivas (Etapa 2 + Etapa 8, adelantadas —
+    # hallazgo de auditoría IMPROVEMENT_PLAN.md R5, extiende el pre-filtro
+    # que antes solo cubría novelty): de las 7 reglas de
+    # abstention_engine.decide_for_strategy, 5 (novelty, survivorship
+    # warning, modelo de factores sin ajustar, CRL de FDA sin 8-K, e
+    # iliquidez) NO dependen en absoluto de lo que diga Bull/Bear/Judge — ver
+    # abstention_engine.objective_no_trade_reason(). Si CUALQUIERA dispara,
+    # el resultado final es NO_TRADE en las 3 estrategias SIN IMPORTAR qué
+    # responda el debate de IA — pagar ese debate no cambia ni una sola
+    # decisión, solo gasta tokens. Todos estos datos se calculan aquí
+    # (enrichment + guidance/rumor + el cruce EDGAR/FDA, todo solo Postgres,
+    # sin coste) ANTES de construir el batch, para no invocar Bull/Bear/Judge
+    # en los eventos que van a descartarse igual.
     precomputed_by_id: dict[int, tuple] = {}
     llm_candidates: list[dict] = []
-    skipped_low_novelty_ids: set[int] = set()
+    skipped_ids_with_reason: dict[int, str] = {}
     for ev in needs_llm:
         enrichment = fetch_and_compute_enrichment(conn, ev)
         has_guidance, rumor_flag = compute_novelty_signals(conn, ev["ticker"], ev["d0_close_date"])
@@ -221,15 +225,25 @@ def process_chunk(conn, client, event_rows: list[dict]):
                 rumor_flag=rumor_flag,
             )
         )
-        precomputed_by_id[ev["event_id"]] = (enrichment, novelty)
-        if novelty.score < NOVELTY_FLOOR:
-            skipped_low_novelty_ids.add(ev["event_id"])
+        is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
+        precomputed_by_id[ev["event_id"]] = (enrichment, novelty, is_fda_crl_without_8k)
+        skip_reason = objective_no_trade_reason(
+            novelty_score=novelty.score,
+            had_survivorship_warning=enrichment.had_survivorship_warning,
+            beta_available=enrichment.beta_vs_spy is not None,
+            high_low_range_pct=enrichment.high_low_range_pct,
+            adv_usd_60d=enrichment.adv_usd_60d,
+            is_fda_crl_without_8k=is_fda_crl_without_8k,
+        )
+        if skip_reason is not None:
+            skipped_ids_with_reason[ev["event_id"]] = skip_reason
         else:
             llm_candidates.append(ev)
 
     logger.info(
-        "Chunk de %d eventos: %d en caché, %d requieren LLM, %d descartados por novelty < %d (NO_TRADE garantizado igualmente, se ahorra el debate de IA)",
-        len(event_rows), len(cache_hits), len(llm_candidates), len(skipped_low_novelty_ids), NOVELTY_FLOOR,
+        "Chunk de %d eventos: %d en caché, %d requieren LLM, %d descartados por condición objetiva "
+        "(NO_TRADE garantizado igualmente, se ahorra el debate de IA)",
+        len(event_rows), len(cache_hits), len(llm_candidates), len(skipped_ids_with_reason),
     )
 
     bull_bear_results: dict[str, dict] = {}
@@ -283,7 +297,7 @@ def process_chunk(conn, client, event_rows: list[dict]):
             _process_single_event(
                 conn, ev, cache_hits.get(event_id), bull_bear_results, judge_results, bb_batch_id, judge_batch_id,
                 precomputed=precomputed_by_id.get(event_id),
-                skipped_low_novelty=event_id in skipped_low_novelty_ids,
+                skip_reason=skipped_ids_with_reason.get(event_id),
             )
         except Exception:
             logger.exception("Fallo analizando evento %d — se continúa con el siguiente", ev["event_id"])
@@ -311,20 +325,20 @@ def process_chunk(conn, client, event_rows: list[dict]):
 
 def _process_single_event(
     conn, ev: dict, cache_hit: dict | None, bull_bear_results: dict, judge_results: dict, bb_batch_id: str | None, judge_batch_id: str | None,
-    precomputed: tuple | None = None, skipped_low_novelty: bool = False,
+    precomputed: tuple | None = None, skip_reason: str | None = None,
 ) -> None:
     event_id = ev["event_id"]
 
     # --- Etapa 1: enrichment (SIEMPRE fresco — ver docstring del módulo) ---
     # --- Etapa 2: novelty (SIEMPRE fresco) ---
-    # Si process_chunk ya las calculó para decidir el pre-filtro de novelty
-    # (ver su docstring), se reutilizan aquí en vez de repetir las mismas
-    # consultas a Postgres — no cambia el resultado, solo evita el trabajo
-    # duplicado. Los cache_hits no pasan por ese pre-filtro (no lo necesitan,
-    # no van a llamar al LLM), así que para ellos se calculan aquí igual que
-    # siempre.
+    # Si process_chunk ya las calculó para decidir el pre-filtro de
+    # condiciones objetivas (ver su docstring), se reutilizan aquí en vez de
+    # repetir las mismas consultas a Postgres — no cambia el resultado, solo
+    # evita el trabajo duplicado. Los cache_hits no pasan por ese pre-filtro
+    # (no lo necesitan, no van a llamar al LLM), así que para ellos se
+    # calculan aquí igual que siempre.
     if precomputed is not None:
-        enrichment, novelty = precomputed
+        enrichment, novelty, is_fda_crl_without_8k = precomputed
     else:
         enrichment = fetch_and_compute_enrichment(conn, ev)
         # Fase 3: has_prior_guidance/rumor_flag ya no son siempre None — se
@@ -340,8 +354,9 @@ def _process_single_event(
                 rumor_flag=rumor_flag,
             )
         )
+        is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
 
-    # --- Etapas 3-5: Bull/Bear/Judge (de caché, de LLM, o descartado por novelty baja) ---
+    # --- Etapas 3-5: Bull/Bear/Judge (de caché, de LLM, o descartado por una condición objetiva) ---
     from_cache = cache_hit is not None
     if from_cache:
         bull_output = cache_hit["bull_analyst_output"]
@@ -352,21 +367,22 @@ def _process_single_event(
         model_bull_bear = cache_hit["model_version_bull_bear"]
         model_judge = cache_hit["model_version_judge"]
         batch_bb, batch_judge = None, None
-    elif skipped_low_novelty:
-        # No se invocó Bull/Bear/Judge para este evento: novelty.score ya
-        # está por debajo de abstention_engine.NOVELTY_FLOOR, y esa regla es
-        # la PRIMERA que evalúa decide_for_strategy — dispara NO_TRADE en las
-        # 3 estrategias sin mirar net_conviction/confidence en absoluto. Un
-        # net_conviction=0/confidence=0 aquí no cambia el veredicto final,
-        # solo dice explícitamente "no se gastó IA en este evento" en vez de
-        # simular una opinión que nunca se le pidió al modelo.
-        bull_output = {"skipped_low_novelty": True, "reason": f"novelty_score={novelty.score:.0f} < {NOVELTY_FLOOR} — NO_TRADE garantizado, no se invoca el debate de IA"}
-        bear_output = {"skipped_low_novelty": True, "reason": f"novelty_score={novelty.score:.0f} < {NOVELTY_FLOOR} — NO_TRADE garantizado, no se invoca el debate de IA"}
-        judge_output = {"skipped_low_novelty": True, "reason": f"novelty_score={novelty.score:.0f} < {NOVELTY_FLOOR} — NO_TRADE garantizado, no se invoca el debate de IA"}
+    elif skip_reason is not None:
+        # No se invocó Bull/Bear/Judge para este evento: una de las 5
+        # condiciones objetivas de abstention_engine.objective_no_trade_reason
+        # ya dispara NO_TRADE en las 3 estrategias sin mirar
+        # net_conviction/confidence en absoluto. Un net_conviction=0/
+        # confidence=0 aquí no cambia el veredicto final, solo dice
+        # explícitamente "no se gastó IA en este evento" en vez de simular
+        # una opinión que nunca se le pidió al modelo.
+        placeholder_reason = f"{skip_reason} — NO_TRADE garantizado, no se invoca el debate de IA"
+        bull_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
+        bear_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
+        judge_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
         net_conviction = 0.0
         confidence_in_conviction = 0.0
-        model_bull_bear = "SKIPPED_LOW_NOVELTY"
-        model_judge = "SKIPPED_LOW_NOVELTY"
+        model_bull_bear = "SKIPPED_OBJECTIVE_NO_TRADE"
+        model_judge = "SKIPPED_OBJECTIVE_NO_TRADE"
         batch_bb, batch_judge = None, None
     else:
         bull_output = bull_bear_results.get(custom_id_de(event_id, "bull"))
@@ -388,8 +404,7 @@ def _process_single_event(
     # --- Etapa 7: EV engine ---
     ev_result = compute_ev(net_conviction, confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence)
 
-    # --- Etapa 8: abstention engine ---
-    is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
+    # --- Etapa 8: abstention engine (is_fda_crl_without_8k ya calculado arriba) ---
     abstention_inputs = AbstentionInputs(
         novelty_score=novelty.score,
         confidence_in_conviction=confidence_in_conviction,
