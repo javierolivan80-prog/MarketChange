@@ -339,7 +339,7 @@ def test_build_entry_plan_includes_event_when_at_least_one_day_after_entry_exist
     ticker_cache = {"OK": {d0: _bar(), entry_date: _bar(), one_more_day: _bar()}}
     events = [
         {
-            "event_id": 100, "ticker": "OK", "d0_close_date": d0,
+            "event_id": 100, "ticker": "OK", "d0_close_date": d0, "event_class": "8K_2.02_EARNINGS",
             "trade_decision": "LONG", "ev_conservative": 0.01, "ev_aggressive": 0.01, "ev_balanced": 0.01,
             "confidence": 80.0, "prediction": 0.6,
         }

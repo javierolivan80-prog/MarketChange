@@ -619,10 +619,21 @@ ALTER TABLE portfolio_equity_curve ADD CONSTRAINT portfolio_equity_curve_version
 -- posteriores (deslistado/halt sin resolver), no porque venciera el holding
 -- period con precios normales — para que no se confundan al leer los
 -- reportes ni al auditar sesgos.
+--
+-- El DROP+ADD CONSTRAINT que originalmente iba aquí se ELIMINÓ (no se
+-- duplica): con DOS bloques DROP+ADD sucesivos para el mismo nombre de
+-- constraint, cada re-ejecución de schema.sql (init_schema, en cada test o
+-- despliegue) revalida TODAS las filas existentes contra el PRIMER bloque
+-- antes de llegar al segundo — en cuanto una sola fila usara un exit_reason
+-- añadido más tarde (ver memoria de tesis más abajo), ese primer bloque,
+-- más estrecho, fallaba con CheckViolation y rompía init_schema() para
+-- siempre en cualquier base de datos que ya tuviera una fila así (bug real,
+-- encontrado exactamente así al escribir los tests de integración de la
+-- memoria de tesis). La única definición vigente de este CHECK es la de más
+-- abajo (bloque "portfolio_trades: enlace a la tesis..."), que ya incluye
+-- TAKE_PROFIT/STOP_LOSS/MAX_HOLDING/TRAILING_STOP/DATA_GAP de este hallazgo
+-- más los 4 nuevos de la memoria de tesis.
 -- ============================================================================
-ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS portfolio_trades_exit_reason_check;
-ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
-    CHECK (exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'MAX_HOLDING', 'TRAILING_STOP', 'DATA_GAP'));
 
 -- ============================================================================
 -- circuit_breaker_active (portfolio_equity_curve): hallazgo de la auditoría,
@@ -665,3 +676,102 @@ ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS had_adv_cap_applied BOOLEA
 -- respecto a la fecha del evento).
 -- ============================================================================
 ALTER TABLE event_enrichment ADD COLUMN IF NOT EXISTS adv_usd_60d NUMERIC;
+
+-- ============================================================================
+-- theses / thesis_updates: memoria de tesis (hallazgo de auditoría — el
+-- sistema no recordaba por qué emitió una alerta ayer). Ver
+-- pipeline/backtest/thesis_engine.py para la lógica completa de las
+-- condiciones objetivas y pipeline/backtest/portfolio_simulator.py para la
+-- integración con el bucle diario (gateada por config.THESIS_MEMORY_ENABLED,
+-- desactivada por defecto — cero cambio de comportamiento hasta que se
+-- decida activarla).
+--
+-- Una tesis = una posición REALMENTE abierta en el backtest (entry_price ya
+-- conocido) — no una alerta de event_analyses en abstracto, que no tiene ni
+-- precio de entrada ni versión de estrategia. Point-in-time: created_at_date
+-- es la fecha de entrada real (D+1, la misma que portfolio_trades.entry_date),
+-- nunca el reloj real de cuándo corrió el pipeline.
+--
+-- invalidation_conditions es JSON estructurado y fijo desde la creación
+-- (nunca se reescribe): {"price_below": float|null, "price_above": float|null,
+-- "opposite_event_classes": [str,...], "max_holding_days": int}. Ver
+-- thesis_engine.py sobre por qué price_below/price_above se dejan en null en
+-- esta versión (con STOP_LOSS comprobado primero sobre low/high de cada día,
+-- cualquier condición de precio en la misma dirección que el STOP_LOSS queda
+-- matemáticamente subsumida por él — no es una limitación de datos, es una
+-- consecuencia de cómo ya funciona el simulador, documentada explícitamente
+-- en vez de fingir una condición que nunca dispararía primero).
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS theses (
+    thesis_id               BIGSERIAL PRIMARY KEY,
+    ticker                  TEXT NOT NULL,
+    event_id                BIGINT NOT NULL REFERENCES events(event_id),  -- evento origen de la alerta
+    version                 TEXT NOT NULL CHECK (version IN ('CONSERVATIVE', 'AGGRESSIVE', 'BALANCED', 'DYNAMIC')),
+    execution_style         TEXT NOT NULL CHECK (execution_style IN ('CONSERVATIVE', 'AGGRESSIVE')),
+    direction               TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
+    created_at_date         DATE NOT NULL,        -- point-in-time: entry_date real (D+1), no el reloj real
+    entry_price             NUMERIC NOT NULL,
+    rationale               TEXT NOT NULL,        -- resumen corto y citable del evento origen (ver thesis_engine.py)
+    expected_move_pct       NUMERIC NOT NULL,     -- magnitud (positiva), de analyze.historical_analogues — nunca inventada por el LLM
+    expected_horizon_days   INT NOT NULL,
+    invalidation_conditions JSONB NOT NULL,
+    status                  TEXT NOT NULL CHECK (status IN ('open', 'fulfilled', 'invalidated', 'saturated', 'expired', 'closed_by_stop')),
+    closed_at_date          DATE,
+    close_reason_code       TEXT,
+    close_rationale         TEXT,
+    run_batch_tag           TEXT NOT NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Igual que portfolio_trades: sin esto, reejecutar simulate_portfolio()
+    -- con el MISMO run_batch_tag duplicaría cada tesis en vez de actualizar
+    -- la existente (el backtest recalcula la cartera completa desde cero en
+    -- cada corrida — ver el docstring de DRAWDOWN_CIRCUIT_BREAKER_PCT).
+    UNIQUE (event_id, version, run_batch_tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_theses_ticker_status ON theses (ticker, status);
+CREATE INDEX IF NOT EXISTS idx_theses_run_batch_tag ON theses (run_batch_tag);
+
+-- thesis_updates: log append-only de cada reconciliación (spec: "esto
+-- permite debugear decisiones malas después", mismo principio que
+-- event_analyses). blind_judgment_event_id es el evento NUEVO cuyo juicio
+-- ciego (Judge, ya calculado por event_analysis_pipeline.py SIN ver la
+-- tesis) disparó esta actualización — NULL en una comprobación puramente
+-- por fecha (EXPIRED, ver thesis_engine.py) que no viene de un evento nuevo.
+CREATE TABLE IF NOT EXISTS thesis_updates (
+    update_id                BIGSERIAL PRIMARY KEY,
+    thesis_id                BIGINT NOT NULL REFERENCES theses(thesis_id),
+    as_of_date               DATE NOT NULL,
+    trigger                  TEXT NOT NULL CHECK (trigger IN ('new_event', 'daily_check', 'price_check')),
+    blind_judgment_event_id  BIGINT REFERENCES events(event_id),
+    action                   TEXT NOT NULL CHECK (action IN ('HOLD', 'ADD', 'REDUCE', 'SELL')),
+    reason_code               TEXT NOT NULL,
+    rationale                 TEXT NOT NULL,
+    metrics_snapshot          JSONB NOT NULL,
+    run_batch_tag              TEXT NOT NULL,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Mismo motivo que la UNIQUE de `theses`: idempotencia entre corridas con
+    -- el mismo run_batch_tag. blind_judgment_event_id puede ser NULL (ver
+    -- arriba), así que no puede formar parte de una UNIQUE por sí solo —
+    -- se combina con as_of_date, que sí es siempre determinista para una
+    -- comprobación dada en una corrida dada.
+    UNIQUE (thesis_id, as_of_date, blind_judgment_event_id, run_batch_tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_thesis_updates_thesis ON thesis_updates (thesis_id, as_of_date);
+
+-- ============================================================================
+-- portfolio_trades: enlace a la tesis que gobernó la posición (NULL si
+-- THESIS_MEMORY_ENABLED estaba desactivado en esa corrida, el caso por
+-- defecto) y 4 exit_reason nuevos para las salidas decididas por
+-- thesis_engine.py — deliberadamente NO un único "THESIS_CLOSE" genérico:
+-- el motivo exacto (cumplida/invalidada/saturada) es justo la información
+-- que esta funcionalidad existe para capturar, y colapsarla en un solo
+-- valor obligaría a volver a mirar close_reason_code para saber cuál de
+-- las 3 fue, duplicando en la práctica lo que el propio exit_reason ya
+-- debería decir sin ambigüedad.
+-- ============================================================================
+ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS thesis_id BIGINT REFERENCES theses(thesis_id);
+
+ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS portfolio_trades_exit_reason_check;
+ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
+    CHECK (exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'MAX_HOLDING', 'TRAILING_STOP', 'DATA_GAP', 'FULFILLED', 'INVALIDATED', 'SATURATED', 'EXPIRED'));

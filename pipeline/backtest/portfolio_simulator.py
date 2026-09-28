@@ -53,6 +53,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from pipeline import config
+from pipeline.analyze.historical_analogues import estimate_impact_for_event, get_historical_analogues
+from pipeline.backtest import thesis_engine
 from pipeline.backtest.portfolio_strategies import (
     BALANCED_MAX_CONCURRENT,
     STRATEGIES,
@@ -219,6 +222,20 @@ class OpenPosition:
     used_trailing_stop: bool = False
     closes: list[tuple[date, float, float, str]] = field(default_factory=list)  # (fecha, fracción, precio, motivo)
 
+    # Memoria de tesis (config.THESIS_MEMORY_ENABLED) — todos None cuando la
+    # posición no tiene tesis asociada (memoria desactivada, o versión que no
+    # aplica). Ver thesis_engine.py para la lógica que los usa.
+    thesis_id: int | None = None
+    thesis_rationale: str | None = None
+    thesis_expected_move_pct: float | None = None
+    thesis_invalidation_conditions: dict | None = None
+    thesis_created_at_date: date | None = None
+    thesis_origin_event_class: str | None = None
+    # Plazo propio de la tesis (más corto que target_date, ver
+    # thesis_engine.resolve_holding_deadline) — None = sin plazo propio,
+    # step_position_forward se comporta exactamente como antes.
+    thesis_expiry_date: date | None = None
+
 
 def step_position_forward(position: OpenPosition, high: float, low: float, close: float, trade_date: date) -> OpenPosition:
     """Aplica un día de precios a una posición abierta, mutando su estado
@@ -263,10 +280,19 @@ def step_position_forward(position: OpenPosition, high: float, low: float, close
                 if position.remaining_fraction <= 1e-9:
                     return position
 
-    # 4) Fin del holding period — cierra lo que quede a mercado.
-    if position.remaining_fraction > 1e-9 and trade_date >= position.target_date:
-        position.closes.append((trade_date, position.remaining_fraction, close, "MAX_HOLDING"))
-        position.remaining_fraction = 0.0
+    # 4) Fin del holding period — cierra lo que quede a mercado. Aplica el
+    # plazo MÁS ESTRICTO entre el de la propia estrategia (target_date) y el
+    # de la tesis asociada, si la hay (thesis_expiry_date) — ver
+    # thesis_engine.resolve_holding_deadline. Con thesis_expiry_date=None
+    # (memoria desactivada, o versión sin tesis) el comportamiento es
+    # exactamente el de antes, byte a byte.
+    if position.remaining_fraction > 1e-9:
+        effective_target_date, holding_reason = thesis_engine.resolve_holding_deadline(
+            position.target_date, position.thesis_expiry_date
+        )
+        if trade_date >= effective_target_date:
+            position.closes.append((trade_date, position.remaining_fraction, close, holding_reason))
+            position.remaining_fraction = 0.0
 
     return position
 
@@ -299,7 +325,22 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
     total_fraction = sum(f for _, f, _, _ in position.closes)
     weighted_exit_price = sum(f * p for _, f, p, _ in position.closes) / total_fraction
     final_exit_date = position.closes[-1][0]
-    exit_reason = "TRAILING_STOP" if position.used_trailing_stop else position.closes[-1][3]
+    last_reason = position.closes[-1][3]
+    if position.used_trailing_stop:
+        exit_reason = "TRAILING_STOP"
+    elif last_reason == "THESIS_REDUCE":
+        # Caso límite (memoria de tesis, ver thesis_engine.py): la posición se
+        # agotó del todo por reducciones sucesivas (WEAK_CONTRADICTION) sin
+        # que ningún cierre "normal" interviniera antes. En la práctica casi
+        # nunca ocurre (THESIS_REDUCE_FRACTION=0.5 necesita muchas
+        # reconciliaciones seguidas para agotar remaining_fraction), pero si
+        # pasa, la etiqueta más honesta dentro del vocabulario aprobado de
+        # exit_reason (schema.sql) es INVALIDATED: la tesis se erosionó hasta
+        # quedar en nada por evidencia sucesiva en contra. "THESIS_REDUCE" en
+        # sí mismo NUNCA se escribe en portfolio_trades.
+        exit_reason = "INVALIDATED"
+    else:
+        exit_reason = last_reason
 
     assert final_exit_date > position.entry_date, "VIOLACIÓN ANTI-LOOK-AHEAD: exit_date no es posterior a entry_date"
 
@@ -328,6 +369,7 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
         "actual_move_pct": actual_move_pct,
         "had_survivorship_warning": position.had_survivorship_warning,
         "had_adv_cap_applied": position.had_adv_cap_applied,
+        "thesis_id": position.thesis_id,
     }
 
 
@@ -435,7 +477,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT e.event_id, e.ticker, e.d0_close_date,
+            SELECT e.event_id, e.ticker, e.d0_close_date, e.event_class,
                    ea.{trade_decision_col} AS trade_decision,
                    ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
                    ea.confidence_in_conviction AS confidence,
@@ -460,6 +502,155 @@ def _load_ticker_prices(conn, ticker: str) -> dict[date, dict]:
             (ticker,),
         )
         return {r["trade_date"]: r for r in cur.fetchall()}
+
+
+def _load_ticker_new_events(conn, ticker: str, prices: dict[date, dict]) -> dict[date, list[dict]]:
+    """TODOS los eventos de este ticker (cualquier trade_decision, incluso
+    NO_TRADE para la versión que se está simulando) indexados por su fecha de
+    entrada D+1 (mismo criterio de _build_entry_plan) — necesario para la
+    memoria de tesis (config.THESIS_MEMORY_ENABLED): un evento nuevo puede
+    contradecir una tesis abierta aunque por sí mismo no hubiera generado una
+    entrada nueva en esta versión (el Judge lo vio, simplemente no llegó al
+    umbral de EV/confianza de ESTA estrategia). Solo se llama cuando la
+    memoria está activada — coste de una query extra por ticker, cero cuando
+    está desactivada (comportamiento y coste de siempre)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.event_id, e.event_class, e.d0_close_date,
+                   ea.net_conviction, ea.confidence_in_conviction
+            FROM events e
+            JOIN event_analyses ea ON ea.event_id = e.event_id
+            WHERE e.ticker = %s
+            ORDER BY e.d0_close_date
+            """,
+            (ticker,),
+        )
+        rows = cur.fetchall()
+    by_entry_date: dict[date, list[dict]] = {}
+    for row in rows:
+        future_dates = sorted(d for d in prices if d > row["d0_close_date"])
+        if not future_dates:
+            continue
+        by_entry_date.setdefault(future_dates[0], []).append(row)
+    return by_entry_date
+
+
+def _compute_saturation_threshold_for_event_class(conn, event_class: str, as_of_date: date, exclude_event_id: int) -> float | None:
+    """"Movimiento típico" de la clase de evento QUE ORIGINÓ la tesis,
+    point-in-time respecto al día de la reconciliación (as_of_date), no
+    respecto al día en que se creó la tesis — más análogos se acumulan
+    legítimamente cuanto más tiempo lleva abierta, sin ningún look-ahead
+    (analyze.historical_analogues.get_historical_analogues ya garantiza
+    d0_close_date < as_of_date). window_days=20, la misma ventana de CAR que
+    usa el resto de la Etapa 6 para esta clase de evento."""
+    analogues = get_historical_analogues(conn, event_class, as_of_date, exclude_event_id, window_days=20)
+    abs_cars_pct = [abs(float(a["car"])) * 100 for a in analogues]
+    return thesis_engine.compute_saturation_threshold_pct(abs_cars_pct)
+
+
+def _store_new_thesis(
+    conn, ticker: str, event_id: int, version: str, execution_style: str, direction: str,
+    created_at_date: date, entry_price: float, rationale: str, expected_move_pct: float,
+    expected_horizon_days: int, invalidation_conditions: dict, run_batch_tag: str,
+) -> int:
+    import json as _json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO theses (
+                ticker, event_id, version, execution_style, direction, created_at_date, entry_price,
+                rationale, expected_move_pct, expected_horizon_days, invalidation_conditions, status, run_batch_tag
+            ) VALUES (
+                %(ticker)s, %(event_id)s, %(version)s, %(execution_style)s, %(direction)s, %(created_at_date)s,
+                %(entry_price)s, %(rationale)s, %(expected_move_pct)s, %(expected_horizon_days)s,
+                %(invalidation_conditions)s, 'open', %(run_batch_tag)s
+            )
+            -- Igual que portfolio_trades: reejecutar simulate_portfolio() con
+            -- el MISMO run_batch_tag actualiza la tesis existente en vez de
+            -- duplicarla (el backtest recalcula la cartera completa desde
+            -- cero en cada corrida).
+            ON CONFLICT (event_id, version, run_batch_tag) DO UPDATE SET
+                status = 'open', closed_at_date = NULL, close_reason_code = NULL, close_rationale = NULL,
+                entry_price = EXCLUDED.entry_price, rationale = EXCLUDED.rationale,
+                expected_move_pct = EXCLUDED.expected_move_pct, expected_horizon_days = EXCLUDED.expected_horizon_days,
+                invalidation_conditions = EXCLUDED.invalidation_conditions, created_at_date = EXCLUDED.created_at_date
+            RETURNING thesis_id
+            """,
+            {
+                "ticker": ticker, "event_id": event_id, "version": version, "execution_style": execution_style,
+                "direction": direction, "created_at_date": created_at_date, "entry_price": entry_price,
+                "rationale": rationale, "expected_move_pct": expected_move_pct,
+                "expected_horizon_days": expected_horizon_days,
+                "invalidation_conditions": _json.dumps(invalidation_conditions), "run_batch_tag": run_batch_tag,
+            },
+        )
+        thesis_id = cur.fetchone()["thesis_id"]
+    conn.commit()
+    return thesis_id
+
+
+def _store_thesis_update(
+    conn, thesis_id: int, as_of_date: date, blind_judgment_event_id: int,
+    result: "thesis_engine.ReconciliationResult", metrics_snapshot: dict, run_batch_tag: str,
+) -> None:
+    import json as _json
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO thesis_updates (
+                thesis_id, as_of_date, trigger, blind_judgment_event_id, action, reason_code, rationale,
+                metrics_snapshot, run_batch_tag
+            ) VALUES (
+                %(thesis_id)s, %(as_of_date)s, 'new_event', %(blind_judgment_event_id)s, %(action)s,
+                %(reason_code)s, %(rationale)s, %(metrics_snapshot)s, %(run_batch_tag)s
+            )
+            ON CONFLICT (thesis_id, as_of_date, blind_judgment_event_id, run_batch_tag) DO UPDATE SET
+                action = EXCLUDED.action, reason_code = EXCLUDED.reason_code, rationale = EXCLUDED.rationale,
+                metrics_snapshot = EXCLUDED.metrics_snapshot
+            """,
+            {
+                "thesis_id": thesis_id, "as_of_date": as_of_date, "blind_judgment_event_id": blind_judgment_event_id,
+                "action": result.action, "reason_code": result.reason_code, "rationale": result.rationale,
+                "metrics_snapshot": _json.dumps(metrics_snapshot), "run_batch_tag": run_batch_tag,
+            },
+        )
+    conn.commit()
+
+
+def _update_thesis_status(conn, thesis_id: int, status: str, closed_at_date: date, close_reason_code: str, close_rationale: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE theses SET status=%s, closed_at_date=%s, close_reason_code=%s, close_rationale=%s WHERE thesis_id=%s",
+            (status, closed_at_date, close_reason_code, close_rationale, thesis_id),
+        )
+    conn.commit()
+
+
+def _maybe_close_thesis(
+    conn, position: OpenPosition, record: dict, close_rationale: str | None = None, close_reason_code: str | None = None,
+) -> None:
+    """Tras CUALQUIER consolidate_trade_record() de una posición con tesis
+    asociada (cierre normal por TP/SL/trailing/tiempo, cierre por
+    thesis_engine, o cierre forzado de fin de datos) — actualiza
+    theses.status con el mapeo de thesis_engine.thesis_status_for_exit_reason.
+    Un solo sitio que conoce ese mapeo, llamado desde los 3 puntos de
+    consolidación del módulo. `close_rationale`/`close_reason_code`: los de
+    ReconciliationResult cuando el cierre vino de thesis_engine (más
+    específico que record['exit_reason'] — p.ej. "INVALIDATED_EVENT_CLASS"
+    en vez del "INVALIDATED" genérico que sí exige el CHECK de
+    portfolio_trades); una plantilla genérica y el propio exit_reason en
+    cualquier otro caso (TP/SL/trailing/tiempo/gap de datos)."""
+    if position.thesis_id is None:
+        return
+    status = thesis_engine.thesis_status_for_exit_reason(record["exit_reason"])
+    if close_rationale is None:
+        close_rationale = f"Cerrada por mecánica ordinaria de la posición: {record['exit_reason']}."
+    if close_reason_code is None:
+        close_reason_code = record["exit_reason"]
+    _update_thesis_status(conn, position.thesis_id, status, record["exit_date"], close_reason_code, close_rationale)
 
 
 def _build_entry_plan(conn, version: str, events: list[dict], ticker_cache: dict[str, dict[date, dict]]) -> list[dict]:
@@ -520,6 +711,8 @@ def _build_entry_plan(conn, version: str, events: list[dict], ticker_cache: dict
                 "confidence": float(ev["confidence"]),
                 "prediction": float(ev["prediction"]),
                 "target_date": target_date,
+                "event_class": ev["event_class"],
+                "d0_close_date": ev["d0_close_date"],
             }
         )
     return plan
@@ -573,6 +766,7 @@ def simulate_portfolio(
     starting_capital: float = 100_000.0,
     sample: str | None = None,
     circuit_breaker_pct: float = DRAWDOWN_CIRCUIT_BREAKER_PCT,
+    thesis_memory_enabled: bool = config.THESIS_MEMORY_ENABLED,
 ) -> dict:
     """Punto de entrada del backtest de cartera para UNA versión de
     estrategia. Ver docstring del módulo para la disciplina anti-look-ahead
@@ -583,7 +777,13 @@ def simulate_portfolio(
     DRAWDOWN_CIRCUIT_BREAKER_PCT) — parametrizado explícitamente en vez de
     leer siempre la constante, para poder probarlo con un umbral distinto
     sin tocar el default de producción, y para que un operador pueda
-    experimentar con otro umbral sin editar código."""
+    experimentar con otro umbral sin editar código.
+    `thesis_memory_enabled`: memoria de tesis (ver thesis_engine.py), False
+    por defecto (config.THESIS_MEMORY_ENABLED) — con el flag desactivado esta
+    función se comporta EXACTAMENTE igual que antes de que existiera esta
+    funcionalidad, byte a byte; se expone como parámetro explícito (en vez de
+    leer siempre la constante) para poder comparar con/sin memoria en el
+    mismo backtest sin tocar el default de producción."""
     assert version in VERSIONS
 
     events = fetch_events_for_version(conn, version, sample=sample)
@@ -596,6 +796,15 @@ def simulate_portfolio(
     if not entry_plan:
         logger.warning("Ningún evento de %s tiene un plan de entrada válido", version)
         return {"version": version, "n_trades": 0, "n_equity_days": 0}
+
+    # Memoria de tesis: calendario de TODOS los eventos nuevos por ticker (no
+    # solo los que generan entrada en esta versión — ver
+    # _load_ticker_new_events). Coste solo cuando la memoria está activada.
+    new_events_by_ticker: dict[str, dict[date, list[dict]]] = (
+        {ticker: _load_ticker_new_events(conn, ticker, prices) for ticker, prices in ticker_cache.items()}
+        if thesis_memory_enabled
+        else {}
+    )
 
     entries_by_date: dict[date, list[dict]] = {}
     for p in entry_plan:
@@ -649,9 +858,88 @@ def simulate_portfolio(
                     record["run_batch_tag"] = run_batch_tag
                     completed_trades.append(record)
                     cash += pos.position_size_dollars + record["pnl_abs"]
+                    _maybe_close_thesis(conn, pos, record)
                 else:
                     still_open.append(pos)
             open_positions[style] = still_open
+
+        # 1.5) Reconciliación de tesis (memoria de tesis — config.THESIS_MEMORY_ENABLED).
+        # SIEMPRE después de las salidas normales de arriba: si STOP_LOSS (u
+        # otro cierre normal) ya vació la posición hoy, ya no está en
+        # open_positions y no se reconcilia — es la forma en que el orden
+        # existente del bucle ya garantiza, sin código adicional, que
+        # STOP_LOSS siempre gana si ambos aplicarían el mismo día (ajuste
+        # acordado con el usuario).
+        if thesis_memory_enabled:
+            for style in ("CONSERVATIVE", "AGGRESSIVE"):
+                still_open = []
+                for pos in open_positions[style]:
+                    if pos.thesis_id is None:
+                        still_open.append(pos)
+                        continue
+                    new_events_today = new_events_by_ticker.get(pos.ticker, {}).get(today, [])
+                    bar = ticker_cache[pos.ticker].get(today)
+                    if not new_events_today or bar is None or bar["open_raw"] is None:
+                        still_open.append(pos)
+                        continue
+                    current_price = float(bar["open_raw"])
+                    for new_event in new_events_today:
+                        realized_move_pct = gain_pct(pos.direction, pos.entry_price, current_price)
+                        saturation_threshold_pct = _compute_saturation_threshold_for_event_class(
+                            conn, pos.thesis_origin_event_class, today, pos.event_id
+                        )
+                        volume_ratio = thesis_engine.compute_volume_ratio(
+                            ticker_cache[pos.ticker], today, ADV_TRAILING_WINDOW_DAYS, ADV_MIN_TRADING_DAYS
+                        )
+                        thesis_snapshot = thesis_engine.ThesisSnapshot(
+                            thesis_id=pos.thesis_id, ticker=pos.ticker, direction=pos.direction,
+                            entry_price=pos.entry_price, rationale=pos.thesis_rationale,
+                            expected_move_pct=pos.thesis_expected_move_pct,
+                            invalidation_conditions=pos.thesis_invalidation_conditions,
+                            created_at_date=pos.thesis_created_at_date,
+                        )
+                        blind_judgment = thesis_engine.BlindJudgment(
+                            event_id=new_event["event_id"], event_class=new_event["event_class"],
+                            net_conviction=float(new_event["net_conviction"]),
+                            confidence_in_conviction=float(new_event["confidence_in_conviction"]),
+                        )
+                        metrics = thesis_engine.ObjectiveMetrics(
+                            realized_move_pct=realized_move_pct, current_price=current_price,
+                            saturation_threshold_pct=saturation_threshold_pct, volume_ratio=volume_ratio,
+                        )
+                        result = thesis_engine.reconcile(thesis_snapshot, blind_judgment, metrics)
+                        _store_thesis_update(
+                            conn, pos.thesis_id, today, new_event["event_id"], result,
+                            {
+                                "realized_move_pct": realized_move_pct, "current_price": current_price,
+                                "saturation_threshold_pct": saturation_threshold_pct, "volume_ratio": volume_ratio,
+                                "net_conviction": blind_judgment.net_conviction,
+                                "confidence_in_conviction": blind_judgment.confidence_in_conviction,
+                            },
+                            run_batch_tag,
+                        )
+                        if result.action == "SELL":
+                            exit_tag = "INVALIDATED" if result.reason_code.startswith("INVALIDATED") else result.reason_code
+                            pos.closes.append((today, pos.remaining_fraction, current_price, exit_tag))
+                            pos.remaining_fraction = 0.0
+                            break  # la tesis se cerró — no hay más que reconciliar hoy
+                        if result.action == "REDUCE":
+                            reduce_amount = min(result.reduce_fraction, pos.remaining_fraction)
+                            pos.closes.append((today, reduce_amount, current_price, "THESIS_REDUCE"))
+                            pos.remaining_fraction -= reduce_amount
+                            if pos.remaining_fraction <= 1e-9:
+                                break
+                        # HOLD: nada que cambiar; se sigue con el siguiente evento nuevo de hoy si lo hubiera.
+                    if pos.remaining_fraction <= 1e-9:
+                        record = consolidate_trade_record(pos)
+                        record["version"] = version
+                        record["run_batch_tag"] = run_batch_tag
+                        completed_trades.append(record)
+                        cash += pos.position_size_dollars + record["pnl_abs"]
+                        _maybe_close_thesis(conn, pos, record, close_rationale=result.rationale, close_reason_code=result.reason_code)
+                    else:
+                        still_open.append(pos)
+                open_positions[style] = still_open
 
         # 2) Entradas — dimensionadas contra la equity de HOY tras las salidas
         # de hoy (spec: "rebalance: noche antes de apertura").
@@ -665,6 +953,13 @@ def simulate_portfolio(
                 style = plan["execution_style"]
                 if len(open_positions[style]) >= max_concurrent[style]:
                     continue  # sin hueco — la señal se descarta (max_concurrent del spec)
+                if thesis_memory_enabled and any(p.ticker == plan["ticker"] for p in open_positions[style]):
+                    # Ya hay una tesis abierta en este ticker/estilo: el
+                    # evento nuevo se reconcilia contra ELLA (paso 1.5), no
+                    # abre una segunda posición independiente (ajuste
+                    # acordado con el usuario). Con la memoria desactivada
+                    # esta rama nunca se evalúa — comportamiento de siempre.
+                    continue
                 bar = ticker_cache[plan["ticker"]].get(today)
                 if bar is None or bar["open_raw"] is None:
                     continue
@@ -679,6 +974,28 @@ def simulate_portfolio(
                     logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)
                     pos.position_size_dollars = max(cash, 0.0)
                 cash -= pos.position_size_dollars
+                if thesis_memory_enabled:
+                    expected_move_pct = abs(
+                        estimate_impact_for_event(conn, plan["event_class"], plan["d0_close_date"], plan["event_id"], window_days=20).expected_magnitude_pct
+                    )
+                    expected_horizon_days = config.EVENT_WINDOWS_DAYS[0]
+                    thesis_expiry_date = compute_target_date(today, expected_horizon_days, sorted(ticker_cache[plan["ticker"]].keys()))
+                    rationale = thesis_engine.build_thesis_rationale(
+                        plan["direction"], plan["ticker"], plan["event_class"], plan["prediction"], plan["confidence"]
+                    )
+                    invalidation_conditions = thesis_engine.default_invalidation_conditions(plan["direction"], expected_horizon_days)
+                    thesis_id = _store_new_thesis(
+                        conn, plan["ticker"], plan["event_id"], version, style, plan["direction"], today,
+                        pos.entry_price, rationale, expected_move_pct, expected_horizon_days,
+                        invalidation_conditions, run_batch_tag,
+                    )
+                    pos.thesis_id = thesis_id
+                    pos.thesis_rationale = rationale
+                    pos.thesis_expected_move_pct = expected_move_pct
+                    pos.thesis_invalidation_conditions = invalidation_conditions
+                    pos.thesis_created_at_date = today
+                    pos.thesis_origin_event_class = plan["event_class"]
+                    pos.thesis_expiry_date = thesis_expiry_date
                 open_positions[style].append(pos)
 
         # 3) Curva de equity de hoy (tras salidas Y entradas de hoy, si el
@@ -703,6 +1020,7 @@ def simulate_portfolio(
             record["version"] = version
             record["run_batch_tag"] = run_batch_tag
             completed_trades.append(record)
+            _maybe_close_thesis(conn, pos, record)
 
     _store_portfolio_results(conn, version, run_batch_tag, completed_trades, equity_rows)
     return {
@@ -722,12 +1040,12 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
                     event_id, version, execution_style, direction, entry_date, entry_price,
                     exit_date, exit_price, exit_reason, pnl_pct, pnl_abs, position_size_pct,
                     position_size_dollars, confidence, ev, prediction, actual_move_pct,
-                    had_survivorship_warning, had_adv_cap_applied, run_batch_tag
+                    had_survivorship_warning, had_adv_cap_applied, thesis_id, run_batch_tag
                 ) VALUES (
                     %(event_id)s, %(version)s, %(execution_style)s, %(direction)s, %(entry_date)s, %(entry_price)s,
                     %(exit_date)s, %(exit_price)s, %(exit_reason)s, %(pnl_pct)s, %(pnl_abs)s, %(position_size_pct)s,
                     %(position_size_dollars)s, %(confidence)s, %(ev)s, %(prediction)s, %(actual_move_pct)s,
-                    %(had_survivorship_warning)s, %(had_adv_cap_applied)s, %(run_batch_tag)s
+                    %(had_survivorship_warning)s, %(had_adv_cap_applied)s, %(thesis_id)s, %(run_batch_tag)s
                 )
                 ON CONFLICT (event_id, version, run_batch_tag) DO UPDATE SET
                     execution_style = EXCLUDED.execution_style, direction = EXCLUDED.direction,
@@ -737,7 +1055,7 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
                     position_size_pct = EXCLUDED.position_size_pct, position_size_dollars = EXCLUDED.position_size_dollars,
                     confidence = EXCLUDED.confidence, ev = EXCLUDED.ev, prediction = EXCLUDED.prediction,
                     actual_move_pct = EXCLUDED.actual_move_pct, had_survivorship_warning = EXCLUDED.had_survivorship_warning,
-                    had_adv_cap_applied = EXCLUDED.had_adv_cap_applied
+                    had_adv_cap_applied = EXCLUDED.had_adv_cap_applied, thesis_id = EXCLUDED.thesis_id
                 """,
                 t,
             )
