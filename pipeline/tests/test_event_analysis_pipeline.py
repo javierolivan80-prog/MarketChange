@@ -103,6 +103,48 @@ def _seed_market_data(conn, tickers_and_bases, n_days=320):
     return dates
 
 
+def _seed_car_results_for_class(conn, event_class: str, before_date: date, n: int = 20, car_pct: float = 5.0, window_days: int = 20) -> None:
+    """Siembra `n` análogos históricos (misma event_class, d0_close_date
+    ANTERIOR a `before_date`, tickers/cik propios para no chocar con el
+    evento que el test está de verdad probando) con CAR ~car_pct% de
+    varianza baja.
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md A1): con la Etapa 6 (impact
+    estimation) adelantada a ANTES del bloque LLM, un evento sin ningún
+    análogo histórico (el caso por defecto de estos fixtures, que nunca
+    sembraban car_results porque antes era irrelevante para si se llamaba o
+    no al LLM) tiene expected_magnitude_pct=0.0 y confidence=0.0 — eso hace
+    que el EV de mejor caso posible sea exactamente 0, por debajo de
+    cualquier umbral, así que ev_ceiling_no_trade_reason SIEMPRE dispara y
+    el LLM nunca se invoca. Es el comportamiento correcto (ver docstring de
+    ev_ceiling_no_trade_reason: con 0 análogos el EV real tras el Judge
+    también sería 0 sin importar la respuesta), pero deja los tests que sí
+    quieren ejercitar el camino de Bull/Bear/Judge sin poder hacerlo si no
+    se les da algún análogo con magnitud real — de ahí este helper."""
+    for i in range(n):
+        eid = _seed_event(
+            conn,
+            f"analog-{event_class}-{i}",
+            f"ANLG{i}",
+            before_date - timedelta(days=365 + i),
+            event_class=event_class,
+        )
+        car = (car_pct + (0.5 if i % 2 == 0 else -0.5)) / 100.0
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO car_results (event_id, window_days, car, abnormal_volume_ratio, n_estimation_days) "
+                "VALUES (%s,%s,%s,1.2,200)",
+                (eid, window_days, car),
+            )
+        # Estos análogos ya están "analizados" (son historia, no parte de lo
+        # que el test manda a process_chunk) — sin esto, fetch_events_needing_analysis()
+        # sin filtro de market cap (como usan estos tests) los devolvería
+        # también a ellos, rompiendo los "assert len(events) == 1" de los
+        # tests que llaman a este helper.
+        _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    conn.commit()
+
+
 def _seed_event(conn, cik: str, ticker: str, d0: date, event_class: str = "8K_2.02_EARNINGS", sic_code: str = "2836", filing_text: str | None = None) -> int:
     # source debe reflejar de dónde vendría el evento de verdad: un FDA_CRL no
     # es un filing de EDGAR (se encontró este bug de fixture al ejecutar el
@@ -290,7 +332,9 @@ def test_process_chunk_reconecta_si_la_conexion_muere_durante_la_espera_del_batc
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
-    _seed_event(conn, "1", "TESTCO", dates[280].date())
+    d0 = dates[280].date()
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", d0)
+    _seed_event(conn, "1", "TESTCO", d0)
 
     client = SimpleNamespace(messages=SimpleNamespace(batches=_ClientQueMataLaConexion(conn)))
     events = fetch_events_needing_analysis(conn)
@@ -302,7 +346,7 @@ def test_process_chunk_reconecta_si_la_conexion_muere_durante_la_espera_del_batc
     assert conn.closed  # la vieja, la que mató el fake client, sigue cerrada
 
     with conn_nueva.cursor() as cur:
-        cur.execute("SELECT * FROM event_analyses")
+        cur.execute("SELECT * FROM event_analyses WHERE event_id = %s", (events[0]["event_id"],))
         rows = cur.fetchall()
     assert len(rows) == 1  # el análisis se guardó pese a la reconexión
     conn_nueva.close()
@@ -314,7 +358,9 @@ def test_process_chunk_end_to_end_writes_full_event_analyses_row(conn):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
-    _seed_event(conn, "1", "TESTCO", dates[280].date())
+    d0 = dates[280].date()
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", d0)
+    _seed_event(conn, "1", "TESTCO", d0)
 
     client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
     events = fetch_events_needing_analysis(conn)
@@ -323,7 +369,7 @@ def test_process_chunk_end_to_end_writes_full_event_analyses_row(conn):
     conn = process_chunk(conn, client, events)
 
     with conn.cursor() as cur:
-        cur.execute("SELECT * FROM event_analyses")
+        cur.execute("SELECT * FROM event_analyses WHERE event_id = %s", (events[0]["event_id"],))
         rows = cur.fetchall()
     assert len(rows) == 1
     row = rows[0]
@@ -339,7 +385,9 @@ def test_process_chunk_second_event_same_ticker_class_uses_cache_not_llm(conn):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
-    _seed_event(conn, "1", "TESTCO", dates[280].date())
+    d0 = dates[280].date()
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", d0)
+    _seed_event(conn, "1", "TESTCO", d0)
 
     scripted_client = _ScriptedBatchesClient()
     client = SimpleNamespace(messages=SimpleNamespace(batches=scripted_client))
@@ -355,7 +403,10 @@ def test_process_chunk_second_event_same_ticker_class_uses_cache_not_llm(conn):
     assert scripted_client.call_count == 2  # sin llamadas nuevas: se sirvió de caché
 
     with conn.cursor() as cur:
-        cur.execute("SELECT from_cache, net_conviction FROM event_analyses ORDER BY event_id")
+        cur.execute(
+            "SELECT ea.from_cache, ea.net_conviction FROM event_analyses ea "
+            "JOIN events e ON e.event_id = ea.event_id WHERE e.ticker = 'TESTCO' ORDER BY ea.event_id"
+        )
         rows = cur.fetchall()
     assert rows[0]["from_cache"] is False
     assert rows[1]["from_cache"] is True
@@ -368,6 +419,7 @@ def test_process_chunk_otro_trimestre_del_mismo_ticker_no_usa_cache(conn):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", dates[280].date())
     _seed_event(conn, "1", "TESTCO", dates[280].date())
     scripted_client = _ScriptedBatchesClient()
     client = SimpleNamespace(messages=SimpleNamespace(batches=scripted_client))
@@ -537,6 +589,47 @@ def test_process_chunk_skips_llm_for_illiquid_low_adv_event(conn):
     assert "ADV" in bull_output["reason"]
 
 
+def test_process_chunk_skips_llm_when_ev_ceiling_unreachable(conn):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md A1): la Etapa 6 (impact
+    estimation) se adelanta a ANTES del bloque LLM para los eventos que
+    sobreviven las 5 condiciones objetivas de arriba — si ni el MEJOR CASO
+    posible del Judge (net_conviction=+1.0, confidence=100) cruzaría el
+    umbral+buffer de EV de ninguna de las 3 versiones, el resultado es
+    NO_TRADE garantizado sin importar la respuesta real del Judge, así que
+    tampoco hace falta invocarlo.
+
+    Sin sembrar car_results (a propósito, a diferencia del resto de tests de
+    este fichero), estimate_impact_for_event no tiene NINGÚN análogo
+    histórico de la clase -> expected_magnitude_pct=0.0, confidence=0.0 ->
+    el EV de mejor caso es exactamente 0 para las 3 versiones -> el corte
+    dispara siempre. Es la misma razón, ya documentada, por la que el resto
+    de tests de este fichero SÍ necesitan `_seed_car_results_for_class`."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_event(conn, "1", "TESTCO", dates[280].date())
+
+    scripted_client = _ScriptedBatchesClient()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted_client))
+    events = fetch_events_needing_analysis(conn)
+    assert len(events) == 1
+
+    conn = process_chunk(conn, client, events)
+    assert scripted_client.call_count == 0  # cero llamadas a la Batch API: cero tokens gastados
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM event_analyses")
+        row = cur.fetchone()
+    assert row["model_version_bull_bear"] == "SKIPPED_OBJECTIVE_NO_TRADE"
+    assert row["trade_decision_conservative"] == "NO_TRADE"
+    assert row["trade_decision_aggressive"] == "NO_TRADE"
+    assert row["trade_decision_balanced"] == "NO_TRADE"
+    assert int(row["n_historical_analogues"]) == 0  # confirma que sí llegó a calcular la Etapa 6, con 0 análogos
+    bull_output = row["bull_analyst_output"] if isinstance(row["bull_analyst_output"], dict) else json.loads(row["bull_analyst_output"])
+    assert bull_output["skipped_no_llm_needed"] is True
+    assert "EV máximo alcanzable" in bull_output["reason"]
+
+
 def test_process_chunk_high_novelty_event_still_calls_llm_as_before(conn):
     """Contraprueba de la anterior: un evento con novelty normal (el drift
     plano que ya seedeaba _seed_market_data, sin el salto de precio forzado)
@@ -546,6 +639,7 @@ def test_process_chunk_high_novelty_event_still_calls_llm_as_before(conn):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", dates[280].date())
     _seed_event(conn, "1", "TESTCO", dates[280].date())
 
     scripted_client = _ScriptedBatchesClient()
@@ -554,7 +648,10 @@ def test_process_chunk_high_novelty_event_still_calls_llm_as_before(conn):
 
     assert scripted_client.call_count == 2  # bull/bear + judge, como siempre
     with conn.cursor() as cur:
-        cur.execute("SELECT model_version_bull_bear FROM event_analyses")
+        cur.execute(
+            "SELECT ea.model_version_bull_bear FROM event_analyses ea "
+            "JOIN events e ON e.event_id = ea.event_id WHERE e.ticker = 'TESTCO'"
+        )
         row = cur.fetchone()
     assert row["model_version_bull_bear"] == "claude-haiku-4-5"
 
@@ -627,6 +724,7 @@ def test_judge_fuera_de_rango_no_se_guarda(conn):
     from pipeline.analyze import event_analysis_pipeline as eap
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", dates[280].date())
     _seed_event(conn, "1", "TESTCO", dates[280].date())
 
     class _JudgeDesbocado(_ScriptedBatchesClient):
@@ -642,5 +740,7 @@ def test_judge_fuera_de_rango_no_se_guarda(conn):
     client = SimpleNamespace(messages=SimpleNamespace(batches=_JudgeDesbocado()))
     conn = eap.process_chunk(conn, client, eap.fetch_events_needing_analysis(conn))
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) AS n FROM event_analyses")
+        cur.execute(
+            "SELECT count(*) AS n FROM event_analyses ea JOIN events e ON e.event_id = ea.event_id WHERE e.ticker = 'TESTCO'"
+        )
         assert cur.fetchone()["n"] == 0

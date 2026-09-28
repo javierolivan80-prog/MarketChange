@@ -164,6 +164,52 @@ def objective_no_trade_reason(
     return _illiquid_reason(high_low_range_pct, adv_usd_60d)
 
 
+def ev_ceiling_no_trade_reason(best_case_ev_by_strategy: dict[str, float]) -> str | None:
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md A1): además de las 5
+    condiciones objetivas de arriba, la Etapa 6 (impact estimation) TAMPOCO
+    depende del Judge (solo de event_class/d0_close_date/histórico de
+    análogos) — así que, calculada de antemano, permite acotar el EV
+    MÁXIMO POSIBLE de un evento sin conocer el veredicto real del Judge:
+    basta con evaluar ev_engine.compute_ev con el mejor caso posible
+    (net_conviction=+1.0, confidence_in_conviction=100.0), que el caller
+    debe haber calculado y pasado aquí ya troceado por versión de estrategia.
+
+    Por qué ese "mejor caso" es realmente el máximo: en
+    ev_engine._raw_point_estimate, el punto central es
+    `net_conviction * abs(expected_magnitude_pct)/100 * (confidence/100) *
+    (impact_confidence/100)` — con expected_magnitude_pct e impact_confidence
+    ya fijos (vienen de Etapa 6, no del Judge), esto es lineal en
+    net_conviction y en confidence_in_conviction, ambos con coeficiente no
+    negativo cuando net_conviction es positivo. El máximo sobre
+    net_conviction∈[-1,1] y confidence∈[0,100] se alcanza entonces en
+    net_conviction=+1, confidence=100 — CUALQUIER veredicto real del Judge
+    (incluida la convicción más alcista y más segura posible) produce un EV
+    igual o menor a este techo, para las 3 versiones simultáneamente (misma
+    Etapa 6, multiplicadores de magnitud ya aplicados por versión dentro de
+    compute_ev).
+
+    Si ni siquiera ese techo cruza el umbral con buffer de NINGUNA versión,
+    el resultado es NO_TRADE garantizado en las 3 estrategias sin importar
+    qué diga el Judge de verdad — exactamente el mismo principio que
+    objective_no_trade_reason, aplicado a la regla 3 (EV) en vez de a las
+    reglas 1/4/5a/6/7.
+
+    Devuelve el motivo textual o None si el techo SÍ cruza el umbral con
+    buffer en alguna versión (en ese caso, y solo en ese, hace falta el
+    Judge real para saber si de verdad lo cruza)."""
+    failing = []
+    for strategy, ev in best_case_ev_by_strategy.items():
+        threshold = EV_THRESHOLDS[strategy] + EV_ABSTENTION_BUFFER
+        if ev >= threshold:
+            return None
+        failing.append(f"{strategy.lower()}: techo={ev * 100:.2f}% < {threshold * 100:.2f}%")
+    return (
+        "EV máximo alcanzable (mejor caso posible del Judge: net_conviction=+1.0, "
+        "confidence=100) por debajo del umbral+buffer en las 3 versiones (" + "; ".join(failing) +
+        ") — ningún resultado real del Judge podría cambiar esto"
+    )
+
+
 def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDecision:
     """Aplica las 7 reglas del spec, en el orden en que aparecen, devolviendo
     la PRIMERA que dispara — el orden importa para que reason_if_no_trade sea

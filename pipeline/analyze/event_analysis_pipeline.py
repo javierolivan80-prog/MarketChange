@@ -33,7 +33,7 @@ import logging
 from datetime import date, timedelta
 
 from pipeline import config
-from pipeline.analyze.abstention_engine import AbstentionInputs, as_json as abstention_as_json, decide_all_strategies, objective_no_trade_reason
+from pipeline.analyze.abstention_engine import AbstentionInputs, as_json as abstention_as_json, decide_all_strategies, ev_ceiling_no_trade_reason, objective_no_trade_reason
 from pipeline.analyze.adversarial_analyzer import (
     EventContext,
     build_bull_bear_batch,
@@ -199,10 +199,10 @@ def process_chunk(conn, client, event_rows: list[dict]):
         else:
             needs_llm.append(ev)
 
-    # Pre-filtro de condiciones objetivas (Etapa 2 + Etapa 8, adelantadas —
-    # hallazgo de auditoría IMPROVEMENT_PLAN.md R5, extiende el pre-filtro
-    # que antes solo cubría novelty): de las 7 reglas de
-    # abstention_engine.decide_for_strategy, 5 (novelty, survivorship
+    # Pre-filtro de condiciones objetivas (Etapa 2 + Etapa 6 + Etapa 8,
+    # adelantadas — hallazgo de auditoría IMPROVEMENT_PLAN.md R5 + A1,
+    # extiende el pre-filtro que antes solo cubría novelty): de las 7 reglas
+    # de abstention_engine.decide_for_strategy, 5 (novelty, survivorship
     # warning, modelo de factores sin ajustar, CRL de FDA sin 8-K, e
     # iliquidez) NO dependen en absoluto de lo que diga Bull/Bear/Judge — ver
     # abstention_engine.objective_no_trade_reason(). Si CUALQUIERA dispara,
@@ -212,6 +212,17 @@ def process_chunk(conn, client, event_rows: list[dict]):
     # (enrichment + guidance/rumor + el cruce EDGAR/FDA, todo solo Postgres,
     # sin coste) ANTES de construir el batch, para no invocar Bull/Bear/Judge
     # en los eventos que van a descartarse igual.
+    #
+    # A1: la Etapa 6 (impact estimation) TAMPOCO depende del Judge (solo de
+    # event_class/d0_close_date/histórico de análogos), así que para los
+    # eventos que sobreviven las 5 condiciones de arriba se calcula AQUÍ
+    # también, y se usa para acotar el EV con el mejor caso posible del
+    # Judge (net_conviction=+1.0, confidence=100) — ver
+    # abstention_engine.ev_ceiling_no_trade_reason(). Si ni ese techo cruza
+    # el umbral con buffer de ninguna versión, tampoco hace falta el debate
+    # de IA. El resultado (impact, ya calculado o None si no llegó a
+    # necesitarse) se guarda en precomputed_by_id para que
+    # _process_single_event no lo recalcule.
     precomputed_by_id: dict[int, tuple] = {}
     llm_candidates: list[dict] = []
     skipped_ids_with_reason: dict[int, str] = {}
@@ -226,7 +237,6 @@ def process_chunk(conn, client, event_rows: list[dict]):
             )
         )
         is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
-        precomputed_by_id[ev["event_id"]] = (enrichment, novelty, is_fda_crl_without_8k)
         skip_reason = objective_no_trade_reason(
             novelty_score=novelty.score,
             had_survivorship_warning=enrichment.had_survivorship_warning,
@@ -235,6 +245,20 @@ def process_chunk(conn, client, event_rows: list[dict]):
             adv_usd_60d=enrichment.adv_usd_60d,
             is_fda_crl_without_8k=is_fda_crl_without_8k,
         )
+        impact = None
+        if skip_reason is None:
+            impact = estimate_impact_for_event(
+                conn, ev["event_class"], ev["d0_close_date"], ev["event_id"], window_days=20
+            )
+            best_case = compute_ev(1.0, 100.0, impact.expected_magnitude_pct, impact.confidence)
+            skip_reason = ev_ceiling_no_trade_reason(
+                {
+                    "CONSERVATIVE": best_case.ev_conservative,
+                    "BALANCED": best_case.ev_balanced,
+                    "AGGRESSIVE": best_case.ev_aggressive,
+                }
+            )
+        precomputed_by_id[ev["event_id"]] = (enrichment, novelty, is_fda_crl_without_8k, impact)
         if skip_reason is not None:
             skipped_ids_with_reason[ev["event_id"]] = skip_reason
         else:
@@ -338,7 +362,7 @@ def _process_single_event(
     # (no lo necesitan, no van a llamar al LLM), así que para ellos se
     # calculan aquí igual que siempre.
     if precomputed is not None:
-        enrichment, novelty, is_fda_crl_without_8k = precomputed
+        enrichment, novelty, is_fda_crl_without_8k, impact = precomputed
     else:
         enrichment = fetch_and_compute_enrichment(conn, ev)
         # Fase 3: has_prior_guidance/rumor_flag ya no son siempre None — se
@@ -355,6 +379,7 @@ def _process_single_event(
             )
         )
         is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
+        impact = None
 
     # --- Etapas 3-5: Bull/Bear/Judge (de caché, de LLM, o descartado por una condición objetiva) ---
     from_cache = cache_hit is not None
@@ -399,7 +424,14 @@ def _process_single_event(
         batch_bb, batch_judge = bb_batch_id, judge_batch_id
 
     # --- Etapa 6: impact estimation (SIEMPRE fresco — depende de as_of_date) ---
-    impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], event_id, window_days=20)
+    # A1: si process_chunk ya la calculó para el corte por techo de EV (ver su
+    # docstring), se reutiliza aquí en vez de repetir la consulta — mismo
+    # as_of_date (misma corrida), mismo resultado. impact solo llega None
+    # aquí en dos casos: cache_hit (precomputed es None entero) o un evento
+    # que ya se descartó por una de las 5 condiciones objetivas ANTES de
+    # llegar a calcular la Etapa 6 (no hacía falta para decidir el skip).
+    if impact is None:
+        impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], event_id, window_days=20)
 
     # --- Etapa 7: EV engine ---
     ev_result = compute_ev(net_conviction, confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence)
