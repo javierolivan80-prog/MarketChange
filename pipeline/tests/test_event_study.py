@@ -8,9 +8,13 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from statsmodels.stats.multitest import multipletests
+
 from pipeline.validation.event_study import (
     MDE_POWER_CONSTANT,
+    MULTIPLE_COMPARISONS_METHOD,
     SIGNIFICANCE_ALPHA,
+    _apply_multiple_comparisons_correction,
     compute_event_study_for_class,
     compute_mde,
 )
@@ -59,6 +63,11 @@ def test_event_study_hand_calculated_stats():
     assert result["t_statistic"] == pytest.approx(float(expected_t))
     assert result["p_value"] == pytest.approx(float(expected_p))
     assert result["significant"] == (float(expected_p) < SIGNIFICANCE_ALPHA)
+    # compute_event_study_for_class solo ve UNA clase — la corrección por
+    # contrastes múltiples (ver run_event_study) requiere ver todas a la
+    # vez, así que aquí quedan sin rellenar.
+    assert result["p_value_bh_adjusted"] is None
+    assert result["significant_bh"] is None
 
 
 def test_event_study_insufficient_sample_returns_none_stats():
@@ -102,6 +111,81 @@ def test_event_study_zero_variance_does_not_produce_infinity():
     for v in result.values():
         if isinstance(v, float):
             assert math.isfinite(v)
+
+
+# ---------------------------------------------------------------------------
+# _apply_multiple_comparisons_correction — puro (hallazgo de auditoría:
+# corrección por contrastes múltiples, Benjamini-Hochberg/FDR)
+# ---------------------------------------------------------------------------
+
+
+def _fake_result(p_value):
+    """Construye un dict con la misma forma que compute_event_study_for_class
+    devuelve, para testear la corrección de forma aislada sin recalcular
+    t-tests reales."""
+    return {
+        "n": 10, "mean_return_pct": 1.0, "median_return_pct": 1.0,
+        "p25_pct": 0.5, "p75_pct": 1.5, "sigma_pct": 1.0, "mde_pct": 1.0,
+        "t_statistic": 1.0, "p_value": p_value,
+        "significant": (p_value < SIGNIFICANCE_ALPHA) if p_value is not None else None,
+        "p_value_bh_adjusted": None, "significant_bh": None,
+        "conclusion": "placeholder",
+    }
+
+
+def test_multiple_comparisons_correction_matches_statsmodels_directly():
+    pvalues_by_class = {"A": 0.001, "B": 0.01, "C": 0.02, "D": 0.03, "E": 0.04}
+    by_class_results = {c: _fake_result(p) for c, p in pvalues_by_class.items()}
+
+    _apply_multiple_comparisons_correction(by_class_results)
+
+    classes = list(pvalues_by_class.keys())
+    expected_rejected, expected_adjusted, _, _ = multipletests(
+        [pvalues_by_class[c] for c in classes], alpha=SIGNIFICANCE_ALPHA, method=MULTIPLE_COMPARISONS_METHOD
+    )
+    for event_class, expect_sig, expect_p in zip(classes, expected_rejected, expected_adjusted):
+        assert by_class_results[event_class]["significant_bh"] == bool(expect_sig)
+        assert by_class_results[event_class]["p_value_bh_adjusted"] == pytest.approx(float(expect_p))
+
+
+def test_multiple_comparisons_correction_excludes_classes_without_pvalue():
+    """Clases con n insuficiente o varianza cero (p_value=None) no entran en
+    la corrección — ni deben, no hay hipótesis que testear — y quedan con
+    p_value_bh_adjusted/significant_bh en None, no en False."""
+    by_class_results = {
+        "WITH_PVALUE": _fake_result(0.01),
+        "NO_PVALUE_INSUFFICIENT_N": _fake_result(None),
+    }
+    _apply_multiple_comparisons_correction(by_class_results)
+
+    assert by_class_results["WITH_PVALUE"]["p_value_bh_adjusted"] is not None
+    assert by_class_results["NO_PVALUE_INSUFFICIENT_N"]["p_value_bh_adjusted"] is None
+    assert by_class_results["NO_PVALUE_INSUFFICIENT_N"]["significant_bh"] is None
+
+
+def test_multiple_comparisons_correction_can_flip_a_borderline_significant_result():
+    """El caso que justifica todo el punto de auditoría: una clase con
+    p=0.049 (significativa cruda, < 0.05) deja de serlo tras corregir por
+    contrastes múltiples cuando se testea junto a otras 9 clases — el falso
+    positivo que la corrección existe para prevenir."""
+    by_class_results = {"BORDERLINE": _fake_result(0.049)}
+    by_class_results.update({f"NOISE_{i}": _fake_result(0.5) for i in range(9)})
+
+    assert by_class_results["BORDERLINE"]["significant"] is True  # crudo: sí es significativo
+
+    _apply_multiple_comparisons_correction(by_class_results)
+
+    assert by_class_results["BORDERLINE"]["significant_bh"] is False  # corregido: ya no
+    assert "no sobrevive a la corrección" in by_class_results["BORDERLINE"]["conclusion"]
+    for i in range(9):
+        assert by_class_results[f"NOISE_{i}"]["significant_bh"] is False
+
+
+def test_multiple_comparisons_correction_all_pvalues_none_is_a_noop():
+    by_class_results = {"A": _fake_result(None), "B": _fake_result(None)}
+    _apply_multiple_comparisons_correction(by_class_results)
+    assert by_class_results["A"]["p_value_bh_adjusted"] is None
+    assert by_class_results["B"]["p_value_bh_adjusted"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +252,21 @@ class TestEventStudyIntegration:
 
         result_20 = run_event_study(conn, window_days=20)
         assert result_20["8K_2.02_EARNINGS"]["n"] == 1
+
+    def test_run_event_study_attaches_bh_correction_across_all_classes(self, conn):
+        from pipeline.validation.event_study import run_event_study
+
+        for i in range(5):
+            self._seed_event_with_car(conn, f"e{i}", f"E{i}", "8K_2.02_EARNINGS", 0.05 + i * 0.001)
+        for i in range(3):
+            self._seed_event_with_car(conn, f"m{i}", f"M{i}", "8K_1.01_MATERIAL_AGREEMENT", 0.001 * (-1) ** i)
+
+        result = run_event_study(conn, window_days=20)
+
+        for event_class, stats in result.items():
+            if stats["p_value"] is not None:
+                assert stats["p_value_bh_adjusted"] is not None
+                assert isinstance(stats["significant_bh"], bool)
+            else:
+                assert stats["p_value_bh_adjusted"] is None
+                assert stats["significant_bh"] is None

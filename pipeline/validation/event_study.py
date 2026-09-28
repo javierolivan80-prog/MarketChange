@@ -19,12 +19,25 @@ from __future__ import annotations
 
 import numpy as np
 from scipy import stats
+from statsmodels.stats.multitest import multipletests
 
 from pipeline.backtest.sample_split import date_bounds
 
 MDE_POWER_CONSTANT = 2.8  # ver docstring del módulo — AUDIT_LEAN.md §2.2.3
 SIGNIFICANCE_ALPHA = 0.05
 MIN_N_FOR_ANY_STATISTIC = 3  # por debajo de esto, ni sigma tiene sentido
+# Corrección por contrastes múltiples (hallazgo de auditoría): run_event_study
+# testea una hipótesis (H0: media=0) POR CADA event_class simultáneamente. Sin
+# corregir, a más clases más probabilidad de que alguna "salga significativa"
+# por puro azar (el clásico problema de comparaciones múltiples) — con, p.ej.,
+# 8 clases y α=0.05 sin corregir, la probabilidad de al menos un falso
+# positivo puede superar el 30%. Benjamini-Hochberg/FDR (vs. Bonferroni, más
+# conservador) porque aquí interesa controlar la PROPORCIÓN esperada de falsos
+# positivos entre los resultados marcados significativos, no eliminar
+# cualquier posibilidad de uno solo — con un número de clases pequeño (~5-10)
+# Bonferroni penalizaría en exceso el poder estadístico ya limitado por el n
+# real de eventos por clase.
+MULTIPLE_COMPARISONS_METHOD = "fdr_bh"
 
 
 def compute_mde(sigma: float, n: int) -> float | None:
@@ -65,6 +78,7 @@ def compute_event_study_for_class(car_values: list[float]) -> dict:
             "n": n, "mean_return_pct": None, "median_return_pct": None,
             "p25_pct": None, "p75_pct": None, "sigma_pct": None, "mde_pct": None,
             "t_statistic": None, "p_value": None, "significant": None,
+            "p_value_bh_adjusted": None, "significant_bh": None,
             "conclusion": f"n={n} — muestra insuficiente para cualquier estadístico (mínimo {MIN_N_FOR_ANY_STATISTIC})",
         }
 
@@ -109,8 +123,35 @@ def compute_event_study_for_class(car_values: list[float]) -> dict:
         "t_statistic": t_stat,
         "p_value": p_value,
         "significant": significant,
+        # Rellenados por run_event_study() (requiere ver TODAS las clases a
+        # la vez) — None aquí porque esta función solo ve una clase.
+        "p_value_bh_adjusted": None,
+        "significant_bh": None,
         "conclusion": conclusion,
     }
+
+
+def _apply_multiple_comparisons_correction(by_class_results: dict[str, dict]) -> None:
+    """Corrige por contrastes múltiples IN-PLACE sobre los resultados de
+    TODAS las clases a la vez (ver MULTIPLE_COMPARISONS_METHOD arriba) —
+    no se puede hacer clase por clase, por definición: la corrección depende
+    de cuántas hipótesis se testean simultáneamente. Las clases con p_value
+    None (n insuficiente o varianza cero) se excluyen del ajuste — no hay
+    p-valor que corregir — y quedan con p_value_bh_adjusted=significant_bh=None."""
+    classes_with_pvalue = [c for c, r in by_class_results.items() if r["p_value"] is not None]
+    if not classes_with_pvalue:
+        return
+    raw_pvalues = [by_class_results[c]["p_value"] for c in classes_with_pvalue]
+    rejected, adjusted_pvalues, _, _ = multipletests(raw_pvalues, alpha=SIGNIFICANCE_ALPHA, method=MULTIPLE_COMPARISONS_METHOD)
+    for event_class, is_significant_bh, p_adj in zip(classes_with_pvalue, rejected, adjusted_pvalues):
+        result = by_class_results[event_class]
+        result["p_value_bh_adjusted"] = float(p_adj)
+        result["significant_bh"] = bool(is_significant_bh)
+        if result["significant"] and not is_significant_bh:
+            result["conclusion"] += (
+                f" — ADVERTENCIA: no sobrevive a la corrección por contrastes múltiples "
+                f"(p_bh={p_adj:.4f} >= {SIGNIFICANCE_ALPHA}, {len(classes_with_pvalue)} clases testeadas a la vez)"
+            )
 
 
 def run_event_study(conn, window_days: int = 20, sample: str | None = None) -> dict[str, dict]:
@@ -125,6 +166,15 @@ def run_event_study(conn, window_days: int = 20, sample: str | None = None) -> d
     no filtre información de la partición in-sample a través del Event
     Study (PARTE 1 del reporte): sin este filtro, un run con --oos habría
     mostrado igualmente el CAR calculado sobre TODOS los eventos, in-sample
-    incluido, deshaciendo el propósito del holdout en la mitad del reporte."""
+    incluido, deshaciendo el propósito del holdout en la mitad del reporte.
+
+    Corrección por contrastes múltiples (hallazgo de auditoría): con varias
+    event_class testeadas a la vez, cada resultado incluye además
+    p_value_bh_adjusted / significant_bh (Benjamini-Hochberg/FDR sobre TODAS
+    las clases de esta llamada) junto al p_value/significant crudos — ambos
+    se conservan, no se sobreescriben, para que el reporte pueda mostrar
+    tanto el resultado sin corregir como el corregido."""
     by_class = _fetch_car_by_class(conn, window_days, sample=sample)
-    return {event_class: compute_event_study_for_class(values) for event_class, values in by_class.items()}
+    results = {event_class: compute_event_study_for_class(values) for event_class, values in by_class.items()}
+    _apply_multiple_comparisons_correction(results)
+    return results

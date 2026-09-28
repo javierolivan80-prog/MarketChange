@@ -537,7 +537,20 @@ del spec del usuario, "¿invertir dinero real?". Nuevo paquete
   un edge?", con n en la escala de todos los eventos, ver
   `AUDIT_LEAN.md` §2.2.3). MDE = 2.8·σ/√n, la MISMA fórmula y constante que
   ya usó el propio audit — no se reinventa. t-test de una muestra (scipy)
-  contra H0: retorno medio = 0.
+  contra H0: retorno medio = 0. Corrección por contrastes múltiples
+  (hallazgo de auditoría): `run_event_study` testea una hipótesis por cada
+  `event_class` a la vez, así que sin corregir, más clases significa más
+  probabilidad de un falso positivo por puro azar. Se aplica
+  Benjamini-Hochberg/FDR (`statsmodels.stats.multitest.multipletests`,
+  `method="fdr_bh"`) sobre TODOS los p-valores no nulos de la llamada,
+  añadiendo `p_value_bh_adjusted`/`significant_bh` junto a los
+  `p_value`/`significant` crudos (se conservan ambos, no se sobreescriben).
+  Se eligió FDR sobre Bonferroni porque con un número pequeño de clases
+  (~5-10) Bonferroni penalizaría en exceso el poder estadístico, ya
+  limitado por el n real de eventos por clase; FDR controla la proporción
+  esperada de falsos positivos entre los resultados marcados
+  significativos, que es la pregunta relevante aquí. El reporte
+  (`report.py:_event_study_table`) muestra ambas columnas de p-value.
 - `sensitivity.py` (PARTE 5): 5 escenarios — comisión +0.1%, spread +0.2%,
   latencia D+2 (aproximado: reprecia la entrada contra el MISMO exit ya
   registrado, no resimula el día a día completo — ver el docstring del

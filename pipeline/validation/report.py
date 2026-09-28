@@ -115,14 +115,23 @@ def _fmt_num(v: float | None, digits: int = 2) -> str:
 
 
 def _event_study_table(event_study: dict[str, dict]) -> str:
-    lines = ["| Event Type | n | Median Return | σ | MDE | p-value | Conclusion |", "|---|---|---|---|---|---|---|"]
+    # p-value BH incluida junto al crudo (hallazgo de auditoría — corrección
+    # por contrastes múltiples, ver pipeline/validation/event_study.py):
+    # varias event_class se testean a la vez, así que un p-value crudo
+    # "significativo" puede no serlo tras corregir por el número de clases.
+    lines = [
+        "| Event Type | n | Median Return | σ | MDE | p-value | p-value (BH) | Conclusion |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
     for event_class, stats in sorted(event_study.items()):
         median = f"{stats['median_return_pct']:+.2f}%" if stats["median_return_pct"] is not None else "—"
         sigma = f"{stats['sigma_pct']:.1f}%" if stats["sigma_pct"] is not None else "—"
         mde = f"{stats['mde_pct']:.0f} bps" if stats["mde_pct"] is not None else "—"
         p = f"{stats['p_value']:.4f}" if stats["p_value"] is not None else "—"
-        mark = "✓" if stats["significant"] else ("✗" if stats["significant"] is False else "?")
-        lines.append(f"| {event_class} | {stats['n']} | {median} | {sigma} | {mde} | {p} | {mark} {stats['conclusion']} |")
+        p_bh = f"{stats['p_value_bh_adjusted']:.4f}" if stats.get("p_value_bh_adjusted") is not None else "—"
+        significant_bh = stats.get("significant_bh")
+        mark = "✓" if significant_bh else ("✗" if significant_bh is False else "?")
+        lines.append(f"| {event_class} | {stats['n']} | {median} | {sigma} | {mde} | {p} | {p_bh} | {mark} {stats['conclusion']} |")
     return "\n".join(lines)
 
 
