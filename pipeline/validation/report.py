@@ -151,7 +151,13 @@ def _backtest_table(portfolio_report: dict) -> str:
 
 
 def _sensitivity_table(sensitivity: dict) -> str:
-    lines = ["| Scenario | Conservative Return | Aggressive Return | Impact |", "|---|---|---|---|"]
+    # R13 (IMPROVEMENT_PLAN.md): BALANCED entra en la tabla — puede ser
+    # best_version en PARTE 6, así que su sensibilidad tiene que verse igual
+    # que las otras dos, no solo la de Conservative/Aggressive.
+    lines = [
+        "| Scenario | Conservative Return (n) | Balanced Return (n) | Aggressive Return (n) | Impact |",
+        "|---|---|---|---|---|",
+    ]
     scenarios = sensitivity["scenarios"]
     scenario_keys = ["baseline", "commission_plus_0.1pct", "spread_plus_0.2pct", "latency_d_plus_2", "confidence_minus_20pct", "high_vix_regime", "low_vix_regime"]
     scenario_labels = {
@@ -164,16 +170,36 @@ def _sensitivity_table(sensitivity: dict) -> str:
         "low_vix_regime": "Régimen bajo-VIX",
     }
     cons = scenarios.get("CONSERVATIVE", {})
+    bal = scenarios.get("BALANCED", {})
     aggr = scenarios.get("AGGRESSIVE", {})
     baseline_cons = cons.get("baseline", {}).get("total_return")
+
+    def _cell(scenario: dict) -> str:
+        # (n) por escenario (IMPROVEMENT_PLAN.md R14): sin esto, un return
+        # que se desploma en un escenario podía ser "el escenario importa" o
+        # simplemente "la muestra se redujo a la mitad" — indistinguibles.
+        return f"{_fmt_pct(scenario.get('total_return'))} (n={scenario.get('n_trades', 0)})"
+
     for key in scenario_keys:
-        c = cons.get(key, {})
-        a = aggr.get(key, {})
-        c_ret, a_ret = c.get("total_return"), a.get("total_return")
+        c, b, a = cons.get(key, {}), bal.get(key, {}), aggr.get(key, {})
+        c_ret = c.get("total_return")
         impact = "—"
         if key != "baseline" and c_ret is not None and baseline_cons is not None:
             impact = f"{(c_ret - baseline_cons) * 100:+.2f}pp vs baseline (Conservative)"
-        lines.append(f"| {scenario_labels[key]} | {_fmt_pct(c_ret)} | {_fmt_pct(a_ret)} | {impact} |")
+        lines.append(f"| {scenario_labels[key]} | {_cell(c)} | {_cell(b)} | {_cell(a)} | {impact} |")
+
+    # n_missing_vix (IMPROVEMENT_PLAN.md R15): metadato POR VERSIÓN, no por
+    # escenario (split_by_vix_regime se corre una vez por versión) — una
+    # línea aparte en vez de una columna más, para no repetir el mismo
+    # número en las 2 filas de régimen VIX de cada versión.
+    n_missing = {v: scenarios.get(v, {}).get("n_missing_vix") for v in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")}
+    if any(n is not None for n in n_missing.values()):
+        lines.append("")
+        lines.append(
+            "*Trades sin vix_d0 disponible (excluidos del split alto/bajo-VIX): "
+            + ", ".join(f"{v.capitalize()}={n if n is not None else '—'}" for v, n in n_missing.items())
+            + "*"
+        )
     return "\n".join(lines)
 
 
