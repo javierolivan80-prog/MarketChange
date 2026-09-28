@@ -8,6 +8,7 @@ import pytest
 
 from pipeline.analyze.abstention_engine import (
     CONFIDENCE_FLOOR,
+    LIQUIDITY_ADV_FLOOR_USD,
     NOVELTY_FLOOR,
     SPREAD_CEILING_PCT,
     AbstentionInputs,
@@ -28,6 +29,7 @@ def _clean_inputs(**overrides) -> AbstentionInputs:
         had_survivorship_warning=False,
         beta_available=True,
         high_low_range_pct=0.1,
+        adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD * 10,  # muy por encima del suelo
         is_fda_crl_without_8k=False,
     )
     base.update(overrides)
@@ -120,6 +122,42 @@ def test_rule_7_missing_spread_data_abstains_rather_than_assumes_liquid():
     es en sí misma un motivo de cautela, no se asume liquidez."""
     decision = decide_for_strategy(_clean_inputs(high_low_range_pct=None), "BALANCED")
     assert decision.trade_decision == "NO_TRADE"
+
+
+def test_rule_7_adv_proxy_below_floor():
+    """Segundo componente del proxy de liquidez (hallazgo de auditoría):
+    spread limpio pero ADV por debajo del suelo -> NO_TRADE igual."""
+    decision = decide_for_strategy(_clean_inputs(adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD - 1), "BALANCED")
+    assert decision.trade_decision == "NO_TRADE"
+    assert "ADV" in decision.reason_if_no_trade
+    assert "ilíquido" in decision.reason_if_no_trade
+
+
+def test_rule_7_adv_at_floor_does_not_trigger():
+    """Boundary: exactamente en el suelo NO debe disparar (misma convención
+    '< suelo', no '<= suelo', que el resto de umbrales del módulo)."""
+    decision = decide_for_strategy(_clean_inputs(adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD), "BALANCED")
+    assert decision.trade_decision != "NO_TRADE"
+
+
+def test_rule_7_missing_adv_data_abstains_rather_than_assumes_liquid():
+    """Igual que con high_low_range_pct=None: sin dato de ADV, cautela, no
+    se asume liquidez."""
+    decision = decide_for_strategy(_clean_inputs(adv_usd_60d=None), "BALANCED")
+    assert decision.trade_decision == "NO_TRADE"
+    assert "ADV" in decision.reason_if_no_trade
+
+
+def test_rule_7_bad_spread_reported_before_checking_adv():
+    """Cuando AMBOS componentes fallan, se reporta el spread primero (mismo
+    principio de orden determinista que el resto del módulo — ver docstring
+    de decide_for_strategy)."""
+    decision = decide_for_strategy(
+        _clean_inputs(high_low_range_pct=SPREAD_CEILING_PCT + 0.1, adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD - 1), "BALANCED"
+    )
+    assert decision.trade_decision == "NO_TRADE"
+    assert "spread" in decision.reason_if_no_trade
+    assert "ADV" not in decision.reason_if_no_trade
 
 
 # --- Casos combinados ---

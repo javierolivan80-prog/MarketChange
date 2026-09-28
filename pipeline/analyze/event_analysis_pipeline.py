@@ -398,6 +398,7 @@ def _process_single_event(
         had_survivorship_warning=enrichment.had_survivorship_warning,
         beta_available=enrichment.beta_vs_spy is not None,
         high_low_range_pct=enrichment.high_low_range_pct,
+        adv_usd_60d=enrichment.adv_usd_60d,
         is_fda_crl_without_8k=is_fda_crl_without_8k,
     )
     decisions = decide_all_strategies(abstention_inputs)

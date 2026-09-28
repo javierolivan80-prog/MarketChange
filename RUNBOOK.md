@@ -236,6 +236,19 @@ histórico real detrás — no falla, pero pierde la mitad de su fundamento.
 Correrlo después de tener precios (§3.5) y factores (§3.6) cargados.
 
 ### 3.8 Smoke test del pipeline de análisis (Fase 2, Etapas 1-8)
+
+**Proxy de liquidez, segundo componente (hallazgo de auditoría):** la regla 7
+de `abstention_engine.py` ("spread > 0.5%, ilíquido") ahora tiene un segundo
+componente además del spread intradía — el ADV (volumen medio diario en $) de
+los 60 días de negociación ANTERIORES al evento (`event_enrichment.adv_usd_60d`,
+calculado en `enrichment.py`), con el mismo suelo que ya exige
+`universe.in_investable_universe` (`config.MIN_ADV_USD`). Cualquiera de los
+dos proxies basta para NO_TRADE — mismo patrón que el proxy de "datos
+contradictorios". Deliberadamente NO se usa `universe.adv_usd_60d` para esto
+(esa columna es un snapshot de HOY, no de la fecha del evento — ver el
+docstring de `compute_trailing_adv_usd` en `portfolio_simulator.py`, que usa
+el mismo cálculo point-in-time para el tope de posición del backtest).
+
 **Nunca se ha llamado a la API de Anthropic en vivo desde esta sesión** (sin
 `ANTHROPIC_API_KEY` configurada aquí, ni en la Fase 1 ni en la Fase 2). Antes
 del backfill completo de ~25k eventos, limita el orquestador a un puñado

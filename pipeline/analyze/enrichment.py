@@ -21,6 +21,7 @@ from datetime import date, timedelta
 import pandas as pd
 
 from pipeline.backtest.factor_model import fit_factor_model
+from pipeline.backtest.portfolio_simulator import ADV_MIN_TRADING_DAYS, ADV_TRAILING_WINDOW_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class EnrichmentResult:
     sector_mood: float | None
     pre_event_drift_pct: float | None
     high_low_range_pct: float | None
+    adv_usd_60d: float | None
     n_estimation_days: int
     had_survivorship_warning: bool
 
@@ -157,6 +159,25 @@ def compute_enrichment(
         if pd.notna(row.get("high_raw")) and pd.notna(row.get("low_raw")) and pd.notna(row.get("close_raw")) and row["close_raw"]:
             high_low_range_pct = (row["high_raw"] - row["low_raw"]) / row["close_raw"] * 100
 
+    # ADV point-in-time (hallazgo de auditoría — proxy de liquidez para
+    # abstention_engine.py, condición 6 junto al spread): promedio de
+    # close_raw*volume de los ADV_TRAILING_WINDOW_DAYS días de negociación
+    # ANTERIORES a d0 (estrictamente < d0_ts — el volumen del día del evento
+    # en sí no aporta a "¿era líquido ANTES de que pasara esto?"). MISMO
+    # cálculo y MISMOS umbrales que portfolio_simulator.compute_trailing_adv_usd
+    # (que opera sobre un dict, no un DataFrame — de ahí la reimplementación
+    # aquí en pandas, en vez de convertir formatos en cada llamada), y
+    # deliberadamente NO universe.adv_usd_60d (esa columna se recalcula sobre
+    # los 60 días más recientes respecto a HOY, no respecto a d0 — aplicarla
+    # aquí sería el mismo look-ahead sutil que ya se documentó al construir
+    # el tope de posición del backtest).
+    window_adv = ticker_prices[ticker_prices.index < d0_ts].tail(ADV_TRAILING_WINDOW_DAYS)
+    adv_usd_60d = None
+    if not window_adv.empty and "volume" in window_adv:
+        dollar_volumes = (window_adv["close_raw"] * window_adv["volume"]).dropna()
+        if len(dollar_volumes) >= ADV_MIN_TRADING_DAYS:
+            adv_usd_60d = float(dollar_volumes.mean())
+
     had_survivorship_warning = False
     nearby = ticker_prices[(ticker_prices.index >= d0_ts - pd.Timedelta(days=5)) & (ticker_prices.index <= d0_ts)]
     if "survivorship_warning" in nearby and nearby["survivorship_warning"].any():
@@ -204,6 +225,7 @@ def compute_enrichment(
         sector_mood=sector_mood,
         pre_event_drift_pct=pre_event_drift_pct,
         high_low_range_pct=high_low_range_pct,
+        adv_usd_60d=adv_usd_60d,
         n_estimation_days=n_estimation_days,
         had_survivorship_warning=had_survivorship_warning,
     )
