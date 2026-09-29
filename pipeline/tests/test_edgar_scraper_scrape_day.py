@@ -11,6 +11,7 @@ sub-funciones que llama.
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -124,7 +125,7 @@ def test_backfill_range_salta_los_fines_de_semana(monkeypatch):
         return []
 
     monkeypatch.setattr(edgar_scraper, "scrape_day", _fake_scrape_day)
-    monkeypatch.setattr("pipeline.db.connection.get_connection", lambda: object())
+    monkeypatch.setattr("pipeline.db.connection.get_connection", lambda: SimpleNamespace(commit=lambda: None, rollback=lambda: None))
     monkeypatch.setattr("pipeline.db.connection.upsert_universe_entries", lambda conn, filings: None)
     monkeypatch.setattr("pipeline.db.connection.upsert_events", lambda *a, **kw: 0)
 
@@ -146,7 +147,7 @@ def test_backfill_range_continua_tras_un_fallo_en_un_dia(monkeypatch):
         return []
 
     monkeypatch.setattr(edgar_scraper, "scrape_day", _fake_scrape_day)
-    monkeypatch.setattr("pipeline.db.connection.get_connection", lambda: object())
+    monkeypatch.setattr("pipeline.db.connection.get_connection", lambda: SimpleNamespace(commit=lambda: None, rollback=lambda: None))
     monkeypatch.setattr("pipeline.db.connection.upsert_universe_entries", lambda conn, filings: None)
     monkeypatch.setattr("pipeline.db.connection.upsert_events", lambda *a, **kw: 0)
 
@@ -159,7 +160,7 @@ def test_backfill_range_continua_tras_un_fallo_en_un_dia(monkeypatch):
 
 def test_backfill_range_acumula_el_total_de_eventos_insertados(monkeypatch, caplog):
     monkeypatch.setattr(edgar_scraper, "scrape_day", lambda day: ["filing-fake"])
-    monkeypatch.setattr("pipeline.db.connection.get_connection", lambda: object())
+    monkeypatch.setattr("pipeline.db.connection.get_connection", lambda: SimpleNamespace(commit=lambda: None, rollback=lambda: None))
     monkeypatch.setattr("pipeline.db.connection.upsert_universe_entries", lambda conn, filings: None)
     monkeypatch.setattr("pipeline.db.connection.upsert_events", lambda *a, **kw: 5)
 
