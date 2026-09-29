@@ -27,6 +27,8 @@ entrada, no de las funciones que reutilizan los tests.
 """
 from __future__ import annotations
 
+import os
+import subprocess
 from datetime import date
 
 from pipeline import config
@@ -66,3 +68,36 @@ def tag_suffix(sample: str | None) -> str:
     """Sufijo para run_batch_tag/nombres de fichero — visible incluso si
     alguien solo mira el nombre del run sin abrir el contenido."""
     return "-OOS" if sample == SAMPLE_OOS else ""
+
+
+def git_sha_corto() -> str:
+    """Identificador corto del commit para el run_batch_tag del día
+    (IMPROVEMENT_PLAN.md Q8) — portfolio_report.py y validation/report.py lo
+    llaman cada uno por separado, en procesos de Python distintos dentro del
+    MISMO job de nightly_pipeline.yml, y el tag tiene que coincidir EXACTO
+    entre ambos para que validation/report.py encuentre el portfolio_report
+    de esta misma corrida en vez de recalcular uno nuevo (ver el comentario
+    en cada caller).
+
+    Se prefiere GITHUB_SHA (variable de entorno que GitHub Actions define
+    SIEMPRE para cualquier job del workflow) sobre invocar `git rev-parse`:
+    no depende de que el binario git esté instalado ni de que el directorio
+    de trabajo sea un repositorio real, y — más importante para la garantía
+    de arriba — es la MISMA variable, ya fijada por la plataforma antes de
+    que arranque el job, para las dos corridas de Python de ese job. Antes,
+    cada caller invocaba `git rev-parse` por su cuenta con un `except
+    Exception` amplio que caía a "unknown" sin loguear por qué — solo
+    coincidían por casualidad (mismo repo, mismo commit, mismo fallo en
+    ambos) en vez de por diseño.
+
+    Solo se cae a `git rev-parse` fuera de GitHub Actions (una corrida manual
+    en un checkout local), y a "unknown" si ninguna de las dos funciona —
+    ese "unknown" sigue coincidiendo entre backtest y validación porque
+    AMBAS corridas caen al mismo valor por el mismo motivo, no por azar."""
+    github_sha = os.environ.get("GITHUB_SHA")
+    if github_sha:
+        return github_sha[:7]
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    except Exception:
+        return "unknown"

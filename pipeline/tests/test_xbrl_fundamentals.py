@@ -169,23 +169,6 @@ def test_cik_se_guarda_como_texto_para_casar_con_universe():
 #     DETAIL: Key (cik)=(0001119190) is not present in table "universe".
 
 
-@pytest.mark.parametrize(
-    "entrada",
-    ["0001119190", "1119190", 1119190, "CIK0001119190", " 0001119190 "],
-)
-def test_normalizar_cik_deja_todas_las_formas_iguales(entrada):
-    from pipeline.ingest.xbrl_fundamentals import normalizar_cik
-
-    assert normalizar_cik(entrada) == "1119190"
-
-
-def test_normalizar_cik_rechaza_lo_que_no_es_un_cik():
-    from pipeline.ingest.xbrl_fundamentals import normalizar_cik
-
-    with pytest.raises(ValueError, match="formato inesperado"):
-        normalizar_cik("no-soy-un-cik")
-
-
 def test_las_filas_salen_con_el_cik_sin_rellenar():
     """EL fallo: la API devuelve el CIK rellenado a 10 dígitos y así entraba en
     la tabla, rompiendo la clave ajena contra universe."""

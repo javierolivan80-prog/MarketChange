@@ -84,6 +84,38 @@ ANALYSIS_MIN_MARKET_CAP_USD = _env_float("ANALYSIS_MIN_MARKET_CAP_USD", MIN_MARK
 ANALYSIS_MAX_EVENTS_PER_RUN = _env_int("ANALYSIS_MAX_EVENTS_PER_RUN", 500) or None
 ANALYSIS_EST_COST_PER_EVENT_USD = 0.011
 
+# Cota máxima de espera al polling de la Batch API (IMPROVEMENT_PLAN.md R6 +
+# M1) — sin esto, adversarial_analyzer.run_batch_and_collect hacía
+# `while True: ...; time.sleep(30)` sin límite: si la Batch API se queda
+# atascada en "in_progress" (un incidente del lado de Anthropic, no del
+# pipeline), el paso de GitHub Actions se queda colgado hasta el
+# timeout-minutes del job (sin definir hasta esta sesión -> 360 min por
+# defecto de GitHub), quemando horas de CI sin ningún aviso de que algo va
+# mal. Los batches reales de este proyecto tardan minutos-decenas de
+# minutos (ver el docstring de process_chunk sobre el run 34964242549, ~20
+# min para dos batches) — 2 horas da margen de sobra sin acercarse al
+# timeout del job.
+BATCH_MAX_WAIT_SECONDS = 2 * 60 * 60
+
+# Tope de GASTO DIARIO ACUMULADO (IMPROVEMENT_PLAN.md A2) — distinto de
+# ANALYSIS_MAX_EVENTS_PER_RUN de arriba: ese limita el gasto de UNA corrida
+# (500 eventos ~ 5,5 $), pero nightly_pipeline.yml programa 3 corridas/día —
+# si las 3 agotaran su tope, el gasto real podría llegar a ~16,5 $/día, muy
+# por encima del presupuesto real, porque ninguna corrida mira lo que las
+# OTRAS corridas del mismo día ya gastaron. Presupuesto decidido: 50 €/mes,
+# repartido a partes iguales entre los 30 días del mes (más simple de
+# aplicar día a día que un tope mensual que haya que vigilar a mano, y evita
+# que un solo día agote el mes entero).
+DAILY_SPEND_CAP_EUR = 50.0 / 30
+# Sin llamada a una API de forex (mismo principio de parsimonia que el resto
+# del proyecto — AUDIT_LEAN.md): un tipo de cambio fijo, deliberadamente
+# CONSERVADOR (más bajo que el EUR/USD habitual, ~1.05-1.10 en 2024-2026),
+# para que el tope en dólares salga siempre MENOR que el presupuesto real en
+# euros, nunca mayor — el error de no consultar el tipo de cambio real se
+# paga gastando de menos, no de más.
+EUR_USD_RATE_CONSERVATIVE = 1.03
+DAILY_SPEND_CAP_USD = DAILY_SPEND_CAP_EUR * EUR_USD_RATE_CONSERVATIVE
+
 # --- Ventanas de evento (ARCHITECTURE_LEAN.md §3, §5) ---
 ESTIMATION_WINDOW_DAYS = (-250, -30)
 EVENT_WINDOWS_DAYS = [5, 20]
