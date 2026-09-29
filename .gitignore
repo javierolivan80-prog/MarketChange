@@ -6,9 +6,6 @@ __pycache__/
 .venv/
 venv/
 
-# Caché local del pipeline (se regenera; nunca debe llevar secretos)
-pipeline/ingest/.cache_company_tickers.json
-
 # Entorno
 .env
 *.local

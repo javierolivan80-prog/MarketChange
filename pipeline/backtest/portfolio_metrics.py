@@ -16,6 +16,13 @@ import numpy as np
 TRADING_DAYS_PER_YEAR = 252
 INSUFFICIENT_SAMPLE_THRESHOLD = 20
 CALIBRATION_TARGET = 0.6
+# Con solo 2 puntos, una regresión lineal de un predictor tiene 0 grados de
+# libertad residuales: la recta pasa EXACTAMENTE por los 2 puntos siempre
+# (salvo que compartan x o y, ya guardado aparte), así que r_squared=1.0 no
+# es una señal real de ajuste, es una certeza matemática sin importar los
+# datos. 3 es el mínimo con algún grado de libertad — sigue siendo un n
+# minúsculo, pero al menos no está garantizado de antemano (IMPROVEMENT_PLAN.md R12).
+MIN_TRADES_FOR_REGRESSION = 3
 
 
 # ============================================================================
@@ -169,7 +176,18 @@ def compute_metrics_by_event_type(trades_with_event_class: list[dict]) -> dict[s
     (ese sí está anualizado sobre retornos diarios de la curva de equity;
     este es un ratio riesgo/retorno POR TRADE, sobre una muestra con
     duraciones de holding distintas). Se documenta para no confundir ambos
-    números al leer el reporte."""
+    números al leer el reporte.
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md R12): sharpe_per_trade se
+    calculaba con n>=2 y se devolvía como número aunque insufficient_sample
+    ya lo marcara True (n<20) — el flag existía, pero el número seguía
+    mostrándose igual en el dashboard. Un ratio riesgo/retorno con 3-5
+    trades no es "ruidoso pero informativo": es prácticamente aleatorio, y
+    presentarlo con la misma precisión que uno con 50 invita a confiar en
+    él. Ahora se OCULTA (None) por debajo de INSUFFICIENT_SAMPLE_THRESHOLD,
+    no solo se flagea — win_rate/avg_return se dejan igual porque son
+    directamente interpretables (un 60% con n=5 se lee como "60% de 5", no
+    como una medida calibrada de riesgo)."""
     groups: dict[str, list[float]] = defaultdict(list)
     for t in trades_with_event_class:
         groups[t["event_class"]].append(float(t["pnl_pct"]))
@@ -180,7 +198,11 @@ def compute_metrics_by_event_type(trades_with_event_class: list[dict]) -> dict[s
         arr = np.array(pnls)
         win_rate = float((arr > 0).mean())
         avg_return = float(arr.mean())
-        sharpe_per_trade = float(avg_return / arr.std(ddof=1)) if n >= 2 and arr.std(ddof=1) > 0 else None
+        sharpe_per_trade = (
+            float(avg_return / arr.std(ddof=1))
+            if n >= INSUFFICIENT_SAMPLE_THRESHOLD and arr.std(ddof=1) > 0
+            else None
+        )
         result[event_class] = {
             "event_type": event_class,
             "n_trades": n,
@@ -280,19 +302,34 @@ def compute_prediction_regression(trades: list[dict]) -> dict:
     por clase) — es el insumo del scatter "prediction vs actual" y su
     regresión que pide el spec como output. R² = correlación² para una
     regresión lineal simple de un solo predictor (equivalente matemático,
-    evita añadir una dependencia de regresión solo para esto)."""
+    evita añadir una dependencia de regresión solo para esto).
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md R12): con exactamente 2
+    trades, una recta de un solo predictor pasa SIEMPRE por los 2 puntos
+    exactamente (0 grados de libertad residuales) — r_squared=1.0 no es una
+    señal de que el modelo funcione, es una certeza matemática
+    independiente de los datos, y se devolvía sin ningún aviso. Por debajo
+    de MIN_TRADES_FOR_REGRESSION (3, el mínimo con algún grado de libertad)
+    se OCULTA r_squared en vez de mostrar un número técnicamente calculable
+    pero vacío de contenido. scatter SÍ se sigue devolviendo con esos pocos
+    puntos (ver los propios puntos nunca es engañoso, ajustarles una recta
+    y resumirla en un R² sí lo es). insufficient_sample (n<20, mismo umbral
+    que compute_metrics_by_event_type) se expone también para los casos
+    intermedios donde r_squared SÍ se calcula pero sigue siendo una muestra
+    pequeña — el caller decide si lo muestra con un aviso o lo oculta."""
     if len(trades) < 2:
-        return {"n_trades": len(trades), "r_squared": None, "scatter": []}
+        return {"n_trades": len(trades), "r_squared": None, "scatter": [], "insufficient_sample": True}
 
     predicted = np.array([float(t["ev"]) * 100 for t in trades])
     actual = np.array([float(t["actual_move_pct"]) for t in trades])
     scatter = [{"predicted": float(p), "actual": float(a)} for p, a in zip(predicted, actual)]
+    insufficient_sample = len(trades) < INSUFFICIENT_SAMPLE_THRESHOLD
 
-    if predicted.std() == 0 or actual.std() == 0:
-        return {"n_trades": len(trades), "r_squared": None, "scatter": scatter}
+    if len(trades) < MIN_TRADES_FOR_REGRESSION or predicted.std() == 0 or actual.std() == 0:
+        return {"n_trades": len(trades), "r_squared": None, "scatter": scatter, "insufficient_sample": insufficient_sample}
 
     correlation = float(np.corrcoef(predicted, actual)[0, 1])
-    return {"n_trades": len(trades), "r_squared": correlation**2, "scatter": scatter}
+    return {"n_trades": len(trades), "r_squared": correlation**2, "scatter": scatter, "insufficient_sample": insufficient_sample}
 
 
 def top_n_trades(trades: list[dict], n: int = 10, winners: bool = True) -> list[dict]:

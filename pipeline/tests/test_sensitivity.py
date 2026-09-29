@@ -159,6 +159,27 @@ class TestSensitivityIntegration:
         size = float(adjusted[0]["position_size_dollars"])
         assert adjusted[0]["pnl_abs"] == pytest.approx(size * (adjusted[0]["pnl_pct"] / 100))
 
+    def test_apply_latency_sensitivity_logs_dropped_trades_without_d2(self, conn, caplog):
+        """IMPROVEMENT_PLAN.md R14: antes, un trade sin D+2 disponible se
+        descartaba con un `continue` silencioso, sin loguear cuántos."""
+        import logging
+
+        from pipeline.backtest.sensitivity import apply_latency_sensitivity
+
+        d0 = date(2024, 3, 4)
+        cal = self._business_days(d0, 2)  # d0 + 1 día más -> ningún D+2 disponible
+        event_id = self._seed(conn, "nod2", "NOD2", d0, cal, [100.0, 100.5], decision="LONG", confidence=80.0, ev=0.01)
+        trade = {
+            "event_id": event_id, "ticker": "NOD2", "direction": "LONG", "exit_price": 101.0,
+            "position_size_dollars": 10_000.0, "pnl_pct": 1.0,
+        }
+
+        with caplog.at_level(logging.WARNING, logger="pipeline.backtest.sensitivity"):
+            adjusted = apply_latency_sensitivity(conn, [trade])
+
+        assert adjusted == []
+        assert "1 de 1 trades descartados" in caplog.text
+
     def test_split_by_vix_regime_divides_at_median(self, conn):
         from pipeline.backtest.portfolio_simulator import simulate_portfolio
         from pipeline.backtest.sensitivity import _fetch_trades_with_context, split_by_vix_regime
@@ -193,10 +214,14 @@ class TestSensitivityIntegration:
         run_full_backtest(conn, run_batch_tag="sens-e2e-1", starting_capital=100_000.0)
         result = run_sensitivity_analysis(conn, "sens-e2e-1", starting_capital=100_000.0)
 
-        assert set(result["scenarios"].keys()) == {"CONSERVATIVE", "AGGRESSIVE"}
+        # R13: BALANCED entra en la tabla junto a Conservative/Aggressive —
+        # puede ser best_version en PARTE 6, así que necesita la misma
+        # sensibilidad probada que las otras dos.
+        assert set(result["scenarios"].keys()) == {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}
         cons = result["scenarios"]["CONSERVATIVE"]
         assert "baseline" in cons
         assert "commission_plus_0.1pct" in cons
+        assert "n_missing_vix" in cons  # R15: expuesto para que el reporte lo pueda mostrar
         # Más coste de transacción nunca puede mejorar el retorno total.
         if cons["baseline"]["n_trades"] > 0:
             assert cons["commission_plus_0.1pct"]["total_return"] <= cons["baseline"]["total_return"]
