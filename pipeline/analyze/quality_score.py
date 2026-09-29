@@ -268,23 +268,32 @@ def compute_quality_score(
     )
 
 
-def _fetch_latest_price(conn, ticker: str, as_of_date: date | None = None) -> float | None:
-    """Último cierre ajustado conocido. prices no está en la lista de tablas
-    del guard anti-look-ahead porque su propia clave ES la fecha (trade_date):
-    acotarla es trivial y se hace aquí."""
+def _fetch_latest_price(conn, ticker: str, as_of_date: date) -> float | None:
+    """Último cierre ajustado conocido en o antes de as_of_date.
+
+    as_of_date es OBLIGATORIA (hallazgo de auditoría IMPROVEMENT_PLAN.md
+    R11) — antes tenía un default None con una rama "sin acotar" para la
+    vista en vivo, pero como el caller (_puntuar_una_empresa, vía
+    run_quality_screen) siempre conoce ya la fecha efectiva (hoy, para el
+    cron nocturno, o la fecha simulada de un backtest), pasarla siempre en
+    vez de dejar que un None se cuele es estrictamente más simple: para "hoy"
+    el resultado de `trade_date <= hoy` es idéntico al de la rama sin acotar
+    (ningún precio real puede tener trade_date en el futuro), así que la
+    rama sin acotar no aportaba nada salvo un camino de código donde un
+    caller futuro (p. ej. desde backtest/) podía olvidar pasar la fecha y
+    obtener el precio de HOY para un evento simulado en el pasado — el
+    mismo look-ahead sutil que ya se evitó en otros puntos del pipeline
+    (portfolio_simulator.compute_trailing_adv_usd, historical_analogues.py).
+
+    prices no está en la lista de tablas del guard anti-look-ahead estático
+    (test_no_lookahead_guard.py) porque su propia clave ES la fecha
+    (trade_date): acotarla es trivial y se hace aquí."""
     with conn.cursor() as cur:
-        if as_of_date is None:
-            cur.execute(
-                "SELECT close_raw, adj_factor FROM prices WHERE ticker = %s AND close_raw IS NOT NULL "
-                "ORDER BY trade_date DESC LIMIT 1",
-                (ticker,),
-            )
-        else:
-            cur.execute(
-                "SELECT close_raw, adj_factor FROM prices WHERE ticker = %s AND close_raw IS NOT NULL "
-                "AND trade_date <= %s ORDER BY trade_date DESC LIMIT 1",
-                (ticker, as_of_date),
-            )
+        cur.execute(
+            "SELECT close_raw, adj_factor FROM prices WHERE ticker = %s AND close_raw IS NOT NULL "
+            "AND trade_date <= %s ORDER BY trade_date DESC LIMIT 1",
+            (ticker, as_of_date),
+        )
         row = cur.fetchone()
     if row is None or row["close_raw"] is None:
         return None
@@ -295,8 +304,12 @@ def _fetch_latest_price(conn, ticker: str, as_of_date: date | None = None) -> fl
 def run_quality_screen(conn, as_of_date: date | None = None) -> dict:
     """Calcula y guarda la nota de todas las empresas con cuentas disponibles.
 
-    Pensado para el cron nocturno. as_of_date=None -> hoy (vista en vivo); ver
-    la advertencia de fetch_annual_rows sobre backtests.
+    Pensado para el cron nocturno. as_of_date=None -> hoy (vista en vivo).
+    Este None SÍ es seguro aquí (y solo aquí): se resuelve una única vez, al
+    principio, a una fecha concreta (effective_date) que es la que de verdad
+    viaja al resto de la función — fetch_annual_rows y _fetch_latest_price ya
+    no aceptan None (ver IMPROVEMENT_PLAN.md R11), así que no hay ningún
+    punto más abajo donde ese None pueda colarse sin acotar por accidente.
     """
     effective_date = as_of_date or date.today()
 
@@ -323,7 +336,7 @@ def run_quality_screen(conn, as_of_date: date | None = None) -> dict:
     stored, fallidas, primer_error = 0, 0, None
     for cik, ticker in companies:
         try:
-            stored += _puntuar_una_empresa(conn, cik, ticker, as_of_date, effective_date)
+            stored += _puntuar_una_empresa(conn, cik, ticker, effective_date)
         except Exception as exc:  # noqa: BLE001
             # Una empresa con un dato raro no puede tumbar la pasada nocturna
             # entera. Es lo que pasó en el run 34943861450: un Decimal donde se
@@ -354,13 +367,16 @@ def run_quality_screen(conn, as_of_date: date | None = None) -> dict:
     }
 
 
-def _puntuar_una_empresa(conn, cik: str, ticker: str, as_of_date: date | None, effective_date: date) -> int:
+def _puntuar_una_empresa(conn, cik: str, ticker: str, effective_date: date) -> int:
     """Calcula y guarda la nota de UNA empresa. Devuelve 1 si la guardó, 0 si
-    no había cuentas que puntuar."""
-    rows = fetch_annual_rows(conn, cik, as_of_date=as_of_date)
+    no había cuentas que puntuar.
+
+    Recibe solo effective_date (nunca el as_of_date original, que podía ser
+    None) — ver IMPROVEMENT_PLAN.md R11 y el docstring de run_quality_screen."""
+    rows = fetch_annual_rows(conn, cik, as_of_date=effective_date)
     if not rows:
         return 0
-    price = _fetch_latest_price(conn, ticker, as_of_date=as_of_date)
+    price = _fetch_latest_price(conn, ticker, as_of_date=effective_date)
     score = compute_quality_score(rows, current_price=price)
 
     with conn.cursor() as cur:
@@ -392,27 +408,33 @@ def _puntuar_una_empresa(conn, cik: str, ticker: str, as_of_date: date | None, e
     return 1
 
 
-def fetch_annual_rows(conn, cik: str, as_of_date: date | None = None) -> list[dict]:
+def fetch_annual_rows(conn, cik: str, as_of_date: date) -> list[dict]:
     """Ejercicios de una empresa, del más antiguo al más reciente, acotados
     por filed_at <= as_of_date.
 
     El filtro por filed_at (NO por fiscal_period_end) es la disciplina
     anti-look-ahead de esta tabla — ver la cabecera de
-    ingest/xbrl_fundamentals.py. as_of_date=None significa "todo lo publicado
-    hasta hoy", que es lo correcto para la vista en vivo del dashboard, pero
-    NUNCA para un backtest: ahí hay que pasar la fecha simulada.
+    ingest/xbrl_fundamentals.py.
+
+    as_of_date es OBLIGATORIA (hallazgo de auditoría IMPROVEMENT_PLAN.md
+    R11): antes tenía un default None con una rama sin acotar ("todo lo
+    publicado hasta hoy"), pensada para la vista en vivo del dashboard, pero
+    documentada solo con una advertencia en el docstring de "nunca pasar
+    None desde un backtest" — nada en el código lo impedía. Como el único
+    caller (run_quality_screen, vía _puntuar_una_empresa) siempre calcula ya
+    una effective_date concreta (hoy si no se pidió otra), pasarla siempre
+    da exactamente el mismo resultado para el caso "hoy" (nada en
+    `fundamentals` puede tener filed_at en el futuro) sin dejar abierto un
+    camino de código donde un caller futuro pudiera olvidar la fecha y
+    colarse un look-ahead silencioso. La rama sin acotar ya no existe:
+    quitarla del test_no_lookahead_guard.py ALLOWLIST confirma que ahora
+    esta query siempre está acotada.
     """
     with conn.cursor() as cur:
-        if as_of_date is None:
-            cur.execute(
-                "SELECT * FROM fundamentals WHERE cik = %s ORDER BY fiscal_period_end",
-                (cik,),
-            )
-        else:
-            cur.execute(
-                "SELECT * FROM fundamentals WHERE cik = %s AND filed_at <= %s ORDER BY fiscal_period_end",
-                (cik, as_of_date),
-            )
+        cur.execute(
+            "SELECT * FROM fundamentals WHERE cik = %s AND filed_at <= %s ORDER BY fiscal_period_end",
+            (cik, as_of_date),
+        )
         return [_a_float(dict(r)) for r in cur.fetchall()]
 
 
