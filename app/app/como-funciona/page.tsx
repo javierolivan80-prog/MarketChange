@@ -9,12 +9,12 @@ import { Nav } from "@/components/Nav";
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-4">
-      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 flex items-center justify-center text-sm font-bold">
+      <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent-600 text-sm font-bold text-white dark:bg-accent-500">
         {n}
       </div>
-      <div className="pb-6 border-l border-neutral-200 dark:border-neutral-800 pl-4 -ml-4 mt-1">
-        <p className="font-semibold mb-1">{title}</p>
-        <div className="text-sm text-neutral-600 dark:text-neutral-400 space-y-2">{children}</div>
+      <div className="-ml-4 mt-1 border-l border-border-subtle pb-6 pl-4">
+        <p className="mb-1 font-semibold text-foreground">{title}</p>
+        <div className="space-y-2 text-sm text-text-secondary">{children}</div>
       </div>
     </div>
   );
@@ -22,15 +22,15 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 
 export default function ComoFuncionaPage() {
   return (
-    <main className="max-w-3xl mx-auto p-6">
+    <main className="mx-auto max-w-3xl p-6">
       <Nav active="/como-funciona" />
       <header className="mb-8">
-        <h1 className="text-2xl font-bold">Cómo funciona</h1>
-        <p className="text-sm text-neutral-500 mt-1">Qué hace el sistema, paso a paso, sin dar nada por sabido.</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Cómo funciona</h1>
+        <p className="mt-1 text-sm text-text-secondary">Qué hace el sistema, paso a paso, sin dar nada por sabido.</p>
       </header>
 
       <section className="mb-8">
-        <p className="text-sm mb-4">
+        <p className="mb-4 text-sm text-text-secondary">
           Cada noche, el sistema recorre este proceso para cada empresa que presenta un documento oficial ante la SEC (el regulador de
           bolsa de EE.UU.) o recibe una decisión de la FDA (el regulador de medicamentos). El objetivo NO es adivinar el futuro — es
           detectar cuándo una noticia real todavía no se ha reflejado del todo en el precio, y medir con cuánta confianza se puede decir
@@ -103,23 +103,24 @@ export default function ComoFuncionaPage() {
         </Step>
       </section>
 
-      <section className="mt-8 border-t border-neutral-200 dark:border-neutral-800 pt-6">
-        <p className="font-semibold mb-2">Aparte: el análisis de largo plazo</p>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-2">
-          Todo lo de arriba va de <strong>eventos</strong> y horizonte de días. La pestaña <strong>Largo plazo</strong> responde una
-          pregunta completamente distinta: <em>¿es este un buen negocio a un precio razonable?</em>, con horizonte de años.
+      <section className="mt-8 border-t border-border-subtle pt-6">
+        <p className="mb-2 font-semibold text-foreground">Aparte: el análisis de largo plazo</p>
+        <p className="mb-2 text-sm text-text-secondary">
+          Todo lo de arriba va de <strong className="text-foreground">eventos</strong> y horizonte de días. La pestaña{" "}
+          <strong className="text-foreground">Largo plazo</strong> responde una pregunta completamente distinta:{" "}
+          <em>¿es este un buen negocio a un precio razonable?</em>, con horizonte de años.
         </p>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          No mira noticias ni gráficos: descarga las <strong>cuentas anuales auditadas</strong> que cada empresa presenta ante la SEC
-          (gratis, en formato XBRL) y puntúa cinco cosas: cuánto gana sobre su capital, cuánta deuda arrastra, si el beneficio se
-          convierte en caja real, si crece, y si la acción está cara. Es el tipo de análisis que se hace para comprar un negocio, no
-          para especular con una noticia.
+        <p className="text-sm text-text-secondary">
+          No mira noticias ni gráficos: descarga las <strong className="text-foreground">cuentas anuales auditadas</strong> que cada
+          empresa presenta ante la SEC (gratis, en formato XBRL) y puntúa cinco cosas: cuánto gana sobre su capital, cuánta deuda
+          arrastra, si el beneficio se convierte en caja real, si crece, y si la acción está cara. Es el tipo de análisis que se hace
+          para comprar un negocio, no para especular con una noticia.
         </p>
       </section>
 
-      <section className="mt-8 border-t border-neutral-200 dark:border-neutral-800 pt-6">
-        <p className="font-semibold mb-2">Reglas que el sistema nunca rompe</p>
-        <ul className="text-sm text-neutral-600 dark:text-neutral-400 list-disc list-inside space-y-1">
+      <section className="mt-8 border-t border-border-subtle pt-6">
+        <p className="mb-2 font-semibold text-foreground">Reglas que el sistema nunca rompe</p>
+        <ul className="list-inside list-disc space-y-1 text-sm text-text-secondary">
           <li>Nunca usa información que no existía en el momento de la decisión (nada de "trampa" mirando al futuro).</li>
           <li>Nunca inventa un número que no pueda calcular — si un dato no está disponible, lo dice, no lo estima a ciegas.</li>
           <li>Prefiere decir "no operar" antes que fingir seguridad que no tiene.</li>
