@@ -34,6 +34,13 @@ de los demás. Tratar "no lo sé" como "es malo" sesgaría la nota justo en las
 empresas con menos información, que es lo contrario de lo que se quiere.
 Mismo principio que analyze/novelty.py con sus componentes no disponibles.
 
+Única excepción deliberada: long_term_debt=None en _score_solidez se trata
+como deuda cero, no como "no computable" — porque para ESA magnitud concreta,
+en XBRL, "la empresa no reporta la etiqueta" y "la empresa no tiene deuda a
+largo plazo" son la misma señal en la práctica (ver el comentario junto a
+_score_solidez para el razonamiento completo y por qué NO se aplica el mismo
+argumento a capex — IMPROVEMENT_PLAN.md R10).
+
 ESTO NO ES UNA RECOMENDACIÓN DE INVERSIÓN. Es un resumen estructurado de
 cuentas públicas. Ver el aviso en la propia interfaz.
 """
@@ -136,6 +143,17 @@ def _score_rentabilidad(net_income: float | None, equity: float | None) -> Compo
 
 
 def _score_solidez(long_term_debt: float | None, equity: float | None) -> Component:
+    # long_term_debt=None -> 0.0 es una EXCEPCIÓN deliberada al principio
+    # general del módulo (un dato ausente se excluye, no se sustituye — ver
+    # cabecera del fichero), investigada y mantenida en IMPROVEMENT_PLAN.md
+    # R10: en XBRL, una empresa sin deuda a largo plazo simplemente no
+    # reporta NINGUNA de las etiquetas de _CONCEPT_TAGS["long_term_debt"]
+    # (xbrl_fundamentals.py) — "ausente" y "cero" son la MISMA señal para
+    # esta magnitud concreta, a diferencia de capex (ver _score_calidad_beneficio
+    # más abajo), donde casi cualquier empresa operativa tiene capex real y
+    # una etiqueta ausente es mucho más probable que sea un hueco de mapeo
+    # que un capex genuinamente nulo. Test de regresión:
+    # test_solidez_sin_deuda_declarada_cuenta_como_cero_deuda.
     if equity is None or equity <= 0:
         return Component("Solidez financiera", None, None, "No se puede calcular: no hay fondos propios utilizables.")
     debt = long_term_debt if long_term_debt is not None else 0.0
@@ -152,9 +170,26 @@ def _score_solidez(long_term_debt: float | None, equity: float | None) -> Compon
 
 
 def _score_calidad_beneficio(operating_cash_flow: float | None, capex: float | None, net_income: float | None) -> Component:
-    if operating_cash_flow is None or net_income is None or net_income <= 0:
-        return Component("Calidad del beneficio", None, None, "No se puede calcular: falta el flujo de caja operativo o la empresa no tuvo beneficio.")
-    fcf = operating_cash_flow - (capex if capex is not None else 0.0)
+    # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R10): antes, capex=None se
+    # trataba como capex=0.0 (FCF = operating_cash_flow - 0), igual que
+    # long_term_debt en _score_solidez de arriba — pero aquí la analogía NO
+    # se sostiene: a diferencia de la deuda a largo plazo, casi cualquier
+    # empresa operativa tiene capex real, así que una etiqueta ausente
+    # (PaymentsToAcquirePropertyPlantAndEquipment / PaymentsToAcquireProductiveAssets,
+    # xbrl_fundamentals.py) es mucho más probable que sea un hueco de mapeo
+    # de XBRL que un capex genuinamente nulo. Sustituir 0.0 ahí INFLABA el
+    # FCF calculado y por tanto el score — exactamente al revés del
+    # principio que este módulo dice seguir ("un dato ausente se excluye,
+    # nunca puntúa como favorable" — ver cabecera del fichero). Ahora capex
+    # ausente hace el componente NO COMPUTABLE, como el resto.
+    if operating_cash_flow is None or capex is None or net_income is None or net_income <= 0:
+        return Component(
+            "Calidad del beneficio",
+            None,
+            None,
+            "No se puede calcular: falta el flujo de caja operativo, el capex, o la empresa no tuvo beneficio.",
+        )
+    fcf = operating_cash_flow - capex
     conversion = fcf / net_income
     score = _scale(conversion, FCF_CONVERSION_POOR, FCF_CONVERSION_GOOD)
     if conversion >= FCF_CONVERSION_GOOD:
