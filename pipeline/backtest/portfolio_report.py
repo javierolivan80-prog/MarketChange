@@ -27,7 +27,7 @@ from pipeline.backtest.portfolio_metrics import (
 )
 from pipeline.backtest.portfolio_simulator import VERSIONS, simulate_portfolio
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
-from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, tag_suffix
+from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, git_sha_corto, tag_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +279,6 @@ def generate_recommendation(version_reports: dict[str, dict]) -> dict:
 if __name__ == "__main__":
     import argparse
     import json
-    import subprocess
 
     logging.basicConfig(level=logging.INFO)
     from pipeline.db.connection import get_connection
@@ -316,12 +315,12 @@ if __name__ == "__main__":
     # run_batch_tag: fecha + git sha corto, igual que backtest_runs (Fase 1,
     # T9 de ARCHITECTURE_LEAN.md — reproducibilidad). Sufijo -OOS visible en
     # el propio nombre del run cuando --oos, además del campo "sample"/
-    # "oos_warning" dentro del JSON (ver run_full_backtest).
-    try:
-        git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-    except Exception:
-        git_sha = "unknown"
-    tag = f"{date.today().isoformat()}-{git_sha}{tag_suffix(sample)}"
+    # "oos_warning" dentro del JSON (ver run_full_backtest). git_sha_corto()
+    # (ver sample_split.py, IMPROVEMENT_PLAN.md Q8) es la MISMA función que
+    # llama validation/report.py — el tag tiene que coincidir exacto entre
+    # las dos corridas del mismo job para que una encuentre el resultado de
+    # la otra en vez de recalcularlo.
+    tag = f"{date.today().isoformat()}-{git_sha_corto()}{tag_suffix(sample)}"
 
     conn = get_connection()
     report = run_full_backtest(conn, run_batch_tag=tag, sample=sample)

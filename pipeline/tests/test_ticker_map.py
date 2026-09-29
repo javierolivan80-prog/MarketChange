@@ -4,6 +4,8 @@ No se puede descargar company_tickers.json en este sandbox (egress bloqueado
 a www.sec.gov). Se prueba la lógica de inversión del mapa contra un JSON de
 muestra con la misma forma que el fichero real.
 """
+from types import SimpleNamespace
+
 import pytest
 
 from pipeline.ingest import ticker_map
@@ -48,3 +50,32 @@ def test_resolve_matches_edgar_zero_padded_cik_format(_mapa_de_muestra):
 
 def test_resolve_un_cik_que_no_esta_en_el_mapa_devuelve_none(_mapa_de_muestra):
     assert ticker_map.resolve("9999999") is None
+
+
+def test_fetch_and_build_map_usa_throttled_get_no_requests_desnudo(monkeypatch):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R7): antes de esta sesión,
+    _fetch_and_build_map hacía un requests.get desnudo, sin retry/backoff —
+    un fallo transitorio aquí tumbaba el día entero de ingesta EDGAR, porque
+    resolve() se llama por cada filing. edgar_http.throttled_get ya tiene ese
+    retry/backoff (mismo host, www.sec.gov, mismo User-Agent) — este test
+    confirma que se usa ESE en vez de una llamada propia, no reimplementa el
+    retry en sí (eso ya lo prueba test_edgar_http.py).
+
+    Sin CACHE_PATH que monkeypatchear: la caché en disco se quitó en
+    IMPROVEMENT_PLAN.md Q6 (ver docstring del módulo) — solo queda la de
+    memoria del proceso, _cache."""
+    from pipeline.ingest import ticker_map
+
+    monkeypatch.setattr(ticker_map, "_cache", None)
+    llamado = {}
+
+    def _fake_throttled_get(url):
+        llamado["url"] = url
+        return SimpleNamespace(json=lambda: SAMPLE_RAW)
+
+    monkeypatch.setattr(ticker_map, "throttled_get", _fake_throttled_get)
+
+    mapping = ticker_map.get_ticker_map(force_refresh=True)
+
+    assert llamado["url"] == ticker_map.SOURCE_URL
+    assert mapping["320193"] == "AAPL"

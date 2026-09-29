@@ -24,6 +24,26 @@ logger = logging.getLogger(__name__)
 # el resto de umbrales heurísticos del proyecto.
 SANITY_CHECK_WIN_RATE_DIVERGENCE_PP = 30.0
 
+# Hallazgo de auditoría (IMPROVEMENT_PLAN.md M14): AGGRESSIVE en paper
+# trading usa un único take-profit al primer tramo del trailing (+20%) en
+# vez del trailing-stop escalonado real del backtest histórico (decisión
+# DELIBERADA — ver la nota 1 del docstring de simulator.py, el status log
+# del spec es de una sola pieza, sin cierres parciales, así que un
+# trailing-stop de tramos no cabe ahí). Eso significa que, solo para
+# AGGRESSIVE, compare_with_historical_backtest compara dos mecánicas de
+# salida DISTINTAS, no la misma estrategia en dos ventanas de tiempo —
+# alinearlas (cambiar el status log a cierres parciales) sería una reforma
+# mucho mayor que lo que amerita este hallazgo ("Medio"), así que se
+# documenta la divergencia en el propio resultado de la comparación en vez
+# de forzar el alineamiento.
+_AGGRESSIVE_EXIT_MECHANICS_CAVEAT = (
+    "AGGRESSIVE en paper trading cierra con un único take-profit al primer "
+    "tramo del trailing (+20%), no con el trailing-stop escalonado real del "
+    "backtest histórico (simplificación deliberada, ver simulator.py) — una "
+    "divergencia de win_rate aquí puede deberse a esa diferencia mecánica "
+    "de salida, no (solo) a que el paper trading confirme o no el backtest."
+)
+
 
 def _fetch_paper_trades(conn, version: str, run_batch_tag: str) -> list[dict]:
     with conn.cursor() as cur:
@@ -83,7 +103,13 @@ def compare_with_historical_backtest(conn, version: str, week_trade_metrics: dic
     """Sanity check del spec ("¿papel matches backtest histórico?") — compara
     el win_rate de esta semana contra el del backtest histórico más
     reciente (portfolio_reports, Fase 3). Con la muestra de una sola semana,
-    esto es una señal blanda, no una prueba — ver SANITY_CHECK_WIN_RATE_DIVERGENCE_PP."""
+    esto es una señal blanda, no una prueba — ver SANITY_CHECK_WIN_RATE_DIVERGENCE_PP.
+
+    Para AGGRESSIVE, el resultado trae además "caveat" (IMPROVEMENT_PLAN.md
+    M14): esta versión usa una mecánica de salida distinta en paper trading
+    que en el backtest histórico (ver _AGGRESSIVE_EXIT_MECHANICS_CAVEAT), así
+    que una divergencia aquí no aísla "el modelo predice mal" de "las dos
+    simulaciones no cierran las posiciones igual"."""
     with conn.cursor() as cur:
         cur.execute("SELECT report_json FROM portfolio_reports ORDER BY created_at DESC LIMIT 1")
         row = cur.fetchone()
@@ -107,6 +133,7 @@ def compare_with_historical_backtest(conn, version: str, week_trade_metrics: dic
         "week_win_rate": week_win_rate,
         "diff_pp": diff_pp,
         "matches_historical": diff_pp <= SANITY_CHECK_WIN_RATE_DIVERGENCE_PP,
+        "caveat": _AGGRESSIVE_EXIT_MECHANICS_CAVEAT if version == "AGGRESSIVE" else None,
     }
 
 

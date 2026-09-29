@@ -18,10 +18,11 @@ class _FakeStreamResponse:
     """Imita lo justo de requests.Response en modo stream: trocea el cuerpo y
     lleva la cuenta de cuántos bytes se llegaron a pedir de verdad."""
 
-    def __init__(self, body: str, chunk_size_out: int = 8192, status_code: int = 200):
+    def __init__(self, body: str, chunk_size_out: int = 8192, status_code: int = 200, headers: dict | None = None):
         self._body = body.encode()
         self._chunk_size_out = chunk_size_out
         self.status_code = status_code
+        self.headers = headers or {}
         self.bytes_served = 0
 
     def __enter__(self):
@@ -204,3 +205,70 @@ def test_el_error_permanente_lo_sigue_cazando_el_caller(monkeypatch):
 
     with pytest.raises(RuntimeError):
         edgar_http.throttled_get_header("https://sec.gov/x.txt")
+
+
+# --- Retry-After en 429s (IMPROVEMENT_PLAN.md M4) ---------------------------
+
+
+@pytest.mark.parametrize("raw,esperado", [("30", 30), ("5", 5), ("0", None), ("-1", None)])
+def test_retry_after_seconds_lee_el_header(raw, esperado):
+    resp = _FakeStreamResponse("", headers={"Retry-After": raw})
+    assert edgar_http._retry_after_seconds(resp) == esperado
+
+
+def test_retry_after_seconds_sin_header_devuelve_none():
+    resp = _FakeStreamResponse("", headers={})
+    assert edgar_http._retry_after_seconds(resp) is None
+
+
+def test_retry_after_seconds_no_entero_devuelve_none():
+    # Retry-After también admite una fecha HTTP completa — no soportado aquí,
+    # se cae al backoff fijo en vez de fallar.
+    resp = _FakeStreamResponse("", headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+    assert edgar_http._retry_after_seconds(resp) is None
+
+
+def test_retry_after_seconds_topa_a_max():
+    resp = _FakeStreamResponse("", headers={"Retry-After": "99999"})
+    assert edgar_http._retry_after_seconds(resp) == edgar_http._MAX_RETRY_AFTER_S
+
+
+def test_throttled_get_respeta_retry_after_de_un_429(monkeypatch):
+    """El 429 pide explícitamente 3s de espera — el backoff fijo (2s) no debe
+    usarse cuando la SEC ha sido explícita sobre cuánto esperar."""
+    llamadas = {"n": 0}
+    esperas: list[float] = []
+    monkeypatch.setattr(edgar_http.time, "sleep", lambda s: esperas.append(s))
+
+    def _get(*a, **kw):
+        llamadas["n"] += 1
+        if llamadas["n"] == 1:
+            return _FakeStreamResponse("ok", headers={"Retry-After": "3"}, status_code=429)
+        return _FakeStreamResponse("ok", status_code=200)
+
+    monkeypatch.setattr(edgar_http.requests, "get", _get)
+
+    edgar_http.throttled_get("https://sec.gov/edgar/data/1/x.txt")
+
+    assert llamadas["n"] == 2
+    assert 3 in esperas
+    assert 2 not in esperas  # el backoff fijo quedó sobrescrito, no acumulado
+
+
+def test_throttled_get_sin_retry_after_usa_el_backoff_fijo(monkeypatch):
+    llamadas = {"n": 0}
+    esperas: list[float] = []
+    monkeypatch.setattr(edgar_http.time, "sleep", lambda s: esperas.append(s))
+
+    def _get(*a, **kw):
+        llamadas["n"] += 1
+        if llamadas["n"] == 1:
+            return _FakeStreamResponse("", status_code=429)
+        return _FakeStreamResponse("ok", status_code=200)
+
+    monkeypatch.setattr(edgar_http.requests, "get", _get)
+
+    edgar_http.throttled_get("https://sec.gov/edgar/data/1/x.txt")
+
+    assert llamadas["n"] == 2
+    assert 2 in esperas
