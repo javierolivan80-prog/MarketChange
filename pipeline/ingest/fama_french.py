@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 import zipfile
 from datetime import date, timedelta
 
@@ -28,6 +29,52 @@ import requests
 from pipeline import config
 
 logger = logging.getLogger(__name__)
+
+# Backoff: 2s, 4s, 8s, 16s — misma política que edgar_http.throttled_get, por
+# consistencia con el resto del proyecto.
+_RETRY_DELAYS = [2, 4, 8, 16]
+
+
+class PermanentHTTPError(RuntimeError):
+    """4xx que no tiene sentido reintentar (404, 403...) — ver el porqué en
+    edgar_http.PermanentHTTPError (mismo problema, host distinto). No se
+    reutiliza esa clase directamente: es de un módulo específico de EDGAR/
+    SEC, y este archivo habla con un host completamente distinto (Ken
+    French), pero el motivo por el que existe es idéntico."""
+
+
+def _es_permanente(status: int) -> bool:
+    # Mismo criterio que edgar_http._es_permanente: 429 (rate limit) y 408
+    # (timeout) son 4xx pero SÍ son transitorios.
+    return 400 <= status < 500 and status not in (408, 429)
+
+
+def _get_with_retry(url: str, **kwargs) -> requests.Response:
+    """GET con reintentos y backoff exponencial (hallazgo de auditoría
+    IMPROVEMENT_PLAN.md R7: este módulo no tenía NINGÚN retry, a diferencia
+    del resto del pipeline — edgar_http.py). No hay rate limit propio aquí:
+    a diferencia de la SEC, Ken French no publica ni exige un límite de
+    peticiones, y este archivo hace como mucho una petición por corrida.
+
+    PermanentHTTPError se lanza DENTRO del try pero no es un
+    requests.RequestException, así que el except de abajo no la atrapa: sale
+    del bucle de reintentos en el primer intento, en vez de gastar 30s de
+    esperas en un 404 que no se va a arreglar solo (mismo patrón que
+    edgar_http.throttled_get)."""
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = requests.get(url, **kwargs)
+            if _es_permanente(resp.status_code):
+                raise PermanentHTTPError(f"{resp.status_code} en {url} — no se reintenta")
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as exc:
+            last_exc = exc
+            logger.warning("Fallo descargando %s (intento %d): %s", url, attempt, exc)
+    raise RuntimeError(f"No se pudo descargar {url} tras reintentos") from last_exc
 
 # Factores diarios FF3 (Mkt-RF, SMB, HML, RF), en formato ZIP con un CSV dentro.
 FF3_DAILY_URL = (
@@ -67,8 +114,7 @@ def fetch_ff3_daily(min_date: date | None = None) -> pd.DataFrame:
     parse_ff3_csv) desactivaría el filtro; aquí SÍ se aplica uno por defecto
     porque este es el punto de entrada real usado por el pipeline nocturno.
     """
-    resp = requests.get(FF3_DAILY_URL, timeout=60)
-    resp.raise_for_status()
+    resp = _get_with_retry(FF3_DAILY_URL, timeout=60)
     with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
         csv_name = next(n for n in zf.namelist() if n.lower().endswith(".csv"))
         raw = zf.read(csv_name).decode("utf-8", errors="replace")

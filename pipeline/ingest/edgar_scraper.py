@@ -37,6 +37,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from pipeline import config
+from pipeline.ingest.cik import normalize_cik
 from pipeline.ingest.edgar_http import throttled_get, throttled_get_header
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ def parse_daily_index(raw_text: str) -> list[dict]:
             {
                 "form_type": match.group("form_type"),
                 "company_name": match.group("company_name").strip(),
-                "cik": match.group("cik").lstrip("0") or "0",
+                "cik": normalize_cik(match.group("cik")),
                 "date_filed": _normalize_filed_date(match.group("date_filed")),
                 "file_name": match.group("file_name"),
             }
@@ -455,16 +456,32 @@ def backfill_range(start: date, end: date) -> None:
     day = start
     conn = get_connection()
     total = 0
+    fallidos = 0
+    primer_error: str | None = None
     while day <= end:
         if day.weekday() < 5:  # solo días hábiles; EDGAR no publica índice en fin de semana
             try:
                 filings = scrape_day(day)
                 upsert_universe_entries(conn, filings)
                 total += upsert_events(conn, filings, classify_event_classes, compute_d0_close_date)
-            except Exception:
+            except Exception as exc:
+                fallidos += 1
+                if primer_error is None:
+                    primer_error = f"{day.isoformat()}: {exc}"
                 logger.exception("Fallo procesando %s — continuando con el siguiente día", day)
+                # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R3): SIN ESTO no se
+                # aísla nada — un fallo de Postgres a mitad de un día (p. ej. una
+                # violación de constraint en upsert_events) deja la transacción
+                # ABORTADA, y todos los días siguientes del rango revientan en
+                # cadena con "current transaction is aborted", enmascarando el
+                # error real detrás de docenas de copias de su consecuencia.
+                # Mismo patrón ya corregido en xbrl_fundamentals.py:
+                # ingest_universe_fundamentals (ver su docstring).
+                conn.rollback()
         day += timedelta(days=1)
-    logger.info("Backfill completo: %d eventos insertados/actualizados", total)
+    if fallidos:
+        logger.warning("Primer fallo del backfill — %s", primer_error)
+    logger.info("Backfill completo: %d eventos insertados/actualizados, %d días fallidos", total, fallidos)
 
 
 if __name__ == "__main__":

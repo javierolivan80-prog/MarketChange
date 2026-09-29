@@ -85,7 +85,13 @@ def _seed_market_data(conn, tickers_and_bases, n_days=320):
                 cur.execute(
                     "INSERT INTO prices (ticker, trade_date, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning) "
                     "VALUES (%s,%s,%s,%s,%s,1.0,100000,FALSE) ON CONFLICT (ticker, trade_date) DO NOTHING",
-                    (ticker, d.date(), price, price * 1.01, price * 0.99),
+                    # high/low a +-0.1% (spread ~0.2%, bajo SPREAD_CEILING_PCT=0.5%
+                    # de abstention_engine.py) — hallazgo de auditoría (R5): con
+                    # el pre-filtro objetivo ahora extendido a iliquidez (antes
+                    # solo se comprobaba DESPUÉS del Judge), un spread ancho aquí
+                    # saltaría el LLM en TODOS los tests de este fichero, no solo
+                    # en los que de verdad quieren probar ese camino.
+                    (ticker, d.date(), price, price * 1.001, price * 0.999),
                 )
         for d in dates:
             cur.execute(
@@ -163,6 +169,78 @@ def test_fda_crl_without_8k_ignores_8k_filed_after_d0(conn):
     _seed_event(conn, "1", "BIOX", date(2024, 1, 1), event_class="FDA_CRL")
     _seed_event(conn, "1", "BIOX", date(2024, 1, 3), event_class="8K_8.01_OTHER")  # aún no ocurrido en D0
     assert check_fda_crl_without_8k(conn, "1", "FDA_CRL", date(2024, 1, 1)) is True
+
+
+# ---------------------------------------------------------------------------
+# spend_today_usd / remaining_daily_budget_events — IMPROVEMENT_PLAN.md A2
+# ---------------------------------------------------------------------------
+
+
+def test_spend_today_usd_counts_only_real_llm_calls(conn):
+    """Solo cuenta como gasto una fila con from_cache=FALSE y
+    model_version_bull_bear distinto de 'SKIPPED_OBJECTIVE_NO_TRADE' — las
+    otras dos no pagaron ninguna llamada real a la Batch API."""
+    from pipeline.analyze.event_analysis_pipeline import spend_today_usd
+    from pipeline import config
+
+    eid_real = _seed_event(conn, "1", "REAL", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid_real, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+
+    eid_cache = _seed_event(conn, "2", "CACHED", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid_cache, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    eid_skip = _seed_event(conn, "3", "SKIP", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid_skip, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET from_cache = TRUE WHERE event_id = %s", (eid_cache,))
+        cur.execute("UPDATE event_analyses SET model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE' WHERE event_id = %s", (eid_skip,))
+    conn.commit()
+
+    assert spend_today_usd(conn) == pytest.approx(config.ANALYSIS_EST_COST_PER_EVENT_USD)
+
+
+def test_spend_today_usd_ignores_rows_from_other_days(conn):
+    from pipeline.analyze.event_analysis_pipeline import spend_today_usd
+
+    eid = _seed_event(conn, "1", "AYER", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET analyzed_at = now() - interval '1 day' WHERE event_id = %s", (eid,))
+    conn.commit()
+
+    assert spend_today_usd(conn) == 0.0
+
+
+def test_remaining_daily_budget_events_counts_down_from_the_cap(conn, monkeypatch):
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline import config
+
+    monkeypatch.setattr(config, "DAILY_SPEND_CAP_USD", config.ANALYSIS_EST_COST_PER_EVENT_USD * 3)
+
+    assert eap.remaining_daily_budget_events(conn) == 3
+
+    eid = _seed_event(conn, "1", "GASTADO", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+
+    assert eap.remaining_daily_budget_events(conn) == 2
+
+
+def test_remaining_daily_budget_events_zero_when_cap_already_spent(conn, monkeypatch):
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline import config
+
+    monkeypatch.setattr(config, "DAILY_SPEND_CAP_USD", config.ANALYSIS_EST_COST_PER_EVENT_USD)
+    eid = _seed_event(conn, "1", "GASTADO", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+
+    assert eap.remaining_daily_budget_events(conn) == 0
+
+
+def test_remaining_daily_budget_events_none_when_cap_disabled(conn, monkeypatch):
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline import config
+
+    monkeypatch.setattr(config, "DAILY_SPEND_CAP_USD", 0.0)
+    assert eap.remaining_daily_budget_events(conn) is None
 
 
 # ---------------------------------------------------------------------------
@@ -420,13 +498,115 @@ def test_process_chunk_skips_llm_for_low_novelty_event_but_still_forces_no_trade
         cur.execute("SELECT * FROM event_analyses")
         row = cur.fetchone()
     assert float(row["novelty_score"]) < 20
-    assert row["model_version_bull_bear"] == "SKIPPED_LOW_NOVELTY"
-    assert row["model_version_judge"] == "SKIPPED_LOW_NOVELTY"
+    assert row["model_version_bull_bear"] == "SKIPPED_OBJECTIVE_NO_TRADE"
+    assert row["model_version_judge"] == "SKIPPED_OBJECTIVE_NO_TRADE"
     assert row["trade_decision_conservative"] == "NO_TRADE"
     assert row["trade_decision_aggressive"] == "NO_TRADE"
     assert row["trade_decision_balanced"] == "NO_TRADE"
     bull_output = row["bull_analyst_output"] if isinstance(row["bull_analyst_output"], dict) else json.loads(row["bull_analyst_output"])
-    assert bull_output["skipped_low_novelty"] is True
+    assert bull_output["skipped_no_llm_needed"] is True
+    assert "novelty_score" in bull_output["reason"]  # la razón concreta es la de novelty, no otra de las 5
+
+
+def test_process_chunk_skips_llm_for_survivorship_warning_event(conn):
+    """Extiende el pre-filtro objetivo pre-LLM (hallazgo de auditoría R5,
+    IMPROVEMENT_PLAN.md) más allá de novelty: un ticker con WARNING de
+    posible deslistado en la ventana [D-5,D0] (regla 4 de
+    abstention_engine.decide_for_strategy) es NO_TRADE garantizado sin mirar
+    lo que diga el Judge — no hace falta pagar el debate de IA."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "TESTCO", d0)
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE prices SET survivorship_warning=TRUE WHERE ticker='TESTCO' AND trade_date=%s", (d0,))
+    conn.commit()
+
+    scripted_client = _ScriptedBatchesClient()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted_client))
+    events = fetch_events_needing_analysis(conn)
+    assert len(events) == 1
+
+    conn = process_chunk(conn, client, events)
+    assert scripted_client.call_count == 0  # cero llamadas a la Batch API: cero tokens gastados
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM event_analyses")
+        row = cur.fetchone()
+    assert row["model_version_bull_bear"] == "SKIPPED_OBJECTIVE_NO_TRADE"
+    assert row["trade_decision_conservative"] == "NO_TRADE"
+    assert row["trade_decision_aggressive"] == "NO_TRADE"
+    assert row["trade_decision_balanced"] == "NO_TRADE"
+    bull_output = row["bull_analyst_output"] if isinstance(row["bull_analyst_output"], dict) else json.loads(row["bull_analyst_output"])
+    assert bull_output["skipped_no_llm_needed"] is True
+    assert "deslistado" in bull_output["reason"]
+
+
+def test_process_chunk_skips_llm_for_fda_crl_without_8k(conn):
+    """Ídem, para la regla 6 (CRL de FDA sin 8-K correspondiente): es
+    objetiva (solo consulta `events`), así que también se puede comprobar
+    antes de invocar Bull/Bear/Judge."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("PHARMACO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "PHARMACO", d0, event_class="FDA_CRL")  # sin ningún 8-K de EDGAR cerca
+
+    scripted_client = _ScriptedBatchesClient()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted_client))
+    events = fetch_events_needing_analysis(conn)
+    assert len(events) == 1
+
+    conn = process_chunk(conn, client, events)
+    assert scripted_client.call_count == 0
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM event_analyses")
+        row = cur.fetchone()
+    assert row["model_version_bull_bear"] == "SKIPPED_OBJECTIVE_NO_TRADE"
+    assert row["trade_decision_conservative"] == "NO_TRADE"
+    bull_output = row["bull_analyst_output"] if isinstance(row["bull_analyst_output"], dict) else json.loads(row["bull_analyst_output"])
+    assert bull_output["skipped_no_llm_needed"] is True
+    assert "CRL" in bull_output["reason"]
+
+
+def test_process_chunk_skips_llm_for_illiquid_low_adv_event(conn):
+    """Ídem, para el segundo componente del proxy de liquidez (regla 7,
+    ADV de los 60 días de negociación ANTERIORES a D0 por debajo de
+    config.MIN_ADV_USD) — el primer componente (spread) ya lo cubre
+    indirectamente el resto de tests de este fichero, que dependen de que
+    _seed_market_data mantenga un spread estrecho."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("MICROCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "MICROCO", d0)
+
+    # Los 60 días de negociación ANTERIORES a D0 (dates[220..279]) con volumen
+    # mínimo -> ADV muy por debajo de config.MIN_ADV_USD.
+    with conn.cursor() as cur:
+        for i in range(220, 280):
+            cur.execute("UPDATE prices SET volume=10 WHERE ticker='MICROCO' AND trade_date=%s", (dates[i].date(),))
+    conn.commit()
+
+    scripted_client = _ScriptedBatchesClient()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted_client))
+    events = fetch_events_needing_analysis(conn)
+    assert len(events) == 1
+
+    conn = process_chunk(conn, client, events)
+    assert scripted_client.call_count == 0
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM event_analyses")
+        row = cur.fetchone()
+    assert row["model_version_bull_bear"] == "SKIPPED_OBJECTIVE_NO_TRADE"
+    assert row["trade_decision_conservative"] == "NO_TRADE"
+    bull_output = row["bull_analyst_output"] if isinstance(row["bull_analyst_output"], dict) else json.loads(row["bull_analyst_output"])
+    assert bull_output["skipped_no_llm_needed"] is True
+    assert "ADV" in bull_output["reason"]
 
 
 def test_process_chunk_high_novelty_event_still_calls_llm_as_before(conn):

@@ -10,6 +10,7 @@ from pipeline.backtest.sample_split import (
     SAMPLE_IN_SAMPLE,
     SAMPLE_OOS,
     date_bounds,
+    git_sha_corto,
     tag_suffix,
     validate_sample,
 )
@@ -77,3 +78,45 @@ def test_tag_suffix_only_for_oos():
     assert tag_suffix(SAMPLE_OOS) == "-OOS"
     assert tag_suffix(SAMPLE_IN_SAMPLE) == ""
     assert tag_suffix(None) == ""
+
+
+# ---------------------------------------------------------------------------
+# git_sha_corto — IMPROVEMENT_PLAN.md Q8: antes, portfolio_report.py y
+# validation/report.py invocaban `git rev-parse` cada uno por su cuenta, con
+# un except Exception amplio que caía a "unknown" sin loguear el motivo. La
+# garantía real que hace falta es que las DOS corridas (mismo job de
+# nightly_pipeline.yml) obtengan el MISMO valor, para que el tag coincida.
+# ---------------------------------------------------------------------------
+
+
+def test_git_sha_corto_prefiere_github_sha(monkeypatch):
+    monkeypatch.setenv("GITHUB_SHA", "abc123def456")
+    assert git_sha_corto() == "abc123d"  # primeros 7 caracteres, como git rev-parse --short
+
+
+def test_git_sha_corto_cae_a_git_rev_parse_sin_github_sha(monkeypatch):
+    """Fuera de GitHub Actions (corrida manual local): sin GITHUB_SHA, se
+    invoca git rev-parse de verdad — se comprueba con un fake en vez de
+    depender de que este sandbox tenga un repositorio git real en el cwd."""
+    import pipeline.backtest.sample_split as ss
+
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    monkeypatch.setattr(ss.subprocess, "check_output", lambda *a, **kw: "deadbee\n")
+
+    assert git_sha_corto() == "deadbee"
+
+
+def test_git_sha_corto_cae_a_unknown_si_todo_falla(monkeypatch):
+    """Determinista entre las dos corridas por el mismo motivo (ambas sin
+    GITHUB_SHA y sin git disponible), no por casualidad — ver docstring de
+    git_sha_corto."""
+    import pipeline.backtest.sample_split as ss
+
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+
+    def _falla(*a, **kw):
+        raise FileNotFoundError("git no instalado")
+
+    monkeypatch.setattr(ss.subprocess, "check_output", _falla)
+
+    assert git_sha_corto() == "unknown"
