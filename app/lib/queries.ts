@@ -238,6 +238,10 @@ export interface PaperBacktestComparison {
   week_win_rate?: number;
   diff_pp?: number;
   matches_historical?: boolean;
+  // Solo presente para AGGRESSIVE (IMPROVEMENT_PLAN.md M14): esa versión usa
+  // una mecánica de salida distinta en paper trading que en el backtest
+  // histórico — ver pipeline/paper_trading/report.py:compare_with_historical_backtest.
+  caveat?: string | null;
 }
 
 export interface PaperVersionReport {
