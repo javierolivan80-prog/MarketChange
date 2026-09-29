@@ -159,16 +159,6 @@ THESIS_SATURATION_MIN_ANALOGUES = 5
 # reutilizada aquí en vez de inventar una tercera.
 THESIS_ABNORMAL_VOLUME_RATIO = 3.0
 
-# Confianza del juicio ciego (Judge, Etapa 5) necesaria para que un evento
-# nuevo CONTRADIGA una tesis abierta. Dos umbrales, no uno: por encima del
-# alto, el código decide vender (INVALIDATED) sin intervención humana en el
-# criterio; entre el bajo y el alto, se reduce la posición (REDUCE) en vez de
-# liquidarla — una contradicción real pero no contundente merece cautela, no
-# pánico. Mismos valores que abstention_engine.CONTRADICTION_CONFIDENCE_FLOOR
-# / CONFIDENCE_FLOOR, reutilizados a propósito (misma escala, mismo
-# significado: "el Judge está seguro de lo que dice").
-THESIS_CONTRADICTION_CONFIDENCE_FLOOR = 60.0
-THESIS_MILD_CONTRADICTION_CONFIDENCE_FLOOR = 40.0
 # Fracción de la posición que se cierra en una reducción por contradicción
 # débil (ver arriba). No es 100% (eso sería INVALIDATED) ni 0% (eso sería
 # HOLD) — un recorte a la mitad es la respuesta intermedia más simple.
