@@ -253,3 +253,77 @@ class TestPopulateAgainstRealPostgres:
         assert rows[bueno]["ok"] is True
         assert rows[malo]["filing_text_attempts"] == filing_text.MAX_ATTEMPTS
         assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0  # ya no se reintenta
+
+    def test_populate_guarda_length_chars_e_includes_exhibit_correctamente(self):
+        """Cobertura del UPDATE en sí (IMPROVEMENT_PLAN.md M7): antes solo se
+        comprobaba que filing_text quedara relleno, no que el resto de columnas
+        que se escriben en el mismo UPDATE (length_chars, includes_exhibit,
+        extracted_at) llevaran el valor correcto."""
+        from pipeline.ingest.filing_text import populate_missing_filing_text
+
+        event_id = self._seed_event()
+        populate_missing_filing_text(self.conn)
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT filing_text, filing_text_length_chars, filing_text_includes_exhibit, "
+                "filing_text_extracted_at FROM events WHERE event_id = %s",
+                (event_id,),
+            )
+            row = cur.fetchone()
+        assert row["filing_text_length_chars"] == len(row["filing_text"])
+        assert row["filing_text_includes_exhibit"] is True
+        assert row["filing_text_extracted_at"] is not None
+
+    def test_populate_incrementa_intentos_cuando_el_texto_extraido_queda_vacio(self, monkeypatch):
+        """Un submission que descarga bien pero del que extract_best_text no
+        saca texto (p. ej. todo el contenido es XBRL/binario) no debe
+        confundirse con un éxito ni quedarse reintentando para siempre sin
+        contar el intento."""
+        from pipeline.ingest import filing_text
+
+        event_id = self._seed_event()
+
+        class _VacioResp:
+            text = "<DOCUMENT><TYPE>8-K</TYPE><TEXT></TEXT></DOCUMENT>"
+
+        monkeypatch.setattr("pipeline.ingest.filing_text.throttled_get", lambda url, **kw: _VacioResp())
+
+        assert filing_text.populate_missing_filing_text(self.conn) == 0
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT filing_text, filing_text_attempts FROM events WHERE event_id = %s",
+                (event_id,),
+            )
+            row = cur.fetchone()
+        assert row["filing_text"] is None
+        assert row["filing_text_attempts"] == 1
+
+    def test_populate_procesa_los_mas_recientes_primero(self):
+        """ORDER BY d0_close_date DESC: con limit=1 debe tocar siempre el
+        evento con la fecha más reciente, no el que se insertó primero."""
+        from pipeline.ingest.filing_text import populate_missing_filing_text
+
+        antiguo = self._seed_event()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO events (cik, ticker, source, is_satellite, event_class, item_codes,
+                    accession_number, source_url, filed_at, d0_close_date, classification_method,
+                    classification_confidence, raw_text_hash)
+                VALUES ('1','ACME','EDGAR',FALSE,'8K_2.02_EARNINGS',ARRAY['2.02'],'acc2','https://www.sec.gov/x',
+                        '2026-01-10','2026-01-10','RULE',1.0,'h2')
+                RETURNING event_id
+                """
+            )
+            reciente = cur.fetchone()["event_id"]
+        self.conn.commit()
+
+        assert populate_missing_filing_text(self.conn, limit=1) == 1
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT event_id, filing_text IS NOT NULL AS ok FROM events ORDER BY event_id")
+            rows = {r["event_id"]: r["ok"] for r in cur.fetchall()}
+        assert rows[reciente] is True
+        assert rows[antiguo] is False
