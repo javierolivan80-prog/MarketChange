@@ -45,6 +45,33 @@ def _es_permanente(status: int) -> bool:
     return 400 <= status < 500 and status not in (408, 429)
 
 
+# Tope al Retry-After que la SEC pueda pedir (IMPROVEMENT_PLAN.md M4) — por
+# si un valor disparatado (o un proxy intermedio raro) pidiera esperar
+# horas; con esto, como mucho se respeta hasta un minuto de más sobre el
+# backoff fijo antes de intentarlo de todas formas.
+_MAX_RETRY_AFTER_S = 60
+
+
+def _retry_after_seconds(resp: requests.Response) -> int | None:
+    """Segundos del header Retry-After de un 429, o None si no viene o no es
+    un entero (Retry-After también admite una fecha HTTP completa — formato
+    poco común en APIs modernas y no soportado aquí; se cae al backoff fijo
+    en ese caso, no es un error).
+
+    Antes, un 429 siempre esperaba el backoff fijo (2/4/8/16s) sin mirar si
+    la SEC pedía explícitamente un tiempo distinto — ignorar una instrucción
+    del servidor sobre cuánto esperar es justo el tipo de comportamiento que
+    un 429 existe para corregir."""
+    raw = resp.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = int(raw)
+    except ValueError:
+        return None
+    return min(seconds, _MAX_RETRY_AFTER_S) if seconds > 0 else None
+
+
 def throttled_get(url: str, **kwargs) -> requests.Response:
     """GET con rate limit fijo y reintentos con backoff exponencial.
 
@@ -52,16 +79,27 @@ def throttled_get(url: str, **kwargs) -> requests.Response:
     de red transitorias. Backoff: 2s, 4s, 8s, 16s (misma política que el resto
     del proyecto, por consistencia).
     """
-    delays = _RETRY_DELAYS
+    # Copia propia (no el objeto _RETRY_DELAYS compartido, IMPROVEMENT_PLAN.md
+    # Q5): esta lista se MUTA más abajo cuando un 429 trae Retry-After, y
+    # mutar la constante del módulo corrompería el backoff de cualquier otra
+    # llamada concurrente o posterior que la reutilice.
+    espera = [0, *_RETRY_DELAYS]
     last_exc: Exception | None = None
-    for attempt, delay in enumerate([0] + delays):
+    for attempt, delay in enumerate(espera):
         if delay:
             time.sleep(delay)
         time.sleep(_RATE_LIMIT_DELAY)
         try:
             resp = requests.get(url, headers=HEADERS, timeout=30, **kwargs)
             if resp.status_code == 429:
-                logger.warning("429 de EDGAR en %s, reintentando", url)
+                retry_after = _retry_after_seconds(resp)
+                if retry_after is not None and attempt + 1 < len(espera):
+                    espera[attempt + 1] = retry_after
+                    logger.warning(
+                        "429 de EDGAR en %s, reintentando (Retry-After=%ds)", url, retry_after
+                    )
+                else:
+                    logger.warning("429 de EDGAR en %s, reintentando", url)
                 continue
             if _es_permanente(resp.status_code):
                 raise PermanentHTTPError(f"{resp.status_code} en {url} — no se reintenta")
@@ -96,16 +134,23 @@ def throttled_get_header(url: str) -> str:
     sigue como antes en vez de fallar. Nunca devuelve MENOS de lo que un
     parser de cabecera necesita.
     """
-    delays = _RETRY_DELAYS
+    espera = [0, *_RETRY_DELAYS]  # copia propia — ver el comentario en throttled_get
     last_exc: Exception | None = None
-    for attempt, delay in enumerate([0] + delays):
+    for attempt, delay in enumerate(espera):
         if delay:
             time.sleep(delay)
         time.sleep(_RATE_LIMIT_DELAY)
         try:
             with requests.get(url, headers=HEADERS, timeout=30, stream=True) as resp:
                 if resp.status_code == 429:
-                    logger.warning("429 de EDGAR en %s, reintentando", url)
+                    retry_after = _retry_after_seconds(resp)
+                    if retry_after is not None and attempt + 1 < len(espera):
+                        espera[attempt + 1] = retry_after
+                        logger.warning(
+                            "429 de EDGAR en %s, reintentando (Retry-After=%ds)", url, retry_after
+                        )
+                    else:
+                        logger.warning("429 de EDGAR en %s, reintentando", url)
                     continue
                 if _es_permanente(resp.status_code):
                     raise PermanentHTTPError(f"{resp.status_code} en {url} — no se reintenta")
