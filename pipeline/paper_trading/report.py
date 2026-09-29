@@ -11,18 +11,24 @@ from datetime import date
 
 from pipeline.backtest.portfolio_metrics import compute_calibration_diagnostics, compute_trade_metrics
 from pipeline.backtest.portfolio_simulator import gain_pct
+from pipeline.backtest.portfolio_validation import WIN_RATE_DIVERGENCE_THRESHOLD_PP
 from pipeline.paper_trading.analysis import compute_alerts, compute_prediction_accuracy
 from pipeline.paper_trading.simulator import VERSIONS, load_ticker_prices, select_simulation_week, simulate_paper_trading_week
 
 logger = logging.getLogger(__name__)
 
-# Umbral de la comparación "¿el paper trading confirma el backtest?" — mucho
-# más laxo que el de compute_temporal_stability_report (15pp, sobre cientos
-# de trades) porque una semana de paper trading trae unos pocos trades: una
-# divergencia grande ahí es la norma estadística, no una señal de alarma.
-# Documentado como convención, no derivado de una teoría formal — igual que
-# el resto de umbrales heurísticos del proyecto.
-SANITY_CHECK_WIN_RATE_DIVERGENCE_PP = 30.0
+# Umbral de la comparación "¿el paper trading confirma el backtest?" — un
+# múltiplo de WIN_RATE_DIVERGENCE_THRESHOLD_PP POR REFERENCIA
+# (IMPROVEMENT_PLAN.md M19: antes era un literal independiente que
+# COINCIDÍA en valor con 2x ese umbral, documentado en prosa pero no
+# enforced — nada impedía que uno cambiase sin el otro). Más laxo a
+# propósito: compute_temporal_stability_report compara cientos de trades de
+# todo el backtest, mientras que una semana de paper trading trae unos
+# pocos — una divergencia grande ahí es la norma estadística, no una señal
+# de alarma. El factor en sí (no el resultado) sigue siendo una convención
+# documentada, no derivada de una teoría formal.
+_PAPER_TRADING_SANITY_MULTIPLIER = 2.0
+SANITY_CHECK_WIN_RATE_DIVERGENCE_PP = WIN_RATE_DIVERGENCE_THRESHOLD_PP * _PAPER_TRADING_SANITY_MULTIPLIER
 
 
 def _fetch_paper_trades(conn, version: str, run_batch_tag: str) -> list[dict]:
