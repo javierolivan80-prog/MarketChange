@@ -306,3 +306,67 @@ def test_persist_validation_report_upsert_overwrites(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM validation_reports WHERE run_batch_tag = %s", (tag,))
         assert cur.fetchone()["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _sensitivity_table — pura, IMPROVEMENT_PLAN.md R13/R14/R15
+# ---------------------------------------------------------------------------
+
+
+def _escenario(total_return: float | None, n_trades: int) -> dict:
+    return {"total_return": total_return, "n_trades": n_trades, "win_rate": None}
+
+
+def _sensitivity_fixture(**overrides) -> dict:
+    base_scenarios = {
+        version: {
+            "baseline": _escenario(0.05, 20),
+            "commission_plus_0.1pct": _escenario(0.04, 20),
+            "spread_plus_0.2pct": _escenario(0.03, 20),
+            "latency_d_plus_2": _escenario(0.02, 15),
+            "confidence_minus_20pct": _escenario(0.045, 18),
+            "high_vix_regime": _escenario(0.06, 10),
+            "low_vix_regime": _escenario(0.04, 10),
+            "n_missing_vix": 2,
+        }
+        for version in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")
+    }
+    base_scenarios.update(overrides)
+    return {"run_batch_tag": "t", "scenarios": base_scenarios}
+
+
+def test_sensitivity_table_incluye_columna_balanced():
+    """IMPROVEMENT_PLAN.md R13: BALANCED puede ser best_version en PARTE 6,
+    así que su fila de sensibilidad tiene que verse en la tabla, no solo
+    Conservative/Aggressive."""
+    from pipeline.validation.report import _sensitivity_table
+
+    tabla = _sensitivity_table(_sensitivity_fixture())
+
+    assert "Balanced Return" in tabla
+    assert tabla.count("Baseline") == 1  # una fila, con las 3 versiones en columnas
+
+
+def test_sensitivity_table_muestra_n_trades_por_escenario():
+    """IMPROVEMENT_PLAN.md R14: sin el tamaño de muestra por escenario, un
+    return que se desploma en 'latency_d_plus_2' es indistinguible de 'la
+    muestra se redujo a la mitad'."""
+    from pipeline.validation.report import _sensitivity_table
+
+    tabla = _sensitivity_table(_sensitivity_fixture())
+
+    assert "(n=20)" in tabla  # baseline
+    assert "(n=15)" in tabla  # latency_d_plus_2, con menos trades
+
+
+def test_sensitivity_table_muestra_n_missing_vix():
+    """IMPROVEMENT_PLAN.md R15: split_by_vix_regime ya calculaba
+    n_missing_vix; antes de esta sesión se descartaba en vez de mostrarse,
+    así que 'sin datos VIX' y 'sin efecto de VIX' eran indistinguibles en
+    el reporte final."""
+    from pipeline.validation.report import _sensitivity_table
+
+    tabla = _sensitivity_table(_sensitivity_fixture())
+
+    assert "Trades sin vix_d0 disponible" in tabla
+    assert "Conservative=2" in tabla
