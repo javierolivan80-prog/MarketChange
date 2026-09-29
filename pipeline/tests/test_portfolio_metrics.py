@@ -137,13 +137,44 @@ def test_equity_metrics_sharpe_positive_for_steady_gains():
 
 
 def test_equity_metrics_calmar_and_recovery_factor_use_drawdown():
+    # >=MIN_DAYS_FOR_ANNUALIZATION para que annual_return no sea None aquí
+    # (eso se prueba aparte, ver test_equity_metrics_curva_corta_no_anualiza).
     curve = [
-        {"trade_date": date(2024, 1, i + 1), "balance": b}
-        for i, b in enumerate([100_000, 150_000, 120_000])  # dd desde 150k a 120k = -20%
+        {"trade_date": date(2024, 1, 1), "balance": 100_000},
+        {"trade_date": date(2024, 2, 1), "balance": 150_000},  # dd desde 150k a 120k = -20%
+        {"trade_date": date(2024, 3, 1), "balance": 120_000},
     ]
     m = compute_equity_metrics(curve, starting_capital=100_000.0)
+    assert m["annual_return"] is not None
     assert m["calmar_ratio"] == pytest.approx(m["annual_return"] / m["max_drawdown"])
     assert m["recovery_factor"] == pytest.approx(m["total_return"] / m["max_drawdown"])
+
+
+def test_equity_metrics_curva_corta_no_anualiza():
+    """REGRESIÓN (IMPROVEMENT_PLAN.md M20): con 2 días de curva, extrapolar
+    linealmente a un año entero convertía un +5% en un annual_return de
+    cientos de veces ese valor — un número que no informa de nada real.
+    Por debajo de MIN_DAYS_FOR_ANNUALIZATION, annual_return (y calmar_ratio,
+    que depende de él) deben ser None en vez de un número disparatado."""
+    curve = [
+        {"trade_date": date(2024, 1, 1), "balance": 100_000.0},
+        {"trade_date": date(2024, 1, 2), "balance": 105_000.0},
+    ]
+    m = compute_equity_metrics(curve, starting_capital=100_000.0)
+    assert m["total_return"] == pytest.approx(0.05)  # total_return SÍ se calcula, no es lo que explota
+    assert m["annual_return"] is None
+    assert m["calmar_ratio"] is None
+
+
+def test_equity_metrics_justo_en_el_limite_de_dias_si_anualiza():
+    from pipeline.backtest.portfolio_metrics import MIN_DAYS_FOR_ANNUALIZATION
+
+    curve = [
+        {"trade_date": date(2024, 1, 1), "balance": 100_000.0},
+        {"trade_date": date(2024, 1, 1) + timedelta(days=MIN_DAYS_FOR_ANNUALIZATION), "balance": 105_000.0},
+    ]
+    m = compute_equity_metrics(curve, starting_capital=100_000.0)
+    assert m["annual_return"] is not None
 
 
 def test_equity_metrics_risk_free_rate_reduces_sharpe():
