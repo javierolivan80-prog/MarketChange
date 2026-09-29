@@ -17,7 +17,12 @@ DISEÑO (ver AUDIT_LEAN.md §2.4 y ARCHITECTURE_LEAN.md §4, §7):
   - Descarga por lotes con pausa entre lotes + backoff exponencial (yfinance
     no es oficial, sufre 429 alrededor de los ~950 tickers seguidos — ver
     ARCHITECTURE_LEAN.md §7). Resumible: se puede parar y reanudar por ticker.
-  - requests-cache en disco: nunca se vuelve a pedir el mismo (ticker, rango).
+  - La idempotencia NO viene de una caché HTTP (no hay ninguna en este
+    fichero — el docstring lo afirmaba hasta IMPROVEMENT_PLAN.md M11, sin que
+    el código la tuviera nunca) sino de pendientes_de_descarga(): compara
+    contra ultimo_dia_guardado() en Postgres y solo pide la cola que falta,
+    así que reejecutar el mismo (ticker, rango) no vuelve a pedir nada ya
+    guardado sin necesidad de cachear la respuesta HTTP en sí.
 
 ADVERTENCIA DE VALIDACIÓN — sin ejecutar en vivo (egress bloqueado a
 query1/query2.finance.yahoo.com, AUDIT_LEAN.md §1.5). La forma de uso de
