@@ -179,9 +179,11 @@ def cap_position_dollars_by_adv(desired_dollars: float, adv_usd: float | None, m
 
 
 def gain_pct(direction: str, entry_price: float, price: float) -> float:
-    """Retorno %, con signo, del SUBYACENTE — misma convención que
-    backtest/backtester.py:compute_trade_return (Fase 1), reutilizada aquí
-    para que LONG/SHORT se calculen igual en todo el proyecto."""
+    """Retorno %, con signo, del SUBYACENTE — LONG/SHORT se calculan con la
+    misma convención de signo en todo el módulo (no hay ningún otro sitio
+    del proyecto que calcule retornos realizados de trades; el motor de
+    backtest por-evento que existía en backtest/backtester.py se eliminó por
+    no tener ningún caller en producción, ver IMPROVEMENT_PLAN.md Q1)."""
     if direction == "LONG":
         return (price - entry_price) / entry_price * 100
     return (entry_price - price) / entry_price * 100

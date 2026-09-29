@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 HEADERS = {"User-Agent": config.EDGAR_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _RATE_LIMIT_DELAY = 1.0 / config.EDGAR_RATE_LIMIT_PER_SEC
+# Backoff: 2s, 4s, 8s, 16s — misma política que el resto del proyecto.
+# Hallazgo de auditoría (IMPROVEMENT_PLAN.md Q5): esta lista estaba
+# duplicada literal en throttled_get y throttled_get_header — exactamente
+# el tipo de cosa que diverge en silencio si alguien cambia una copia y no
+# la otra.
+_RETRY_DELAYS = [2, 4, 8, 16]
 
 
 class PermanentHTTPError(RuntimeError):
@@ -46,7 +52,7 @@ def throttled_get(url: str, **kwargs) -> requests.Response:
     de red transitorias. Backoff: 2s, 4s, 8s, 16s (misma política que el resto
     del proyecto, por consistencia).
     """
-    delays = [2, 4, 8, 16]
+    delays = _RETRY_DELAYS
     last_exc: Exception | None = None
     for attempt, delay in enumerate([0] + delays):
         if delay:
@@ -90,7 +96,7 @@ def throttled_get_header(url: str) -> str:
     sigue como antes en vez de fallar. Nunca devuelve MENOS de lo que un
     parser de cabecera necesita.
     """
-    delays = [2, 4, 8, 16]
+    delays = _RETRY_DELAYS
     last_exc: Exception | None = None
     for attempt, delay in enumerate([0] + delays):
         if delay:

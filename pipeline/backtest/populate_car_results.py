@@ -11,6 +11,42 @@ Calcula ambas ventanas (5 y 20 días) pedidas por backtest/backtester.py, para
 cada evento con precio + factores suficientes. Un evento sin suficiente
 historial (fit_factor_model devuelve None) se salta — no se guarda una fila
 con CAR fabricado.
+
+POR QUÉ ESTA FUNCIÓN NO FILTRA POR sample_split (IN_SAMPLE/OOS) — hallazgo de
+auditoría investigado y descartado (IMPROVEMENT_PLAN.md R1): a diferencia de
+portfolio_simulator.py y validation/event_study.py, que sí importan
+`sample_split.date_bounds`, este módulo procesa TODOS los eventos pendientes
+sin distinguir partición, y ESO ES CORRECTO, no un descuido:
+
+  - El CAR de un evento es un estadístico point-in-time POR EVENTO —
+    compute_car() ajusta el modelo de factores solo con datos de
+    `estimation_window` (por defecto [-250,-30] días respecto al D0 de ESE
+    evento) y mide el retorno anormal solo en [D+1, D+window_days] del MISMO
+    evento. No hay ninguna comparación entre eventos ni ninguna estadística
+    agregada aquí — nada que "mirar antes de tiempo" en el sentido de T6
+    (ARCHITECTURE_LEAN.md, "ajustar parámetros solo en IN_SAMPLE, mirar OOS
+    una sola vez"). Calcular el CAR de un evento fechado en el periodo OOS es
+    simple procesamiento de datos ya disponibles (el precio D+20 ya existe),
+    no una "mirada" a un resultado agregado de la estrategia.
+  - La disciplina de partición SÍ importa, y SÍ se aplica, en el consumidor
+    que agrega estos números en una conclusión: `event_study.py` filtra por
+    `sample_split.date_bounds` al construir las estadísticas por clase de
+    evento (media, t-test, MDE) — ahí es donde un vistazo prematuro a OOS
+    invalidaría el holdout, y ahí es donde ya está bloqueado.
+  - `historical_analogues.get_historical_analogues()` (el otro consumidor de
+    car_results) tampoco necesita saber de "sample": ya filtra por
+    `d0_close_date < as_of_date` del evento que se está analizando en ESE
+    momento — point-in-time estricto y suficiente, sea ese evento IN_SAMPLE u
+    OOS, porque un análogo con fecha anterior a la del evento actual siempre
+    fue legítimamente "conocido" en ese momento, con independencia de en qué
+    lado del split de fechas caiga.
+
+Particionar este módulo por sample sería, además de innecesario, activamente
+contraproducente: dejaría car_results sin poblar para los eventos OOS hasta
+que alguien lo pida explícitamente, congelando de nuevo n_analogues=0 para
+cualquier evento OOS que event_analysis_pipeline.py intente analizar antes
+de esa corrida manual — exactamente el bug que este módulo se creó para
+cerrar (ver el párrafo de arriba).
 """
 from __future__ import annotations
 

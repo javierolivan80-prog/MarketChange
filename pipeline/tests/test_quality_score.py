@@ -93,6 +93,28 @@ def test_calidad_beneficio_detecta_beneficio_que_no_es_caja():
     assert "solo entran" in calidad.explanation
 
 
+def test_capex_ausente_no_infla_la_nota_de_calidad_del_beneficio():
+    """Regresión de extremo a extremo (IMPROVEMENT_PLAN.md R10): antes,
+    capex=None se trataba como capex=0.0, así que un ejercicio con capex sin
+    reportar (en vez de "no computable") parecía tener el 100% del flujo de
+    caja operativo libre — una nota FAVORABLE por un dato que falta, al
+    revés del principio del módulo. Ahora el componente se excluye y se
+    renormaliza, igual que el resto de "datos que faltan" (ver el test
+    equivalente para el precio, arriba)."""
+    rows_con_capex = [_row(net_income=200_000.0, operating_cash_flow=60_000.0, capex=20_000.0) for _ in range(4)]
+    rows_sin_capex = [_row(net_income=200_000.0, operating_cash_flow=60_000.0, capex=None) for _ in range(4)]
+
+    con_capex = compute_quality_score(rows_con_capex, current_price=10.0)
+    sin_capex = compute_quality_score(rows_sin_capex, current_price=10.0)
+
+    assert _component(sin_capex, "Calidad del beneficio").score is None
+    assert "Calidad del beneficio" in sin_capex.unavailable
+    # Antes del fix, sin_capex habría tratado FCF=60k (capex=0) como
+    # conversión perfecta y habría puntuado MÁS alto que con_capex, no
+    # excluido el componente. Ahora directamente no cuenta con esa cifra.
+    assert sin_capex.total is not None and con_capex.total is not None
+
+
 def test_crecimiento_cagr_calculado_a_mano():
     # 1.000.000 -> 1.331.000 en 3 saltos = 10% anual exacto
     rows = [_row(revenue=r) for r in (1_000_000.0, 1_100_000.0, 1_210_000.0, 1_331_000.0)]
@@ -224,13 +246,22 @@ def test_el_calculo_de_crecimiento_aguanta_valores_de_postgres():
     assert componente.raw_value == pytest.approx(0.10, abs=0.001)  # 10% anual
 
 
-def test_calidad_del_beneficio_aguanta_un_capex_ausente():
-    """Otro sitio donde la mezcla habría petado más adelante:
-    `operating_cash_flow - 0.0` con un Decimal a la izquierda."""
+def test_calidad_del_beneficio_con_capex_ausente_no_es_computable():
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R10): capex=None ya NO se
+    trata como capex=0.0 — eso inflaba el FCF calculado (y por tanto el
+    score) exactamente al revés del principio que el módulo dice seguir
+    ("un dato ausente se excluye, no puntúa favorable"). A diferencia de
+    long_term_debt en _score_solidez (excepción deliberada, ver su
+    comentario), casi cualquier empresa operativa tiene capex real, así que
+    una etiqueta ausente es un hueco de datos, no una señal de "cero"."""
     from decimal import Decimal
 
     from pipeline.analyze.quality_score import _a_float, _score_calidad_beneficio
 
+    # _a_float() sigue siendo relevante aquí: confirma que la conversión
+    # Decimal->float de operating_cash_flow/net_income no revienta aunque
+    # capex llegue a None (el bug original que este test cazaba).
     fila = _a_float({"operating_cash_flow": Decimal("150"), "net_income": Decimal("100")})
     componente = _score_calidad_beneficio(fila["operating_cash_flow"], None, fila["net_income"])
-    assert componente.score is not None
+    assert componente.score is None
+    assert componente.raw_value is None
