@@ -24,8 +24,11 @@ www.sec.gov, AUDIT_LEAN.md §1.5). El parser se prueba contra un fixture
 offline con esta forma (test_filing_text.py), pero no se ha podido descargar
 ni parsear un filing real desde este sandbox. Antes del backfill completo:
 correr --single-event contra 2-3 filings conocidos y leer el texto extraído
-a mano — comprobar que no queden restos de HTML/CSS ni que se haya cortado
-a mitad de una frase.
+a mano — comprobar que no queden restos de HTML/CSS. El corte a
+MAX_TEXT_CHARS respeta el último fin de frase cuando lo encuentra cerca del
+límite (ver _truncate_at_sentence_boundary), pero sigue pudiendo cortar a
+mitad de frase en el caso límite sin puntuación cercana — revisar también
+eso a mano.
 """
 from __future__ import annotations
 
@@ -46,6 +49,14 @@ _PRESS_RELEASE_EXHIBIT_PREFIX = "EX-99"
 
 MAX_ATTEMPTS = 3  # intentos fallidos antes de dejar un evento sin texto para siempre
 MAX_TEXT_CHARS = 8000  # tope de longitud guardada — controla coste de prompt en Bull/Bear/Judge
+
+# Bajo este umbral (fracción de MAX_TEXT_CHARS), el corte por frase se
+# descarta y se cae al corte duro de siempre (IMPROVEMENT_PLAN.md M8): un
+# filing sin '.'/'!'/'?' cerca del límite (tablas, listas numéricas...) no
+# debe perder más de la mitad del presupuesto de texto solo por buscar un
+# punto que no está ahí.
+_SENTENCE_BOUNDARY_MIN_FRACTION = 0.5
+_SENTENCE_ENDINGS = (".", "!", "?")
 
 
 def parse_submission_documents(raw_text: str) -> list[dict]:
@@ -91,6 +102,25 @@ def strip_html_to_text(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _truncate_at_sentence_boundary(text: str, limit: int) -> str:
+    """Corta text a lo sumo en limit caracteres, en el último punto/!/? antes
+    del límite en vez de a mitad de frase (advertencia del docstring del
+    módulo: "comprobar... que no se haya cortado a mitad de una frase").
+
+    Si no hay ningún fin de frase razonablemente cerca del límite (por debajo
+    de _SENTENCE_BOUNDARY_MIN_FRACTION de limit — p. ej. una tabla larga sin
+    puntuación), se cae al corte duro de siempre: preferir una frase entera es
+    una mejora de calidad, no algo por lo que tirar la mitad del presupuesto
+    de texto que se paga por analizar."""
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    boundary = max(window.rfind(c) for c in _SENTENCE_ENDINGS)
+    if boundary >= limit * _SENTENCE_BOUNDARY_MIN_FRACTION:
+        return window[: boundary + 1]
+    return window
+
+
 def extract_best_text(documents: list[dict], prefer_exhibit: bool = True) -> dict:
     """Elige qué documento(s) usar como texto del evento.
 
@@ -103,7 +133,9 @@ def extract_best_text(documents: list[dict], prefer_exhibit: bool = True) -> dic
     Devuelve {"text": str, "includes_exhibit": bool, "length_chars": int},
     truncado a MAX_TEXT_CHARS — no por ahorrar espacio en BD, sino porque
     cada carácter de más es coste de tokens en CADA llamada de Bull/Bear/Judge
-    (ARCHITECTURE_LEAN.md §6).
+    (ARCHITECTURE_LEAN.md §6). El corte respeta el último fin de frase antes
+    del límite en vez de partir a mitad de una (ver _truncate_at_sentence_boundary
+    — IMPROVEMENT_PLAN.md M8).
     """
     if not documents:
         return {"text": "", "includes_exhibit": False, "length_chars": 0}
@@ -120,7 +152,7 @@ def extract_best_text(documents: list[dict], prefer_exhibit: bool = True) -> dic
             includes_exhibit = True
 
     combined = f"{exhibit_text}\n\n{primary_text}" if includes_exhibit else primary_text
-    combined = combined.strip()[:MAX_TEXT_CHARS]
+    combined = _truncate_at_sentence_boundary(combined.strip(), MAX_TEXT_CHARS)
 
     return {"text": combined, "includes_exhibit": includes_exhibit, "length_chars": len(combined)}
 
