@@ -4,6 +4,9 @@ No se pudo verificar contra el fichero real (mba.tuck.dartmouth.edu bloqueado
 en este sandbox). Fixture con la misma forma documentada del CSV real:
 cabecera de texto libre, tabla de datos, footer de copyright.
 """
+import io
+import os
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -67,3 +70,112 @@ def test_default_min_date_is_before_backtest_start():
     backtest_start = date.fromisoformat(config.BACKTEST_START)
     assert _default_min_date() < backtest_start
     assert (backtest_start - _default_min_date()).days >= 250
+
+
+# ---------------------------------------------------------------------------
+# fetch_ff3_daily / store_factors (IMPROVEMENT_PLAN.md M9)
+#
+# Sin test hasta ahora, justo la capa donde ya ocurrió un incidente real: el
+# bucle fila a fila de store_factors() dejó el pipeline nocturno colgado más
+# de 2 horas insertando ~25.000 filas una a una contra Neon (ver su docstring).
+# ---------------------------------------------------------------------------
+
+
+def _zip_con_csv(raw_csv: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("F-F_Research_Data_Factors_daily.CSV", raw_csv)
+    return buf.getvalue()
+
+
+def test_fetch_ff3_daily_descomprime_el_zip_y_aplica_el_filtro_de_fecha(monkeypatch):
+    from pipeline.ingest import fama_french
+
+    raw_csv = (FIXTURES / "sample_ff3_daily.csv").read_text()
+
+    class _FakeResp:
+        content = _zip_con_csv(raw_csv)
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(fama_french.requests, "get", lambda url, timeout=60: _FakeResp())
+
+    df = fama_french.fetch_ff3_daily(min_date=date(2021, 1, 5))
+
+    assert len(df) == 2  # descarta la fila del 2021-01-04 (ver fixture)
+    assert all(d >= date(2021, 1, 5) for d in df["trade_date"])
+
+
+def test_fetch_ff3_daily_propaga_un_status_de_error_http(monkeypatch):
+    from pipeline.ingest import fama_french
+
+    class _FakeResp:
+        def raise_for_status(self):
+            raise fama_french.requests.HTTPError("404")
+
+    monkeypatch.setattr(fama_french.requests, "get", lambda url, timeout=60: _FakeResp())
+
+    with pytest.raises(fama_french.requests.HTTPError):
+        fama_french.fetch_ff3_daily()
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+class TestStoreFactorsAgainstRealPostgres:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        from pipeline.db.connection import get_connection, init_schema
+
+        self.conn = get_connection()
+        init_schema(self.conn)
+        with self.conn.cursor() as cur:
+            cur.execute("TRUNCATE fama_french_factors")
+        self.conn.commit()
+        yield
+        self.conn.close()
+
+    def test_store_factors_inserta_las_filas_del_dataframe(self):
+        from pipeline.ingest.fama_french import parse_ff3_csv, store_factors
+
+        raw = (FIXTURES / "sample_ff3_daily.csv").read_text()
+        df = parse_ff3_csv(raw)
+        store_factors(self.conn, df)
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT trade_date, mkt_rf FROM fama_french_factors ORDER BY trade_date")
+            rows = cur.fetchall()
+        assert len(rows) == 3
+        assert rows[0]["trade_date"] == date(2021, 1, 4)
+        assert float(rows[0]["mkt_rf"]) == pytest.approx(-0.0036)
+
+    def test_store_factors_con_dataframe_vacio_no_revienta(self):
+        from pipeline.ingest.fama_french import parse_ff3_csv, store_factors
+
+        vacio = parse_ff3_csv((FIXTURES / "sample_ff3_daily.csv").read_text(), min_date=date(2099, 1, 1))
+        store_factors(self.conn, vacio)  # no debe lanzar ni intentar un executemany sin filas
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM fama_french_factors")
+            assert cur.fetchone()["n"] == 0
+
+    def test_store_factors_es_upsert_no_duplica_ni_pierde_actualizaciones(self):
+        """ON CONFLICT ... DO UPDATE: recargar el mismo trade_date con un valor
+        distinto debe actualizar la fila, no duplicarla ni ignorarla."""
+        from pipeline.ingest.fama_french import parse_ff3_csv, store_factors
+
+        raw = (FIXTURES / "sample_ff3_daily.csv").read_text()
+        df = parse_ff3_csv(raw)
+        store_factors(self.conn, df)
+
+        df_actualizado = df.copy()
+        df_actualizado.loc[0, "mkt_rf"] = 0.5
+        store_factors(self.conn, df_actualizado)
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM fama_french_factors")
+            assert cur.fetchone()["n"] == 3  # no se duplicó
+            cur.execute(
+                "SELECT mkt_rf FROM fama_french_factors WHERE trade_date = %s",
+                (df.iloc[0]["trade_date"],),
+            )
+            assert float(cur.fetchone()["mkt_rf"]) == pytest.approx(0.5)  # se actualizó
