@@ -37,6 +37,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from pipeline import config
+from pipeline.ingest.cik import normalize_cik
 from pipeline.ingest.edgar_http import throttled_get, throttled_get_header
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ def parse_daily_index(raw_text: str) -> list[dict]:
             {
                 "form_type": match.group("form_type"),
                 "company_name": match.group("company_name").strip(),
-                "cik": match.group("cik").lstrip("0") or "0",
+                "cik": normalize_cik(match.group("cik")),
                 "date_filed": _normalize_filed_date(match.group("date_filed")),
                 "file_name": match.group("file_name"),
             }
