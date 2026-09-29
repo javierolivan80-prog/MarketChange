@@ -10,6 +10,9 @@ real.
 """
 from __future__ import annotations
 
+import os
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -269,3 +272,131 @@ def test_mezcla_de_tickers_al_dia_nuevos_y_a_medias():
     )
     assert al_dia == ["ALDIA"]
     assert dict(a_pedir) == {"AMEDIAS": _date(2026, 9, 2), "NUEVA": _INICIO}
+
+
+# ---------------------------------------------------------------------------
+# _flag_full_gap / _store_with_gap_detection (IMPROVEMENT_PLAN.md M10, parte 2/2)
+#
+# Instrucción explícita del usuario: "flagea tickers deslistados... no
+# intentes llenar gaps". Sin test hasta ahora de que el flag en sí se escriba
+# donde toca (y solo donde toca) contra la tabla prices real.
+# ---------------------------------------------------------------------------
+
+
+def _df_precios(fechas: list[str], close=100.0) -> pd.DataFrame:
+    idx = pd.to_datetime(fechas)
+    n = len(fechas)
+    return pd.DataFrame(
+        {
+            "Open": [close] * n,
+            "High": [close + 1] * n,
+            "Low": [close - 1] * n,
+            "Close": [close] * n,
+            "Adj Close": [close] * n,
+            "Volume": [1000] * n,
+        },
+        index=idx,
+    )
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+class TestGapDetectionAgainstRealPostgres:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        from pipeline.db.connection import get_connection, init_schema
+
+        self.conn = get_connection()
+        init_schema(self.conn)
+        with self.conn.cursor() as cur:
+            cur.execute("TRUNCATE prices")
+        self.conn.commit()
+        yield
+        self.conn.close()
+
+    def _filas(self, ticker: str) -> list[dict]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT trade_date, close_raw, survivorship_warning FROM prices "
+                "WHERE ticker = %s ORDER BY trade_date",
+                (ticker,),
+            )
+            return cur.fetchall()
+
+    def test_flag_full_gap_inserta_una_fila_centinela_en_start_sin_precio(self):
+        from pipeline.ingest.yfinance_backfill import _flag_full_gap
+
+        _flag_full_gap(self.conn, "DESLISTADO", date(2026, 1, 5), date(2026, 1, 10))
+
+        filas = self._filas("DESLISTADO")
+        assert len(filas) == 1
+        assert filas[0]["trade_date"] == date(2026, 1, 5)
+        assert filas[0]["close_raw"] is None  # no se inventa precio, solo se marca
+        assert filas[0]["survivorship_warning"] is True
+
+    def test_flag_full_gap_no_pisa_un_precio_real_ya_guardado(self):
+        """Si ya hay una fila de precio real en esa fecha (de una descarga
+        anterior) y luego se marca full_gap para un rango que la incluye, el
+        UPDATE de ON CONFLICT solo debe tocar survivorship_warning, nunca
+        borrar el precio que ya estaba."""
+        from pipeline.ingest.yfinance_backfill import _flag_full_gap, _store_with_gap_detection
+
+        _store_with_gap_detection(self.conn, "ACME", _df_precios(["2026-01-05"], close=42.0), set())
+        _flag_full_gap(self.conn, "ACME", date(2026, 1, 5), date(2026, 1, 10))
+
+        filas = self._filas("ACME")
+        assert len(filas) == 1
+        assert float(filas[0]["close_raw"]) == pytest.approx(42.0)
+        assert filas[0]["survivorship_warning"] is True
+
+    def test_store_with_gap_detection_inserta_los_precios_del_dataframe(self):
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        df = _df_precios(["2026-01-05", "2026-01-06"], close=50.0)
+        _store_with_gap_detection(self.conn, "ACME", df, {date(2026, 1, 5), date(2026, 1, 6)})
+
+        filas = self._filas("ACME")
+        assert len(filas) == 2
+        assert all(float(f["close_raw"]) == pytest.approx(50.0) for f in filas)
+        assert all(f["survivorship_warning"] is False for f in filas)
+
+    def test_store_with_gap_detection_marca_los_dias_faltantes_dentro_del_rango(self):
+        """El propio ticker cotizó el 5 y el 7 de enero, pero no el 6 (que sí
+        era un día de mercado esperado) — debe quedar marcado como hueco sin
+        inventar un precio para ese día."""
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        df = _df_precios(["2026-01-05", "2026-01-07"])
+        expected_days = {date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)}
+        _store_with_gap_detection(self.conn, "ACME", df, expected_days)
+
+        filas = {f["trade_date"]: f for f in self._filas("ACME")}
+        assert len(filas) == 3
+        assert filas[date(2026, 1, 6)]["close_raw"] is None
+        assert filas[date(2026, 1, 6)]["survivorship_warning"] is True
+        assert filas[date(2026, 1, 5)]["survivorship_warning"] is False
+        assert filas[date(2026, 1, 7)]["survivorship_warning"] is False
+
+    def test_store_with_gap_detection_no_marca_dias_fuera_del_rango_propio_del_ticker(self):
+        """expected_days puede cubrir un rango más amplio que compartido entre
+        varios tickers de un mismo lote (ver _descargar_grupo). Un día de
+        mercado ANTES de que este ticker empezara a cotizar en el rango
+        pedido no es un hueco suyo — no debe marcarse."""
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        df = _df_precios(["2026-01-07"])  # el ticker solo trae datos desde el 7
+        expected_days = {date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)}
+        _store_with_gap_detection(self.conn, "ACME", df, expected_days)
+
+        filas = self._filas("ACME")
+        assert len(filas) == 1  # ni el 5 ni el 6 se marcaron como huecos de ACME
+        assert filas[0]["trade_date"] == date(2026, 1, 7)
+
+    def test_store_with_gap_detection_es_upsert_actualiza_el_precio(self):
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        _store_with_gap_detection(self.conn, "ACME", _df_precios(["2026-01-05"], close=10.0), set())
+        _store_with_gap_detection(self.conn, "ACME", _df_precios(["2026-01-05"], close=20.0), set())
+
+        filas = self._filas("ACME")
+        assert len(filas) == 1  # no se duplicó
+        assert float(filas[0]["close_raw"]) == pytest.approx(20.0)
