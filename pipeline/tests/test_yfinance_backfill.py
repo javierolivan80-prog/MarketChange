@@ -13,8 +13,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from pipeline.ingest import yfinance_backfill
 from pipeline.ingest.yfinance_backfill import (
     COLUMNAS_REQUERIDAS,
+    _download_one_with_retry,
     _validar_columnas,
     aplanar_columnas,
     extraer_ticker_del_lote,
@@ -272,6 +274,14 @@ def test_mezcla_de_tickers_al_dia_nuevos_y_a_medias():
 
 
 # ---------------------------------------------------------------------------
+# _download_one_with_retry / _descargar_lote_con_reintentos (IMPROVEMENT_PLAN.md M10)
+#
+# Nunca se han probado directamente: yfinance "no tiene una jerarquía de
+# excepciones propia estable" (comentario del propio código), así que lo que
+# importa comprobar es que CUALQUIER excepción activa el backoff y que tras
+# MAX_RETRIES se rinde devolviendo None en vez de propagar — el propio código
+# lo llama "la etapa más frágil del pipeline".
+#
 # _retry_with_backoff — IMPROVEMENT_PLAN.md Q5: antes, _download_one_with_retry
 # y _descargar_lote_con_reintentos duplicaban el MISMO bucle de reintentos
 # palabra por palabra; ninguno de los dos tenía test hasta esta sesión.
@@ -280,9 +290,88 @@ def test_mezcla_de_tickers_al_dia_nuevos_y_a_medias():
 
 @pytest.fixture(autouse=True)
 def _sin_esperas_reales(monkeypatch):
-    from pipeline.ingest import yfinance_backfill
-
     monkeypatch.setattr(yfinance_backfill.time, "sleep", lambda _: None)
+
+
+def test_download_one_with_retry_reintenta_ante_fallo_transitorio(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        if intentos["n"] == 1:
+            raise ConnectionError("429 de Yahoo")
+        return _df_plano()
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert intentos["n"] == 2
+    assert resultado is not None
+    assert list(resultado["Close"]) == [10.2, 11.2]
+
+
+def test_download_one_with_retry_aplana_el_multiindex_que_devuelve_yfinance(monkeypatch):
+    monkeypatch.setattr("yfinance.download", lambda *a, **kw: _df_multiindex("AAPL"))
+
+    resultado = _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert not isinstance(resultado.columns, pd.MultiIndex)
+
+
+def test_download_one_with_retry_se_rinde_tras_max_retries(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        raise ConnectionError("caída persistente")
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert resultado is None
+    assert intentos["n"] == yfinance_backfill.MAX_RETRIES
+
+
+def test_download_one_with_retry_none_no_revienta_al_aplanar(monkeypatch):
+    """yf.download puede devolver None (p. ej. ticker sin ningún dato en el
+    rango) — no debe intentar aplanar un DataFrame inexistente."""
+    monkeypatch.setattr("yfinance.download", lambda *a, **kw: None)
+
+    assert _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10)) is None
+
+
+def test_descargar_lote_con_reintentos_reintenta_y_devuelve_el_lote(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        if intentos["n"] == 1:
+            raise ConnectionError("429 de Yahoo")
+        return _df_multiindex("AAPL")
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = yfinance_backfill._descargar_lote_con_reintentos(["AAPL"], _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert intentos["n"] == 2
+    assert resultado is not None
+
+
+def test_descargar_lote_con_reintentos_se_rinde_tras_max_retries(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        raise ConnectionError("caída persistente")
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = yfinance_backfill._descargar_lote_con_reintentos(["AAPL", "MSFT"], _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert resultado is None
+    assert intentos["n"] == yfinance_backfill.MAX_RETRIES
 
 
 def test_retry_with_backoff_devuelve_el_resultado_si_no_hay_fallo():
@@ -319,7 +408,7 @@ def test_retry_with_backoff_devuelve_none_tras_agotar_intentos():
     assert intentos["n"] == MAX_RETRIES
 
 
-def test_download_one_with_retry_reintenta_ante_fallo_transitorio(monkeypatch):
+def test_download_one_with_retry_usa_retry_with_backoff_compartido(monkeypatch):
     """Regresión de cableado (IMPROVEMENT_PLAN.md Q5): _download_one_with_retry
     debe pasar por el bucle de reintentos compartido, no por uno propio — se
     verifica de punta a punta (yf.download falla dos veces y luego responde)
