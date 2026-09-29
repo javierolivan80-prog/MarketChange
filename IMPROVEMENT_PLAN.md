@@ -82,7 +82,7 @@ confunda con el camino real (`portfolio_simulator.py`).
 | A3 | **✅ Hecha (PR #24, sesión 9).** Step `if: failure()` al final de `test` e `ingest_and_analyze` manda un aviso por Telegram distinto de las alertas de negocio — cubre los dos ejemplos citados (Ingesta EDGAR, Ingesta Fama-French) y cualquier otro paso del job. Sin dependencias nuevas (`pipeline.notify.telegram` es solo stdlib) | Añadir | `.github/workflows/nightly_pipeline.yml` | Alto | 1 sesión | Ninguno | Junto con R6 |
 | A4 | **✅ Hecha (PR #24, sesión 9).** `timeout-minutes` en los 3 jobs de `nightly_pipeline.yml` | Añadir | `.github/workflows/nightly_pipeline.yml` | Medio | 1 sesión | Ninguno | Junto con R6/A3 |
 | A5 | **✅ Hecha (PR #51, sesión 37).** `MAX_BACKFILL_DAYS=2000` calculado en el propio step de `nightly_pipeline.yml`, falla rápido con `::error::` si el rango pedido lo supera | Añadir | `.github/workflows/nightly_pipeline.yml` | Bajo | 1 sesión | Ninguno | Ninguna |
-| A6 | Test de integración real conectando `guidance_detector.compute_novelty_signals` → `compute_novelty`, no solo cada extremo por separado | Añadir (test) | `pipeline/analyze/novelty.py` + `guidance_detector.py`; hoy solo hay tests con `NoveltyInputs` construidos a mano | Bajo | 1 sesión | Ninguno | Ninguna |
+| A6 | **✅ Hecha (PR #52, sesión 38).** 2 tests nuevos que conectan la tupla real de `compute_novelty_signals` con `compute_novelty`, contra Postgres real | Añadir (test) | `pipeline/tests/test_guidance_detector.py` | Bajo | 1 sesión | Ninguno | Ninguna |
 | A7 | Confirmación/dry-run antes de un `--forzar` de `yfinance_backfill.py` (re-descarga completa de miles de tickers) | Añadir | `pipeline/ingest/yfinance_backfill.py:255-262,401-405` — sin cap ni conteo previo | Bajo | 1 sesión | Ninguno | Ninguna |
 
 ## Plan ordenado sesión a sesión
@@ -131,7 +131,8 @@ no de *tocar código*, salvo que la medición confirme el problema.
 | 35 | M19 | **✅ Hecha (PR #49).** Umbral derivado por referencia, mismo valor (30.0pp), sin cambio de comportamiento. Suite completa (sobre el tip sin sesiones 5-34, independiente de esas): 638 passed |
 | 36 | M20 | **✅ Hecha (PR #50).** 4 tests (2 nuevos, 1 alargado para no chocar con el nuevo piso). Suite completa (sobre el tip sin sesiones 5-35, independiente de esas): 640 passed |
 | 37 | A5 | **✅ Hecha (PR #51).** Cambio de configuración YAML únicamente, sin código Python. Suite completa (sobre el tip sin sesiones 5-36, independiente de esas): 638 passed |
-| 38+ | A6, A7 | Backlog de mejoras puntuales de bajo esfuerzo/bajo impacto, una por sesión, sin orden estricto |
+| 38 | A6 | **✅ Hecha (PR #52).** 2 tests nuevos de integración real. Suite completa (sobre el tip sin sesiones 5-37, independiente de esas): 640 passed |
+| 39+ | A7 | Backlog de mejoras puntuales de bajo esfuerzo/bajo impacto |
 
 ## Criterio de "listo para gastar API" (antes del piloto de 50 €)
 
