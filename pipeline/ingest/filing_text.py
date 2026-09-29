@@ -35,7 +35,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from pipeline.ingest.edgar_http import throttled_get
+from pipeline.ingest.edgar_http import PermanentHTTPError, throttled_get
 
 logger = logging.getLogger(__name__)
 
@@ -151,18 +151,36 @@ def populate_missing_filing_text(conn, limit: int = 200) -> int:
         )
         pending = cur.fetchall()
 
-    def _fallo(event_id: int) -> None:
+    def _fallo(event_id: int, *, definitivo: bool = False) -> None:
+        # definitivo=True (404/403/400 — PermanentHTTPError) salta directo a
+        # MAX_ATTEMPTS: un source_url roto no se arregla reintentando, así que
+        # gastar 2 pasadas nocturnas más en el mismo evento no cambia el
+        # resultado, solo lo retrasa (IMPROVEMENT_PLAN.md M5).
         with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE events SET filing_text_attempts = filing_text_attempts + 1 WHERE event_id = %s",
-                (event_id,),
-            )
+            if definitivo:
+                cur.execute(
+                    "UPDATE events SET filing_text_attempts = GREATEST(filing_text_attempts + 1, %s) "
+                    "WHERE event_id = %s",
+                    (MAX_ATTEMPTS, event_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE events SET filing_text_attempts = filing_text_attempts + 1 WHERE event_id = %s",
+                    (event_id,),
+                )
         conn.commit()
 
     count = 0
     for row in pending:
         try:
             result = fetch_filing_text(row["source_url"], row["event_class"])
+        except PermanentHTTPError as exc:
+            logger.error(
+                "Evento %d: error permanente descargando el filing (%s) — no se reintenta",
+                row["event_id"], exc,
+            )
+            _fallo(row["event_id"], definitivo=True)
+            continue
         except RuntimeError:
             logger.exception("No se pudo descargar el filing del evento %d — se omite", row["event_id"])
             _fallo(row["event_id"])

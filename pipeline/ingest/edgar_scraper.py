@@ -37,7 +37,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from pipeline import config
-from pipeline.ingest.edgar_http import throttled_get, throttled_get_header
+from pipeline.ingest.edgar_http import PermanentHTTPError, throttled_get, throttled_get_header
 
 logger = logging.getLogger(__name__)
 
@@ -368,10 +368,21 @@ def scrape_day(day: date) -> list[RawFiling]:
     # sobrevivían hasta la base de datos. Con el parser del índice arreglado
     # aparecieron cientos de filings al día y aun así no llegaba ninguno —
     # imposible de localizar sin saber en cuál de los dos filtros caían.
-    sin_items, sin_clase, no_descargados = 0, 0, 0
+    sin_items, sin_clase, no_descargados, permanentes = 0, 0, 0, 0
     for row in rows:
         try:
             accession, item_codes, header_text = fetch_filing_item_codes(row["file_name"])
+        except PermanentHTTPError as exc:
+            # 404/403/400 — no es "mala suerte transitoria", es una URL rota o
+            # un filing que ya no existe. Se cuenta aparte de no_descargados
+            # (fallos tras agotar reintentos) porque mezclar ambos escondía
+            # justo la distinción que IMPROVEMENT_PLAN.md M5 pedía recuperar:
+            # muchos permanentes en el mismo día apuntan a archive_url() mal
+            # construida, no a que EDGAR esté fallando.
+            permanentes += 1
+            if permanentes <= 3:
+                logger.error("Saltando %s (error permanente): %s", row["file_name"], exc)
+            continue
         except RuntimeError as exc:
             no_descargados += 1
             if no_descargados <= 3:
@@ -418,29 +429,31 @@ def scrape_day(day: date) -> list[RawFiling]:
             )
         )
 
-    if no_descargados == len(rows) and rows:
+    if no_descargados + permanentes == len(rows) and rows:
         # NINGÚN filing se pudo descargar: eso no son documentos retirados ni
         # una racha de mala suerte, es la URL mal construida o EDGAR
         # rechazando al cliente. Es lo que pasó el 2026-09-15 (faltaba
         # /Archives/ en la ruta) y hay que distinguirlo del caso de abajo.
         logger.warning(
-            "%s: no se pudo descargar NINGUNO de los %d formularios 8-K — "
+            "%s: no se pudo descargar NINGUNO de los %d formularios 8-K "
+            "(%d permanentes, %d agotaron reintentos) — "
             "¿es correcta la URL que construye archive_url()?",
-            day.isoformat(), len(rows),
+            day.isoformat(), len(rows), permanentes, no_descargados,
         )
     elif rows and not filings:
         # Todos los 8-K del día descargados y ninguno sobrevive: eso no es
         # "scope", es un parser roto. Que se vea en el log como lo que es.
         logger.warning(
             "%s: %d formularios 8-K descargados y NINGUNO utilizable "
-            "(%d sin Items extraídos, %d sin clase de evento relevante, %d no descargados)",
-            day.isoformat(), len(rows), sin_items, sin_clase, no_descargados,
+            "(%d sin Items extraídos, %d sin clase de evento relevante, "
+            "%d no descargados, %d permanentes)",
+            day.isoformat(), len(rows), sin_items, sin_clase, no_descargados, permanentes,
         )
     else:
         logger.info(
             "%s: %d de %d formularios utilizables "
-            "(%d sin Items, %d sin clase relevante, %d no descargados)",
-            day.isoformat(), len(filings), len(rows), sin_items, sin_clase, no_descargados,
+            "(%d sin Items, %d sin clase relevante, %d no descargados, %d permanentes)",
+            day.isoformat(), len(filings), len(rows), sin_items, sin_clase, no_descargados, permanentes,
         )
     return filings
 
