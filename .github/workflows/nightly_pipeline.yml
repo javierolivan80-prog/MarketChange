@@ -279,9 +279,16 @@ jobs:
         # Calcula universe.market_cap_last_usd / adv_usd_60d /
         # in_investable_universe, que existían en el schema pero nunca se
         # rellenaban. El análisis con IA de más abajo usa esto para priorizar
-        # empresas grandes y no gastar en micro-caps. Barato (una sentencia
-        # SQL): corre en todas las pasadas. --list 25 deja en el log las 25
-        # mayores y cuántos eventos tienen pendientes.
+        # empresas grandes y no gastar en micro-caps.
+        #
+        # Solo en la pasada nocturna (IMPROVEMENT_PLAN.md M13): sus DOS únicos
+        # insumos, precios (yfinance_backfill) y cuentas (xbrl_fundamentals),
+        # son ellos mismos "solo nocturna" (ver esos pasos arriba) — no que
+        # correrlo intradía sea caro, es que recalcularía sobre EXACTAMENTE
+        # los mismos datos que ya tiene, dos veces al día, sin que el
+        # resultado pueda cambiar. --list 25 deja en el log las 25 mayores y
+        # cuántos eventos tienen pendientes.
+        if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.universe_maintenance --list 25
