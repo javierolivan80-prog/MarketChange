@@ -9,6 +9,7 @@ Cubre tres fallos reales encontrados en la auditoría de 2026-09-25:
 """
 from __future__ import annotations
 
+import math
 import os
 from datetime import date, timedelta
 from types import SimpleNamespace
@@ -64,14 +65,14 @@ def conn():
     with c.cursor() as cur:
         cur.execute(
             "TRUNCATE car_results, event_analyses, event_enrichment, events, prices, fundamentals, "
-            "quality_scores, universe RESTART IDENTITY CASCADE"
+            "quality_scores, universe, fama_french_factors RESTART IDENTITY CASCADE"
         )
     c.commit()
     yield c
     c.close()
 
 
-def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None):
+def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, history_days=290):
     last_day = last_day or date.today()
     with conn.cursor() as cur:
         cur.execute(
@@ -79,10 +80,38 @@ def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None):
             "VALUES (%s,%s,%s,'2024-01-01','2024-01-01')",
             (cik, ticker, f"{ticker} Inc"),
         )
-        for i in range(5):
+        # Histórico continuo (no solo 5 días sueltos), con fama_french_factors
+        # en la misma ventana — hallazgo de auditoría (R5): el pre-filtro
+        # objetivo pre-LLM ahora también comprueba iliquidez (high/low de D0 +
+        # ADV de los 60 días ANTERIORES) y disponibilidad del modelo de
+        # factores (beta_vs_spy, componente "a" del proxy de contradicción),
+        # y process_chunk/run_pipeline necesitan que ambos resuelvan a
+        # "disponible" para los tests que quieren probar la mecánica de
+        # reintentos del batch, no la de abstención. 290 días cubre de sobra
+        # el estimation_window de fit_factor_model ([-250,-30] respecto a
+        # cualquier D0 usado en este fichero) con margen. high/low a +-0.1%
+        # (spread ~0.2%, bajo SPREAD_CEILING_PCT=0.5%).
+        for i in range(history_days):
+            d = last_day - timedelta(days=i)
+            # Oscilación determinista con senoides de frecuencias distintas
+            # (no periodos enteros pequeños como i%5/i%7: esos generan
+            # relaciones lineales exactas entre mkt_rf/smb/hml/precio sobre
+            # una ventana de días entera, dejando la matriz de diseño de
+            # fit_factor_model exactamente rank-deficient — se encontró así,
+            # con SingularMatrixWarning real, al construir este fixture).
+            # i=0 (last_day, el más reciente) se deja EXACTO en `price`:
+            # varios tests comparan market_cap_last_usd/adv_usd_60d contra
+            # `price` sin tolerancia amplia.
+            day_price = price if i == 0 else price * (1 + 0.0006 * math.sin(i * 0.31))
             cur.execute(
-                "INSERT INTO prices (ticker, trade_date, close_raw, adj_factor, volume) VALUES (%s,%s,%s,1,%s)",
-                (ticker, last_day - timedelta(days=i), price, volume),
+                "INSERT INTO prices (ticker, trade_date, close_raw, high_raw, low_raw, adj_factor, volume) "
+                "VALUES (%s,%s,%s,%s,%s,1,%s)",
+                (ticker, d, day_price, day_price * 1.001, day_price * 0.999, volume),
+            )
+            cur.execute(
+                "INSERT INTO fama_french_factors (trade_date, mkt_rf, smb, hml, rf) VALUES (%s,%s,%s,%s,%s) "
+                "ON CONFLICT (trade_date) DO NOTHING",
+                (d, 0.0003 + 0.0002 * math.sin(i * 0.17), 0.0002 * math.sin(i * 0.53), -0.0002 * math.sin(i * 0.71), 0.00005),
             )
         if shares is not None:
             cur.execute(
@@ -126,7 +155,10 @@ def test_refresh_universe_metrics_calcula_cap_y_flag(conn):
         cur.execute("SELECT ticker, market_cap_last_usd, adv_usd_60d, in_investable_universe FROM universe ORDER BY cik")
         rows = {r["ticker"]: r for r in cur.fetchall()}
     assert float(rows["BIG"]["market_cap_last_usd"]) == pytest.approx(100e9)
-    assert float(rows["BIG"]["adv_usd_60d"]) == pytest.approx(100e6)
+    # rel=0.01: _empresa ahora varía el precio histórico día a día (ver su
+    # docstring) para que fit_factor_model no degenere — el promedio de 60
+    # días ya no es EXACTO a price*volume, solo aproximado.
+    assert float(rows["BIG"]["adv_usd_60d"]) == pytest.approx(100e6, rel=0.01)
     assert rows["BIG"]["in_investable_universe"] is True
     assert rows["SMALL"]["in_investable_universe"] is False
     assert rows["NOSHARES"]["in_investable_universe"] is False

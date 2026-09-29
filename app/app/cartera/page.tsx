@@ -167,6 +167,11 @@ export default async function CarteraPage() {
                         ? `¿Coincide con el histórico? ${v.comparison_with_historical_backtest.matches_historical ? "Sí" : "No"} (esta semana ${((v.comparison_with_historical_backtest.week_win_rate ?? 0) * 100).toFixed(0)}% vs histórico ${((v.comparison_with_historical_backtest.historical_win_rate ?? 0) * 100).toFixed(0)}%)`
                         : v.comparison_with_historical_backtest.note ?? "Sin histórico con qué comparar todavía."}
                     </p>
+                    {v.comparison_with_historical_backtest.caveat && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                        ⚠ {v.comparison_with_historical_backtest.caveat}
+                      </p>
+                    )}
                   </div>
                 );
               })}

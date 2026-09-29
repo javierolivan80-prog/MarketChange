@@ -327,3 +327,26 @@ class TestPopulateAgainstRealPostgres:
             rows = {r["event_id"]: r["ok"] for r in cur.fetchall()}
         assert rows[reciente] is True
         assert rows[antiguo] is False
+
+    def test_un_error_permanente_salta_directo_a_max_attempts(self, monkeypatch):
+        """IMPROVEMENT_PLAN.md M5: un 404/403/400 no es mala suerte transitoria
+        — reintentarlo 3 noches seguidas no cambia el resultado. Con
+        PermanentHTTPError, el evento se aparta de la cola en la PRIMERA
+        pasada en vez de necesitar MAX_ATTEMPTS intentos."""
+        from pipeline.ingest import filing_text
+        from pipeline.ingest.edgar_http import PermanentHTTPError
+
+        malo = self._seed_event()
+
+        def _get(url, **kw):
+            raise PermanentHTTPError("404 en " + url)
+
+        monkeypatch.setattr("pipeline.ingest.filing_text.throttled_get", _get)
+        assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT filing_text_attempts FROM events WHERE event_id = %s", (malo,))
+            row = cur.fetchone()
+        assert row["filing_text_attempts"] == filing_text.MAX_ATTEMPTS
+        # Ya no aparece en la cola pendiente — no hace falta gastar más intentos.
+        assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0

@@ -48,6 +48,7 @@ import json
 import logging
 from datetime import date
 
+from pipeline.ingest.cik import normalize_cik
 from pipeline.ingest.edgar_http import throttled_get
 
 logger = logging.getLogger(__name__)
@@ -125,28 +126,6 @@ def _extract_concept_by_period(facts: dict, concept: str) -> dict[date, tuple[da
     return {}
 
 
-def normalizar_cik(cik) -> str:
-    """CIK en la forma canónica del proyecto: dígitos sin ceros a la izquierda.
-
-    BUG REAL (2026-09-15, run 34943861450). La tabla universe guarda el CIK
-    como viene del daily-index, sin rellenar ('1119190'). La API de
-    companyfacts lo devuelve rellenado a 10 dígitos ('0001119190'). Son la
-    misma empresa y para Postgres son dos cadenas distintas:
-
-        insert or update on table "fundamentals" violates foreign key
-        constraint "fundamentals_cik_fkey"
-        DETAIL: Key (cik)=(0001119190) is not present in table "universe".
-
-    Cualquier sitio donde un CIK cruce la frontera entre dos fuentes tiene que
-    pasar por aquí. El CIK se usa además como clave ajena contra universe, así
-    que una diferencia de formato no da un dato raro: rompe la inserción.
-    """
-    texto = str(cik).strip().upper().removeprefix("CIK").lstrip("0")
-    if not texto.isdigit():
-        raise ValueError(f"CIK con formato inesperado: {cik!r}")
-    return texto
-
-
 def parse_company_facts(facts: dict, cik: str | None = None) -> list[dict]:
     """Convierte el JSON de companyfacts en una fila por ejercicio.
 
@@ -168,8 +147,8 @@ def parse_company_facts(facts: dict, cik: str | None = None) -> list[dict]:
     if cik_facts is None and cik is None:
         raise ValueError("companyfacts sin campo 'cik'")
     # Se prefiere el CIK con el que se PIDIÓ la descarga (el de universe) sobre
-    # el que devuelve la API: ver normalizar_cik.
-    cik_fila = normalizar_cik(cik if cik is not None else cik_facts)
+    # el que devuelve la API: ver pipeline.ingest.cik.normalize_cik.
+    cik_fila = normalize_cik(cik if cik is not None else cik_facts)
 
     per_concept = {concept: _extract_concept_by_period(facts, concept) for concept in _CONCEPT_TAGS}
 

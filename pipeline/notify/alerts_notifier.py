@@ -63,6 +63,7 @@ def notify_new_alerts(conn) -> int:
     run_batch_tag = report_row["run_batch_tag"]
     report = report_row["report_json"]
     sent = 0
+    lost = []  # IMPROVEMENT_PLAN.md M15: visibilidad de lo que se reclama y no llega a enviarse
     for version, v_report in report.get("versions", {}).items():
         for alert in v_report.get("alerts", []):
             notification_id = _notification_id(run_batch_tag, version, alert)
@@ -77,9 +78,23 @@ def notify_new_alerts(conn) -> int:
                 # envío falle: es preferible perder un aviso puntual (poco
                 # frecuente, se ve igualmente en el dashboard) a arriesgarse a
                 # reenviar la misma alert cada noche por un fallo de red
-                # recurrente en un chat_id roto.
-                logger.warning("No se pudo enviar alert %s", notification_id)
-    logger.info("Alerts de paper trading notificadas: %d", sent)
+                # recurrente en un chat_id roto. send_message ya reintenta
+                # los fallos transitorios (ver telegram.py) — si sigue
+                # fallando aquí es porque de verdad se agotaron los
+                # reintentos o el error era permanente.
+                lost.append(notification_id)
+                logger.warning("No se pudo enviar alert %s (reclamada, no se reintentará)", notification_id)
+    if lost:
+        # Resumen agregado, no solo el warning por alert de arriba — mismo
+        # patrón que xbrl_fundamentals.ingest_universe_fundamentals: un
+        # recuento al final es lo que de verdad hace visible "cuántas se
+        # están perdiendo", no una línea de log suelta por evento que hay
+        # que contar a mano en la salida de GitHub Actions.
+        logger.warning(
+            "%d alert(s) de paper trading reclamadas pero NO enviadas (perdidas para siempre, no se reintentan): %s",
+            len(lost), ", ".join(lost),
+        )
+    logger.info("Alerts de paper trading notificadas: %d enviadas, %d perdidas", sent, len(lost))
     return sent
 
 
