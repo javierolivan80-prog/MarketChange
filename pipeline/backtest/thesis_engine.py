@@ -69,6 +69,7 @@ from datetime import date
 import numpy as np
 
 from pipeline import config
+from pipeline.analyze.abstention_engine import CONFIDENCE_FLOOR, CONTRADICTION_CONFIDENCE_FLOOR
 
 
 @dataclass
@@ -202,17 +203,20 @@ def _direction_sign(direction: str) -> float:
 
 def classify_blind_judgment_contradiction(direction: str, net_conviction: float, confidence_in_conviction: float) -> str | None:
     """None si no contradice. 'STRONG' o 'MILD' según el umbral de confianza
-    (ver config.THESIS_CONTRADICTION_CONFIDENCE_FLOOR /
-    THESIS_MILD_CONTRADICTION_CONFIDENCE_FLOOR). Solo cuenta como
+    — reutiliza abstention_engine.CONTRADICTION_CONFIDENCE_FLOOR /
+    CONFIDENCE_FLOOR POR REFERENCIA (IMPROVEMENT_PLAN.md M3: antes eran
+    literales independientes en config.py con el mismo valor por
+    coincidencia, no por diseño — nada garantizaba que se mantuvieran
+    sincronizados si uno de los dos cambiaba). Solo cuenta como
     contradicción si el signo de net_conviction es OPUESTO a la dirección de
     la tesis — un juicio ciego que confirma con menos fuerza no es una
     contradicción, es una tesis más débil pero no invalidada."""
     contradicts_direction = (_direction_sign(direction) * net_conviction) < 0
     if not contradicts_direction:
         return None
-    if confidence_in_conviction >= config.THESIS_CONTRADICTION_CONFIDENCE_FLOOR:
+    if confidence_in_conviction >= CONTRADICTION_CONFIDENCE_FLOOR:
         return "STRONG"
-    if confidence_in_conviction >= config.THESIS_MILD_CONTRADICTION_CONFIDENCE_FLOOR:
+    if confidence_in_conviction >= CONFIDENCE_FLOOR:
         return "MILD"
     return None
 
