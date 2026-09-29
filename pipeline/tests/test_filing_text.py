@@ -13,6 +13,7 @@ import pytest
 
 from pipeline.ingest.filing_text import (
     MAX_TEXT_CHARS,
+    _truncate_at_sentence_boundary,
     extract_best_text,
     parse_submission_documents,
     strip_html_to_text,
@@ -119,6 +120,43 @@ def test_extract_best_text_truncates_to_max_chars():
     huge_doc = [{"type": "8-K", "sequence": 1, "filename": "x.htm", "raw_text": "A" * (MAX_TEXT_CHARS * 3)}]
     result = extract_best_text(huge_doc, prefer_exhibit=False)
     assert result["length_chars"] <= MAX_TEXT_CHARS
+
+
+# ---------------------------------------------------------------------------
+# _truncate_at_sentence_boundary (IMPROVEMENT_PLAN.md M8)
+# ---------------------------------------------------------------------------
+
+
+def test_truncate_at_sentence_boundary_no_corta_si_ya_cabe():
+    assert _truncate_at_sentence_boundary("Frase corta.", 100) == "Frase corta."
+
+
+def test_truncate_at_sentence_boundary_corta_en_el_ultimo_punto():
+    texto = "Primera frase. Segunda frase. Tercera frase que se pasa del límite."
+    limite = len("Primera frase. Segunda frase.") + 5  # cae a mitad de la tercera
+    resultado = _truncate_at_sentence_boundary(texto, limite)
+    assert resultado == "Primera frase. Segunda frase."
+
+
+def test_truncate_at_sentence_boundary_reconoce_exclamacion_e_interrogacion():
+    assert _truncate_at_sentence_boundary("¿Todo bien? Sí. Más texto de sobra aquí", 15) == "¿Todo bien? Sí."
+
+
+def test_truncate_at_sentence_boundary_sin_puntuacion_cercana_cae_al_corte_duro():
+    """Un bloque largo sin fin de frase (p. ej. una tabla de cifras) no debe
+    perder más de la mitad del presupuesto buscando un punto que no está."""
+    texto = "1234567890" * 200  # sin ningún '.', '!' o '?'
+    resultado = _truncate_at_sentence_boundary(texto, 100)
+    assert resultado == texto[:100]
+    assert len(resultado) == 100
+
+
+def test_truncate_at_sentence_boundary_ignora_un_punto_demasiado_lejos_del_limite():
+    """Un punto que deja más de la mitad del presupuesto sin usar no cuenta
+    como un buen corte — mejor el corte duro que tirar la mayoría del texto."""
+    texto = "X. " + ("Y" * 200)  # el único punto está casi al principio
+    resultado = _truncate_at_sentence_boundary(texto, 100)
+    assert resultado == texto[:100]
 
 
 def test_extract_best_text_falls_back_to_first_when_no_sequence_present():
