@@ -4,7 +4,9 @@ No se puede descargar company_tickers.json en este sandbox (egress bloqueado
 a www.sec.gov). Se prueba la lógica de inversión del mapa contra un JSON de
 muestra con la misma forma que el fichero real.
 """
-import json
+import pytest
+
+from pipeline.ingest import ticker_map
 
 SAMPLE_RAW = {
     "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
@@ -19,17 +21,30 @@ def test_inversion_strips_leading_zeros_consistently():
     assert mapping["1045810"] == "NVDA"
 
 
-def test_resolve_matches_edgar_zero_padded_cik_format():
+@pytest.fixture
+def _mapa_de_muestra(monkeypatch):
+    """Sustituye get_ticker_map() por el mapa de muestra, sin tocar la caché
+    real en disco/memoria ni hacer red — resolve() en sí no se toca, así que
+    esto SÍ ejercita su lógica real de normalización de CIK."""
+    mapping = {str(entry["cik_str"]): entry["ticker"] for entry in SAMPLE_RAW.values()}
+    monkeypatch.setattr(ticker_map, "get_ticker_map", lambda force_refresh=False: mapping)
+    return mapping
+
+
+def test_resolve_matches_edgar_zero_padded_cik_format(_mapa_de_muestra):
     """El .idx de EDGAR trae CIKs con ceros a la izquierda (ej '0000320193').
     resolve() debe despojarlos antes de buscar en el mapa (construido sin ceros).
-    """
-    from pipeline.ingest.ticker_map import get_ticker_map
 
-    mapping = {str(entry["cik_str"]): entry["ticker"] for entry in SAMPLE_RAW.values()}
+    REGRESIÓN DE CALIDAD DE TEST (IMPROVEMENT_PLAN.md Q7): la versión
+    anterior de este test definía y llamaba una función local
+    `resolve_against()` que reimplementaba a mano la misma lógica de
+    `resolve()` en vez de importar y llamar la función real — podía pasar
+    con un `resolve()` real roto, con solo confirmar que la copia local
+    (que nadie edita cuando el original cambia) seguía teniendo razón."""
+    assert ticker_map.resolve("0000320193") == "AAPL"
+    assert ticker_map.resolve("320193") == "AAPL"
+    assert ticker_map.resolve("0000000000") is None
 
-    def resolve_against(cik: str, m: dict) -> str | None:
-        return m.get(cik.lstrip("0") or "0")
 
-    assert resolve_against("0000320193", mapping) == "AAPL"
-    assert resolve_against("320193", mapping) == "AAPL"
-    assert resolve_against("0000000000", mapping) is None
+def test_resolve_un_cik_que_no_esta_en_el_mapa_devuelve_none(_mapa_de_muestra):
+    assert ticker_map.resolve("9999999") is None
