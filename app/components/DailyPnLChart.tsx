@@ -10,7 +10,7 @@ import type { PaperClosedTrade } from "@/lib/queries";
 
 export function DailyPnLChart({ trades }: { trades: PaperClosedTrade[] }) {
   if (trades.length === 0) {
-    return <div className="text-sm text-neutral-500 italic h-40 flex items-center justify-center">Sin trades cerrados esta semana.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin trades cerrados esta semana.</div>;
   }
 
   const byDate = new Map<string, number>();

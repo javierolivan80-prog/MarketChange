@@ -1,14 +1,26 @@
 import type { Metadata } from "next";
 import "./globals.css";
-
-// Sin Google Fonts: una dependencia de red en build time es una fuente de
-// fragilidad innecesaria para un dashboard de POC (mismo principio "lean"
-// que el resto del proyecto — ver ARCHITECTURE_LEAN.md). Fuente del sistema.
+import { Disclaimer } from "@/components/ui/Disclaimer";
 
 export const metadata: Metadata = {
-  title: "Money — Panel",
-  description: "Panel de solo lectura: eventos detectados, análisis y resultados simulados",
+  title: "MarketChange — Panel",
+  description: "Señales event-driven: análisis Bull/Bear/Judge, event study por clase, backtest y memoria de tesis.",
 };
+
+// Script sin-flash: fija la clase .dark en <html> ANTES del primer pintado,
+// a partir de la preferencia guardada o, si no hay ninguna, del sistema.
+// Sin esto, con dark mode manual (ver ThemeToggle.tsx) la página siempre
+// arrancaría en claro y "saltaría" a oscuro tras hidratar — un parpadeo que
+// en un producto que aspira a verse serio se nota de inmediato.
+const THEME_INIT_SCRIPT = `
+(function () {
+  try {
+    var stored = localStorage.getItem("theme");
+    var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.classList.toggle("dark", dark);
+  } catch (e) {}
+})();
+`;
 
 export default function RootLayout({
   children,
@@ -16,8 +28,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
-      <body className="antialiased font-sans">{children}</body>
+    <html lang="es" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
+      <body className="antialiased font-sans">
+        <Disclaimer />
+        {children}
+      </body>
     </html>
   );
 }

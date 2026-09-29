@@ -141,9 +141,9 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
   return (
     <button
       onClick={handleExport}
-      className="border border-neutral-900 dark:border-neutral-100 rounded px-3 py-1.5 text-sm hover:bg-neutral-900 hover:text-white dark:hover:bg-neutral-100 dark:hover:text-neutral-900 transition-colors"
+      className="rounded border border-border-strong px-3 py-1.5 text-sm text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
     >
-      Download backtest report (PDF)
+      Exportar informe (PDF)
     </button>
   );
 }

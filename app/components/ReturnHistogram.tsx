@@ -11,7 +11,7 @@ const N_BINS = 10;
 
 export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
   if (pnlPcts.length === 0) {
-    return <div className="text-sm text-neutral-500 italic h-40 flex items-center justify-center">Sin trades todavía.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin trades todavía.</div>;
   }
 
   const min = Math.min(...pnlPcts);
@@ -41,7 +41,7 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
           />
           <Bar dataKey="count">
             {bins.map((b, i) => (
-              <Cell key={i} fill={b.hi <= 0 ? "#dc2626" : b.lo >= 0 ? "#16a34a" : "#9ca3af"} />
+              <Cell key={i} fill={b.hi <= 0 ? "#dc2626" : b.lo >= 0 ? "#16a34a" : "var(--border-strong)"} />
             ))}
           </Bar>
         </BarChart>
