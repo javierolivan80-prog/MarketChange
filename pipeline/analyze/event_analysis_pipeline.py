@@ -39,7 +39,7 @@ from pipeline.analyze.adversarial_analyzer import (
     build_bull_bear_batch,
     build_judge_batch,
     custom_id_de,
-    get_cached_analysis,
+    get_cached_analyses_batch,
     run_batch_and_collect,
     validar_salida_judge,
 )
@@ -234,14 +234,8 @@ def process_chunk(conn, client, event_rows: list[dict]):
     que quedarse con lo que devuelve esta función, no seguir usando la
     conexión original a ciegas.
     """
-    cache_hits: dict[int, dict] = {}
-    needs_llm: list[dict] = []
-    for ev in event_rows:
-        cached = get_cached_analysis(conn, ev["ticker"], ev["event_class"], ev["d0_close_date"])
-        if cached:
-            cache_hits[ev["event_id"]] = cached
-        else:
-            needs_llm.append(ev)
+    cache_hits = get_cached_analyses_batch(conn, event_rows)
+    needs_llm = [ev for ev in event_rows if ev["event_id"] not in cache_hits]
 
     # Pre-filtro de condiciones objetivas (Etapa 2 + Etapa 8, adelantadas —
     # hallazgo de auditoría IMPROVEMENT_PLAN.md R5, extiende el pre-filtro

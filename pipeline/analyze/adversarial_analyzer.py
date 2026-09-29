@@ -351,6 +351,55 @@ def get_cached_analysis(conn, ticker: str, event_class: str, as_of: date, within
         return cur.fetchone()
 
 
+def get_cached_analyses_batch(
+    conn, event_rows: list[dict], within_hours: int = CACHE_WINDOW_HOURS
+) -> dict[int, dict]:
+    """Igual que get_cached_analysis, pero para un lote entero en UNA sola
+    consulta (IMPROVEMENT_PLAN.md M2) — antes process_chunk() llamaba a
+    get_cached_analysis() una vez POR EVENTO en un bucle Python: un
+    round-trip de red a Postgres por evento en vez de por lote, el mismo
+    patrón N+1 que ya se corrigió en otros sitios del proyecto por el mismo
+    motivo (ver fama_french.store_factors).
+
+    event_rows: filas con 'event_id', 'ticker', 'event_class', 'd0_close_date'
+    (la forma de fetch_events_needing_analysis()). Devuelve
+    {event_id: fila_de_event_analyses} solo para los que sí tienen un hit de
+    caché — un event_id ausente del dict resultante es un miss, igual que
+    get_cached_analysis devolviendo None.
+
+    Cada fila de event_rows puede tener su propio 'as_of' (d0_close_date), así
+    que la ventana BETWEEN de CACHE_MAX_D0_GAP_DAYS se evalúa POR FILA dentro
+    del propio SQL, no con un único rango global — mismo criterio exacto que
+    la versión de una sola fila, no una aproximación."""
+    if not event_rows:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH candidates (event_id, ticker, event_class, as_of) AS (
+                SELECT * FROM unnest(%(event_ids)s::int[], %(tickers)s::text[],
+                                      %(event_classes)s::text[], %(as_ofs)s::date[])
+            )
+            SELECT DISTINCT ON (c.event_id) c.event_id AS request_event_id, ea.*
+            FROM candidates c
+            JOIN events e ON e.ticker = c.ticker AND e.event_class = c.event_class
+            JOIN event_analyses ea ON ea.event_id = e.event_id
+            WHERE ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
+              AND e.d0_close_date BETWEEN c.as_of - %(gap)s AND c.as_of
+            ORDER BY c.event_id, ea.analyzed_at DESC
+            """,
+            {
+                "event_ids": [ev["event_id"] for ev in event_rows],
+                "tickers": [ev["ticker"] for ev in event_rows],
+                "event_classes": [ev["event_class"] for ev in event_rows],
+                "as_ofs": [ev["d0_close_date"] for ev in event_rows],
+                "hours": within_hours,
+                "gap": CACHE_MAX_D0_GAP_DAYS,
+            },
+        )
+        return {row["request_event_id"]: row for row in cur.fetchall()}
+
+
 if __name__ == "__main__":
     import argparse
 
