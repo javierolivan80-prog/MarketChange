@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import math
 from datetime import date, datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE
 from pipeline.backtest.sensitivity import run_sensitivity_analysis
 from pipeline.validation.decision import generate_decision
 from pipeline.validation.event_study import run_event_study
+
+logger = logging.getLogger(__name__)
 
 
 def _json_safe(obj):
@@ -44,6 +47,30 @@ VERSION_ORDER = ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")
 _OPTION_RANK = {"A": 0, "B": 1, "C": 2}  # A es mejor -> rank más bajo
 
 
+def _safe_get(d: dict, key: str, default, context: str):
+    """d.get(key, default), pero logueando un warning si la clave falta.
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md M18): varias funciones de
+    este módulo indexaban directamente (`v["clave"]`) sobre un
+    portfolio_report que en el camino `--persist-only` (persist_validation_report,
+    reutilizado del backtest de la MISMA corrida) puede venir de vuelta de
+    Postgres, no de memoria — un JSONB leído tal cual. Cualquier drift de
+    esquema entre cuándo se guardó y cuándo se lee (un campo renombrado, una
+    versión persistida antes de añadir una métrica nueva) tumbaba la
+    generación COMPLETA del reporte con un KeyError, incluidas las partes
+    que no dependían del campo que faltaba.
+
+    Degradar en silencio a `default` sin decir nada sería cambiar un fallo
+    ruidoso por uno mudo — peor, no mejor: nadie se enteraría de que el dato
+    que faltaba faltaba. De ahí el warning: el reporte se sigue generando
+    (con `default` donde toque, casi siempre None, que _fmt_pct/_fmt_num/
+    generate_decision ya tratan como "no lo sabemos", nunca como "sí" o
+    cero), pero queda constancia en el log de qué faltó y dónde."""
+    if key not in d:
+        logger.warning("Falta '%s' en %s — se usa %r (posible drift de esquema)", key, context, default)
+    return d.get(key, default)
+
+
 def evaluate_all_versions_decision(portfolio_report: dict) -> dict[str, dict]:
     """generate_decision() por versión — usa la calibración de la Fase 3
     (1-|predicho-real|/|predicho|, la misma que se muestra en el resto del
@@ -56,15 +83,19 @@ def evaluate_all_versions_decision(portfolio_report: dict) -> dict[str, dict]:
         v = portfolio_report["versions"].get(version)
         if not v:
             continue
+        ctx = f"portfolio_report.versions.{version}"
+        trade_metrics = _safe_get(v, "trade_metrics", {}, ctx)
+        equity_metrics = _safe_get(v, "equity_metrics", {}, ctx)
+        calibration = _safe_get(v, "calibration", {}, ctx)
         stability = v.get("temporal_stability")
         decisions[version] = generate_decision(
-            win_rate=v["trade_metrics"]["win_rate"],
-            sharpe=v["equity_metrics"]["sharpe_ratio"],
-            calibration_score=v["calibration"]["calibration_score"],
-            max_drawdown=v["equity_metrics"]["max_drawdown"],
-            n_trades=v["trade_metrics"]["total_trades"],
+            win_rate=_safe_get(trade_metrics, "win_rate", None, f"{ctx}.trade_metrics"),
+            sharpe=_safe_get(equity_metrics, "sharpe_ratio", None, f"{ctx}.equity_metrics"),
+            calibration_score=_safe_get(calibration, "calibration_score", None, f"{ctx}.calibration"),
+            max_drawdown=_safe_get(equity_metrics, "max_drawdown", None, f"{ctx}.equity_metrics"),
+            n_trades=_safe_get(trade_metrics, "total_trades", 0, f"{ctx}.trade_metrics"),
             walk_forward_passed=stability["stable"] if stability else None,
-            no_lookahead_violations=v["no_lookahead_violations"],
+            no_lookahead_violations=_safe_get(v, "no_lookahead_violations", [], ctx),
         )
     return decisions
 
@@ -141,11 +172,14 @@ def _backtest_table(portfolio_report: dict) -> str:
         v = portfolio_report["versions"].get(version)
         if not v:
             continue
-        em, tm = v["equity_metrics"], v["trade_metrics"]
-        rec = "YES" if (tm["win_rate"] or 0) > 0.55 and (em["sharpe_ratio"] or 0) > 1.0 else "NO"
+        ctx = f"portfolio_report.versions.{version}"
+        em = _safe_get(v, "equity_metrics", {}, ctx)
+        tm = _safe_get(v, "trade_metrics", {}, ctx)
+        win_rate, sharpe = tm.get("win_rate"), em.get("sharpe_ratio")
+        rec = "YES" if (win_rate or 0) > 0.55 and (sharpe or 0) > 1.0 else "NO"
         lines.append(
-            f"| {version} | {_fmt_pct(em['total_return'])} | {_fmt_num(em['sharpe_ratio'])} | "
-            f"{_fmt_pct(em['max_drawdown'])} | {_fmt_pct(tm['win_rate'])} | {tm['total_trades']} | {rec} |"
+            f"| {version} | {_fmt_pct(em.get('total_return'))} | {_fmt_num(sharpe)} | "
+            f"{_fmt_pct(em.get('max_drawdown'))} | {_fmt_pct(win_rate)} | {tm.get('total_trades', 0)} | {rec} |"
         )
     return "\n".join(lines)
 
@@ -203,14 +237,17 @@ def render_validation_report_markdown(
         v = portfolio_report["versions"].get(version)
         if not v:
             continue
-        for t in v["top_10_winners"][:10] + v["top_10_losers"][:10]:
+        ctx = f"portfolio_report.versions.{version}"
+        winners = _safe_get(v, "top_10_winners", [], ctx)
+        losers = _safe_get(v, "top_10_losers", [], ctx)
+        for t in winners[:10] + losers[:10]:
             top_trades.append({**t, "version": version})
-    top_trades_sorted = sorted(top_trades, key=lambda t: t["pnl_pct"], reverse=True)
+    top_trades_sorted = sorted(top_trades, key=lambda t: t.get("pnl_pct", 0.0), reverse=True)
     top_20 = top_trades_sorted[:10] + top_trades_sorted[-10:]
 
     appendix_rows = "\n".join(
         f"| {t['version']} | {t.get('ticker', '—')} | {(t.get('event_class') or '').replace('8K_', '')} | "
-        f"{t['exit_reason']} | {t['pnl_pct']:+.2f}% |"
+        f"{t.get('exit_reason', '—')} | {t.get('pnl_pct', 0.0):+.2f}% |"
         for t in top_20
     )
 
