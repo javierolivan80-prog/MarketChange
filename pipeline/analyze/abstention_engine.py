@@ -130,11 +130,21 @@ def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDe
     ev = inputs.ev_by_strategy[strategy]
     strategy_threshold = EV_THRESHOLDS[strategy]
     buffered_threshold = strategy_threshold + EV_ABSTENTION_BUFFER
-    if ev < buffered_threshold:
+    # IMPROVEMENT_PLAN.md R16: ev_engine.compute_ev propaga el SIGNO de
+    # net_conviction (negativo para una convicción bajista) — es el valor
+    # esperado de una posición LARGA, no el de la operación que de verdad se
+    # ejecutaría. Comparar el ev CON SIGNO contra un umbral siempre positivo
+    # vetaba TODO SHORT sin importar la convicción: una convicción bajista
+    # fuerte da un ev muy negativo, que nunca supera un umbral positivo. Lo
+    # que hay que comparar contra el umbral es la magnitud del EV en la
+    # dirección que realmente se tomaría (LONG si net_conviction>0, SHORT si
+    # no) — que es abs(ev), no ev. position_size_pct() de abajo ya usa
+    # abs(ev) por el mismo motivo.
+    if abs(ev) < buffered_threshold:
         return AbstentionDecision(
             "NO_TRADE",
-            f"ev={ev * 100:.2f}% < umbral {strategy.lower()} ({strategy_threshold * 100:.1f}%) + buffer 50bps "
-            f"= {buffered_threshold * 100:.2f}% (EV negativo hasta después de fees)",
+            f"|ev|={abs(ev) * 100:.2f}% < umbral {strategy.lower()} ({strategy_threshold * 100:.1f}%) + buffer 50bps "
+            f"= {buffered_threshold * 100:.2f}% (EV insuficiente hasta después de fees)",
             inputs.confidence_in_conviction,
         )
 

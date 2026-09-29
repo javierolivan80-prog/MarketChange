@@ -69,13 +69,77 @@ def test_rule_3_ev_below_buffered_threshold_per_strategy():
     just_above_raw = EV_THRESHOLDS["BALANCED"] + 0.0010  # +10bps sobre el umbral crudo, insuficiente con el buffer de 50bps
     decision = decide_for_strategy(_clean_inputs(ev_by_strategy={"CONSERVATIVE": 0.05, "BALANCED": just_above_raw, "AGGRESSIVE": 0.05}), "BALANCED")
     assert decision.trade_decision == "NO_TRADE"
-    assert "ev=" in decision.reason_if_no_trade
+    assert "|ev|=" in decision.reason_if_no_trade
 
 
 def test_rule_3_ev_above_buffered_threshold_trades():
     comfortably_above = EV_THRESHOLDS["BALANCED"] + 0.0200
     decision = decide_for_strategy(_clean_inputs(ev_by_strategy={"CONSERVATIVE": 0.05, "BALANCED": comfortably_above, "AGGRESSIVE": 0.05}), "BALANCED")
     assert decision.trade_decision in ("LONG", "SHORT")
+
+
+def test_rule_3_un_ev_muy_negativo_de_magnitud_suficiente_no_se_abstiene():
+    """REGRESIÓN (IMPROVEMENT_PLAN.md R16): ev_engine.compute_ev da al EV el
+    SIGNO de net_conviction (negativo para una convicción bajista/SHORT).
+    Comparar ese ev con signo contra un umbral siempre positivo vetaba TODO
+    SHORT sin importar la convicción — un ev muy negativo nunca superaba un
+    umbral positivo. La regla 3 debe mirar la MAGNITUD del EV en la
+    dirección que se tomaría, no su signo."""
+    ev_negativo_grande = -(EV_THRESHOLDS["BALANCED"] + 0.0200)
+    decision = decide_for_strategy(
+        _clean_inputs(
+            net_conviction=-0.8,
+            ev_by_strategy={"CONSERVATIVE": ev_negativo_grande, "BALANCED": ev_negativo_grande, "AGGRESSIVE": ev_negativo_grande},
+        ),
+        "BALANCED",
+    )
+    assert decision.trade_decision == "SHORT"
+
+
+def test_rule_3_un_ev_negativo_pero_pequeno_si_se_abstiene():
+    """El signo no debe volverse irrelevante del todo: un EV negativo cuya
+    MAGNITUD no supera el umbral (SHORT débil) sigue siendo NO_TRADE, igual
+    que un LONG débil."""
+    ev_negativo_pequeno = -(EV_THRESHOLDS["BALANCED"] + 0.0010)  # magnitud insuficiente con el buffer
+    decision = decide_for_strategy(
+        _clean_inputs(
+            net_conviction=-0.1,
+            ev_by_strategy={"CONSERVATIVE": ev_negativo_pequeno, "BALANCED": ev_negativo_pequeno, "AGGRESSIVE": ev_negativo_pequeno},
+        ),
+        "BALANCED",
+    )
+    assert decision.trade_decision == "NO_TRADE"
+
+
+def test_integracion_ev_engine_con_abstention_engine_permite_short_con_conviccion_fuerte():
+    """Integración real de punta a punta (Judge -> compute_ev ->
+    decide_for_strategy), no el ev_by_strategy fijo y desconectado de
+    _clean_inputs: es justo el hueco de cobertura que dejó pasar R16 sin
+    detectarse — el test unitario de 'SHORT' pasaba con un EV positivo que
+    compute_ev jamás produciría para una convicción bajista."""
+    from pipeline.analyze.ev_engine import compute_ev
+
+    ev_result = compute_ev(
+        net_conviction=-0.9,
+        confidence_in_conviction=90.0,
+        expected_magnitude_pct=5.0,
+        impact_confidence=90.0,
+    )
+    assert ev_result.ev_balanced < 0  # compute_ev sí propaga el signo bajista
+
+    decision = decide_for_strategy(
+        _clean_inputs(
+            net_conviction=-0.9,
+            confidence_in_conviction=90.0,
+            ev_by_strategy={
+                "CONSERVATIVE": ev_result.ev_conservative,
+                "BALANCED": ev_result.ev_balanced,
+                "AGGRESSIVE": ev_result.ev_aggressive,
+            },
+        ),
+        "BALANCED",
+    )
+    assert decision.trade_decision == "SHORT"
 
 
 def test_rule_4_survivorship_warning():
