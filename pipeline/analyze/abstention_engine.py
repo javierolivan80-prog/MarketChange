@@ -99,20 +99,69 @@ def _is_contradictory(inputs: AbstentionInputs) -> bool:
     return factor_model_conflict or judge_split_decision
 
 
-def _illiquid_reason(inputs: AbstentionInputs) -> str | None:
+def _illiquid_reason(high_low_range_pct: float | None, adv_usd_60d: float | None) -> str | None:
     """Proxy de liquidez con DOS componentes (ver nota 1 del docstring del
     módulo) — cualquiera de los dos basta, mismo patrón que
     _is_contradictory. Devuelve el motivo si es ilíquido, None si pasa
-    ambos componentes."""
-    if inputs.high_low_range_pct is None:
+    ambos componentes.
+
+    Recibe los dos floats directamente (no un AbstentionInputs completo) a
+    propósito: ninguno de los dos depende del Judge, así que
+    objective_no_trade_reason() también la llama, antes de que exista un
+    AbstentionInputs completo (antes de invocar Bull/Bear/Judge siquiera) —
+    ver su docstring."""
+    if high_low_range_pct is None:
         return "sin datos de high/low para estimar liquidez (proxy de spread no disponible)"
-    if inputs.high_low_range_pct > SPREAD_CEILING_PCT:
-        return f"proxy de spread (high-low)/close={inputs.high_low_range_pct:.2f}% > {SPREAD_CEILING_PCT}% (ilíquido)"
-    if inputs.adv_usd_60d is None:
+    if high_low_range_pct > SPREAD_CEILING_PCT:
+        return f"proxy de spread (high-low)/close={high_low_range_pct:.2f}% > {SPREAD_CEILING_PCT}% (ilíquido)"
+    if adv_usd_60d is None:
         return "sin datos de volumen suficientes para estimar ADV (proxy de liquidez no disponible)"
-    if inputs.adv_usd_60d < LIQUIDITY_ADV_FLOOR_USD:
-        return f"ADV≈${inputs.adv_usd_60d:,.0f} < ${LIQUIDITY_ADV_FLOOR_USD:,.0f} (ilíquido, proxy de volumen en el momento del evento)"
+    if adv_usd_60d < LIQUIDITY_ADV_FLOOR_USD:
+        return f"ADV≈${adv_usd_60d:,.0f} < ${LIQUIDITY_ADV_FLOOR_USD:,.0f} (ilíquido, proxy de volumen en el momento del evento)"
     return None
+
+
+def objective_no_trade_reason(
+    novelty_score: float,
+    had_survivorship_warning: bool,
+    beta_available: bool,
+    high_low_range_pct: float | None,
+    adv_usd_60d: float | None,
+    is_fda_crl_without_8k: bool,
+) -> str | None:
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R5): de las 7 reglas de
+    decide_for_strategy(), 4 (novelty, survivorship, el componente (a) —
+    beta_available— de "contradictorios", FDA CRL sin 8-K, e iliquidez) NO
+    dependen en absoluto del Judge (Etapas 3-5) — son puro `enrichment` +
+    una consulta a `events`. Si CUALQUIERA de ellas dispara, el resultado es
+    NO_TRADE garantizado en las 3 versiones de estrategia SIN IMPORTAR qué
+    diga el Judge, exactamente igual que ya se explotaba para `novelty` en
+    event_analysis_pipeline.py — esta función generaliza ese pre-filtro a
+    las otras 3, para no gastar una llamada a Bull/Bear/Judge en un evento
+    cuyo NO_TRADE ya está decidido antes de preguntarle nada a la IA.
+
+    Las reglas 2 (confidence) y 3 (EV) SIEMPRE necesitan el Judge — no se
+    evalúan aquí, y su ausencia no invalida el resultado: basta con que UNA
+    regla cualquiera garantice NO_TRADE (es un OR de 7 condiciones), así que
+    demostrar que una de las 5 aquí evaluadas ya es cierta es suficiente sin
+    tener que mirar las otras dos. El orden de estas 5 sigue el mismo orden
+    relativo que decide_for_strategy() (1, 4, 5a, 6, 7) para que el motivo
+    reportado sea el mismo que se habría visto si se hubiera llegado hasta
+    ahí con el Judge real.
+
+    Devuelve el motivo textual (mismo formato que reason_if_no_trade) o None
+    si ninguna de estas 5 condiciones dispara — en ese caso SÍ hace falta
+    invocar al Judge, porque las reglas 2/3/5b son las únicas que podrían
+    decidir NO_TRADE."""
+    if novelty_score < NOVELTY_FLOOR:
+        return f"novelty_score={novelty_score:.0f} < {NOVELTY_FLOOR} (evento completamente descontado por el mercado)"
+    if had_survivorship_warning:
+        return "ticker con WARNING de posible deslistado (flag de yfinance)"
+    if not beta_available:
+        return "datos contradictorios entre fuentes (proxy): modelo de factores sin datos suficientes para ajustarse"
+    if is_fda_crl_without_8k:
+        return "CRL de FDA sin 8-K correspondiente — aún no comunicado oficialmente por la empresa"
+    return _illiquid_reason(high_low_range_pct, adv_usd_60d)
 
 
 def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDecision:
@@ -130,11 +179,21 @@ def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDe
     ev = inputs.ev_by_strategy[strategy]
     strategy_threshold = EV_THRESHOLDS[strategy]
     buffered_threshold = strategy_threshold + EV_ABSTENTION_BUFFER
-    if ev < buffered_threshold:
+    # IMPROVEMENT_PLAN.md R16: ev_engine.compute_ev propaga el SIGNO de
+    # net_conviction (negativo para una convicción bajista) — es el valor
+    # esperado de una posición LARGA, no el de la operación que de verdad se
+    # ejecutaría. Comparar el ev CON SIGNO contra un umbral siempre positivo
+    # vetaba TODO SHORT sin importar la convicción: una convicción bajista
+    # fuerte da un ev muy negativo, que nunca supera un umbral positivo. Lo
+    # que hay que comparar contra el umbral es la magnitud del EV en la
+    # dirección que realmente se tomaría (LONG si net_conviction>0, SHORT si
+    # no) — que es abs(ev), no ev. position_size_pct() de abajo ya usa
+    # abs(ev) por el mismo motivo.
+    if abs(ev) < buffered_threshold:
         return AbstentionDecision(
             "NO_TRADE",
-            f"ev={ev * 100:.2f}% < umbral {strategy.lower()} ({strategy_threshold * 100:.1f}%) + buffer 50bps "
-            f"= {buffered_threshold * 100:.2f}% (EV negativo hasta después de fees)",
+            f"|ev|={abs(ev) * 100:.2f}% < umbral {strategy.lower()} ({strategy_threshold * 100:.1f}%) + buffer 50bps "
+            f"= {buffered_threshold * 100:.2f}% (EV insuficiente hasta después de fees)",
             inputs.confidence_in_conviction,
         )
 
@@ -152,7 +211,7 @@ def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDe
     if inputs.is_fda_crl_without_8k:
         return AbstentionDecision("NO_TRADE", "CRL de FDA sin 8-K correspondiente — aún no comunicado oficialmente por la empresa", inputs.confidence_in_conviction)
 
-    illiquid_reason = _illiquid_reason(inputs)
+    illiquid_reason = _illiquid_reason(inputs.high_low_range_pct, inputs.adv_usd_60d)
     if illiquid_reason is not None:
         return AbstentionDecision("NO_TRADE", illiquid_reason, inputs.confidence_in_conviction)
 

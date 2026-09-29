@@ -113,6 +113,55 @@ def test_generate_full_validation_report_end_to_end(conn, tmp_path):
     assert "PARTE 7 — Next steps" in content
     assert result["best_decision"]["label"] in content
 
+    # IMPROVEMENT_PLAN.md Q3: DYNAMIC se corre y persiste como las otras 3,
+    # pero queda fuera de las decisiones de PARTE 6 — la comparación con
+    # BALANCED se hace visible en un apéndice aparte, no cambia el veredicto.
+    assert "DYNAMIC" not in result["decisions"]
+    assert "Apéndice — DYNAMIC vs BALANCED" in content
+    apendice = content.split("Apéndice — DYNAMIC vs BALANCED")[1].split("PARTE 7")[0]
+    assert "DYNAMIC" in apendice
+    assert "BALANCED" in apendice
+
+
+def test_backtest_table_rec_column_matches_parte_6_decision(conn, tmp_path):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R2): la columna "Rec" de la
+    tabla de PARTE 2 usaba antes su propio criterio ad hoc e inline
+    (win_rate>55% and sharpe>1.0, sin mirar drawdown/calibración/n_trades),
+    pudiendo mostrar "YES" en PARTE 2 y "REDLIGHT" en PARTE 6 para la MISMA
+    versión en el MISMO documento. Ahora reutiliza el mismo `decisions[version]`
+    de PARTE 6 — este test falla si algún día alguien vuelve a bifurcar la
+    lógica: reproduce exactamente la letra A/B/C, para cada versión con datos,
+    a partir del propio Markdown generado."""
+    from pipeline.validation.report import generate_full_validation_report
+
+    cal = _business_days(date(2024, 1, 2), 60)
+    classes = ["8K_2.02_EARNINGS", "8K_1.01_MATERIAL_AGREEMENT", "8K_5.02_OFFICER_CHANGE"]
+    for i in range(15):
+        d0 = cal[i]
+        ticker = f"R{i}"
+        closes = [100.0 + i * 0.5 + j * 0.2 for j in range(len(cal))]
+        _seed_full_event(
+            conn, f"r{i}", ticker, d0, cal, closes,
+            decision="LONG" if i % 4 != 0 else "NO_TRADE",
+            confidence=60.0 + i, ev=0.01, event_class=classes[i % 3], vix_d0=15.0 + i,
+        )
+
+    result = generate_full_validation_report(conn, run_batch_tag="validation-rec-match", docs_dir=str(tmp_path))
+    content = (tmp_path / "VALIDATION_REPORT.md").read_text()
+
+    parte2 = content.split("## PARTE 2")[1].split("## PARTE 3")[0]
+    checked_any = False
+    for version, decision in result["decisions"].items():
+        row = next((line for line in parte2.splitlines() if line.startswith(f"| {version} |")), None)
+        assert row is not None, f"fila de {version} no encontrada en la tabla de PARTE 2"
+        rec_cell = row.rstrip("|").rsplit("|", 1)[-1].strip()
+        assert rec_cell == decision["option"], (
+            f"{version}: PARTE 2 muestra Rec={rec_cell!r} pero PARTE 6 decidió "
+            f"option={decision['option']!r} ({decision['label']}) — deben coincidir siempre"
+        )
+        checked_any = True
+    assert checked_any, "ninguna versión tenía datos para comparar — fixture insuficiente"
+
 
 def test_generate_full_validation_report_oos_uses_separate_filename_and_banner(conn, tmp_path):
     """Misma fixture que el test de arriba (eventos todos en 2024, es decir,
@@ -266,3 +315,167 @@ def test_persist_validation_report_upsert_overwrites(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM validation_reports WHERE run_batch_tag = %s", (tag,))
         assert cur.fetchone()["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _safe_get / lecturas defensivas de JSONB — IMPROVEMENT_PLAN.md M18: un
+# portfolio_report con un campo faltante (drift de esquema entre cuándo se
+# guardó y cuándo se lee) no debe tumbar la generación completa del reporte
+# con un KeyError. Puras, sin BD.
+# ---------------------------------------------------------------------------
+
+
+def _portfolio_report_incompleto() -> dict:
+    """Un portfolio_report con CONSERVATIVE completo y AGGRESSIVE con varios
+    campos faltantes (simula una versión persistida antes de añadir esos
+    campos, o un rename de clave) — el caso real que motivó M18."""
+    return {
+        "versions": {
+            "CONSERVATIVE": {
+                "trade_metrics": {"win_rate": 0.6, "total_trades": 20},
+                "equity_metrics": {"sharpe_ratio": 1.5, "total_return": 0.1, "max_drawdown": -0.05},
+                "calibration": {"calibration_score": 0.7},
+                "no_lookahead_violations": [],
+                "top_10_winners": [{"ticker": "A", "pnl_pct": 5.0, "exit_reason": "TP"}],
+                "top_10_losers": [{"ticker": "B", "pnl_pct": -3.0, "exit_reason": "SL"}],
+            },
+            "AGGRESSIVE": {
+                # Sin "equity_metrics", sin "calibration", sin "top_10_losers" —
+                # el drift de esquema simulado.
+                "trade_metrics": {"win_rate": 0.4, "total_trades": 5},
+                "no_lookahead_violations": [],
+                "top_10_winners": [{"ticker": "C", "pnl_pct": 2.0, "exit_reason": "TIMEOUT"}],
+            },
+        }
+    }
+
+
+def test_evaluate_all_versions_decision_no_revienta_con_campos_faltantes():
+    from pipeline.validation.report import evaluate_all_versions_decision
+
+    decisions = evaluate_all_versions_decision(_portfolio_report_incompleto())
+
+    assert set(decisions.keys()) == {"CONSERVATIVE", "AGGRESSIVE"}
+    # AGGRESSIVE, con datos faltantes, nunca puede salir GREENLIGHT (None no
+    # cuenta como "sí pasa el umbral" — ver generate_decision).
+    assert decisions["AGGRESSIVE"]["option"] != "A"
+
+
+def test_backtest_table_no_revienta_con_campos_faltantes():
+    from pipeline.validation.report import _backtest_table
+
+    tabla = _backtest_table(_portfolio_report_incompleto())
+
+    assert "CONSERVATIVE" in tabla
+    assert "AGGRESSIVE" in tabla
+    assert "—" in tabla  # el hueco de AGGRESSIVE se muestra, no rompe la tabla
+
+
+def test_safe_get_loguea_cuando_falta_la_clave(caplog):
+    import logging
+
+    from pipeline.validation.report import _safe_get
+
+    with caplog.at_level(logging.WARNING, logger="pipeline.validation.report"):
+        valor = _safe_get({}, "no_existe", "por_defecto", "contexto_de_prueba")
+
+    assert valor == "por_defecto"
+    assert "no_existe" in caplog.text
+    assert "contexto_de_prueba" in caplog.text
+
+
+def test_safe_get_no_loguea_cuando_la_clave_esta(caplog):
+    import logging
+
+    from pipeline.validation.report import _safe_get
+
+    with caplog.at_level(logging.WARNING, logger="pipeline.validation.report"):
+        valor = _safe_get({"x": 1}, "x", 0, "ctx")
+
+    assert valor == 1
+    assert caplog.text == ""
+
+
+def test_backtest_table_acepta_un_subconjunto_de_versiones():
+    """IMPROVEMENT_PLAN.md Q3: _backtest_table ahora acepta qué versiones
+    mostrar, para poder reutilizarla en el apéndice DYNAMIC vs BALANCED sin
+    duplicar la función — por defecto sigue mostrando las 3 de VERSION_ORDER."""
+    from pipeline.validation.report import _backtest_table
+
+    fake_metrics = {
+        "equity_metrics": {"total_return": 0.05, "sharpe_ratio": 1.2, "max_drawdown": -0.03},
+        "trade_metrics": {"win_rate": 0.6, "total_trades": 10},
+    }
+    portfolio_report = {"versions": {"BALANCED": fake_metrics, "DYNAMIC": fake_metrics, "CONSERVATIVE": fake_metrics}}
+
+    solo_dos = _backtest_table(portfolio_report, versions=("BALANCED", "DYNAMIC"))
+    assert "BALANCED" in solo_dos
+    assert "DYNAMIC" in solo_dos
+    assert "CONSERVATIVE" not in solo_dos
+
+    default = _backtest_table(portfolio_report)
+    assert "DYNAMIC" not in default  # sigue sin aparecer si no se pide explícitamente
+
+
+# ---------------------------------------------------------------------------
+# _sensitivity_table — pura, IMPROVEMENT_PLAN.md R13/R14/R15
+# ---------------------------------------------------------------------------
+
+
+def _escenario(total_return: float | None, n_trades: int) -> dict:
+    return {"total_return": total_return, "n_trades": n_trades, "win_rate": None}
+
+
+def _sensitivity_fixture(**overrides) -> dict:
+    base_scenarios = {
+        version: {
+            "baseline": _escenario(0.05, 20),
+            "commission_plus_0.1pct": _escenario(0.04, 20),
+            "spread_plus_0.2pct": _escenario(0.03, 20),
+            "latency_d_plus_2": _escenario(0.02, 15),
+            "confidence_minus_20pct": _escenario(0.045, 18),
+            "high_vix_regime": _escenario(0.06, 10),
+            "low_vix_regime": _escenario(0.04, 10),
+            "n_missing_vix": 2,
+        }
+        for version in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")
+    }
+    base_scenarios.update(overrides)
+    return {"run_batch_tag": "t", "scenarios": base_scenarios}
+
+
+def test_sensitivity_table_incluye_columna_balanced():
+    """IMPROVEMENT_PLAN.md R13: BALANCED puede ser best_version en PARTE 6,
+    así que su fila de sensibilidad tiene que verse en la tabla, no solo
+    Conservative/Aggressive."""
+    from pipeline.validation.report import _sensitivity_table
+
+    tabla = _sensitivity_table(_sensitivity_fixture())
+
+    assert "Balanced Return" in tabla
+    assert tabla.count("Baseline") == 1  # una fila, con las 3 versiones en columnas
+
+
+def test_sensitivity_table_muestra_n_trades_por_escenario():
+    """IMPROVEMENT_PLAN.md R14: sin el tamaño de muestra por escenario, un
+    return que se desploma en 'latency_d_plus_2' es indistinguible de 'la
+    muestra se redujo a la mitad'."""
+    from pipeline.validation.report import _sensitivity_table
+
+    tabla = _sensitivity_table(_sensitivity_fixture())
+
+    assert "(n=20)" in tabla  # baseline
+    assert "(n=15)" in tabla  # latency_d_plus_2, con menos trades
+
+
+def test_sensitivity_table_muestra_n_missing_vix():
+    """IMPROVEMENT_PLAN.md R15: split_by_vix_regime ya calculaba
+    n_missing_vix; antes de esta sesión se descartaba en vez de mostrarse,
+    así que 'sin datos VIX' y 'sin efecto de VIX' eran indistinguibles en
+    el reporte final."""
+    from pipeline.validation.report import _sensitivity_table
+
+    tabla = _sensitivity_table(_sensitivity_fixture())
+
+    assert "Trades sin vix_d0 disponible" in tabla
+    assert "Conservative=2" in tabla

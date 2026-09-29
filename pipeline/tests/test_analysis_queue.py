@@ -9,6 +9,7 @@ Cubre tres fallos reales encontrados en la auditoría de 2026-09-25:
 """
 from __future__ import annotations
 
+import math
 import os
 from datetime import date, timedelta
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ import pytest
 
 from pipeline.tests.fake_batch_api import validar_requests_como_la_api
 
+from pipeline import config
 from pipeline.ingest.universe_maintenance import is_investable
 
 pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
@@ -64,14 +66,14 @@ def conn():
     with c.cursor() as cur:
         cur.execute(
             "TRUNCATE car_results, event_analyses, event_enrichment, events, prices, fundamentals, "
-            "quality_scores, universe RESTART IDENTITY CASCADE"
+            "quality_scores, universe, fama_french_factors RESTART IDENTITY CASCADE"
         )
     c.commit()
     yield c
     c.close()
 
 
-def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None):
+def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, history_days=290):
     last_day = last_day or date.today()
     with conn.cursor() as cur:
         cur.execute(
@@ -79,10 +81,38 @@ def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None):
             "VALUES (%s,%s,%s,'2024-01-01','2024-01-01')",
             (cik, ticker, f"{ticker} Inc"),
         )
-        for i in range(5):
+        # Histórico continuo (no solo 5 días sueltos), con fama_french_factors
+        # en la misma ventana — hallazgo de auditoría (R5): el pre-filtro
+        # objetivo pre-LLM ahora también comprueba iliquidez (high/low de D0 +
+        # ADV de los 60 días ANTERIORES) y disponibilidad del modelo de
+        # factores (beta_vs_spy, componente "a" del proxy de contradicción),
+        # y process_chunk/run_pipeline necesitan que ambos resuelvan a
+        # "disponible" para los tests que quieren probar la mecánica de
+        # reintentos del batch, no la de abstención. 290 días cubre de sobra
+        # el estimation_window de fit_factor_model ([-250,-30] respecto a
+        # cualquier D0 usado en este fichero) con margen. high/low a +-0.1%
+        # (spread ~0.2%, bajo SPREAD_CEILING_PCT=0.5%).
+        for i in range(history_days):
+            d = last_day - timedelta(days=i)
+            # Oscilación determinista con senoides de frecuencias distintas
+            # (no periodos enteros pequeños como i%5/i%7: esos generan
+            # relaciones lineales exactas entre mkt_rf/smb/hml/precio sobre
+            # una ventana de días entera, dejando la matriz de diseño de
+            # fit_factor_model exactamente rank-deficient — se encontró así,
+            # con SingularMatrixWarning real, al construir este fixture).
+            # i=0 (last_day, el más reciente) se deja EXACTO en `price`:
+            # varios tests comparan market_cap_last_usd/adv_usd_60d contra
+            # `price` sin tolerancia amplia.
+            day_price = price if i == 0 else price * (1 + 0.0006 * math.sin(i * 0.31))
             cur.execute(
-                "INSERT INTO prices (ticker, trade_date, close_raw, adj_factor, volume) VALUES (%s,%s,%s,1,%s)",
-                (ticker, last_day - timedelta(days=i), price, volume),
+                "INSERT INTO prices (ticker, trade_date, close_raw, high_raw, low_raw, adj_factor, volume) "
+                "VALUES (%s,%s,%s,%s,%s,1,%s)",
+                (ticker, d, day_price, day_price * 1.001, day_price * 0.999, volume),
+            )
+            cur.execute(
+                "INSERT INTO fama_french_factors (trade_date, mkt_rf, smb, hml, rf) VALUES (%s,%s,%s,%s,%s) "
+                "ON CONFLICT (trade_date) DO NOTHING",
+                (d, 0.0003 + 0.0002 * math.sin(i * 0.17), 0.0002 * math.sin(i * 0.53), -0.0002 * math.sin(i * 0.71), 0.00005),
             )
         if shares is not None:
             cur.execute(
@@ -126,7 +156,10 @@ def test_refresh_universe_metrics_calcula_cap_y_flag(conn):
         cur.execute("SELECT ticker, market_cap_last_usd, adv_usd_60d, in_investable_universe FROM universe ORDER BY cik")
         rows = {r["ticker"]: r for r in cur.fetchall()}
     assert float(rows["BIG"]["market_cap_last_usd"]) == pytest.approx(100e9)
-    assert float(rows["BIG"]["adv_usd_60d"]) == pytest.approx(100e6)
+    # rel=0.01: _empresa ahora varía el precio histórico día a día (ver su
+    # docstring) para que fit_factor_model no degenere — el promedio de 60
+    # días ya no es EXACTO a price*volume, solo aproximado.
+    assert float(rows["BIG"]["adv_usd_60d"]) == pytest.approx(100e6, rel=0.01)
     assert rows["BIG"]["in_investable_universe"] is True
     assert rows["SMALL"]["in_investable_universe"] is False
     assert rows["NOSHARES"]["in_investable_universe"] is False
@@ -134,6 +167,46 @@ def test_refresh_universe_metrics_calcula_cap_y_flag(conn):
 
     lista = top_companies(conn, 10)
     assert [r["ticker"] for r in lista] == ["BIG"]
+
+
+@pytestmark_db
+def test_refresh_universe_metrics_limite_exacto_de_staleness_sigue_fresco(conn):
+    """IMPROVEMENT_PLAN.md M12: el único test existente probaba un precio muy
+    viejo (60 días) o implícitamente fresco (hoy) — nunca el límite EXACTO de
+    MAX_PRICE_STALENESS_DAYS. La condición SQL es `>=`, así que un precio de
+    hace EXACTAMENTE ese número de días todavía debe contar como válido."""
+    from pipeline.ingest.universe_maintenance import refresh_universe_metrics
+
+    as_of = date(2026, 6, 15)
+    limite = as_of - timedelta(days=config.MAX_PRICE_STALENESS_DAYS)
+    _empresa(conn, "1", "LIMITE", 100.0, 1e9, last_day=limite)
+
+    refresh_universe_metrics(conn, as_of=as_of)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT market_cap_last_usd, in_investable_universe FROM universe WHERE ticker = 'LIMITE'")
+        row = cur.fetchone()
+    assert row["market_cap_last_usd"] is not None
+    assert row["in_investable_universe"] is True
+
+
+@pytestmark_db
+def test_refresh_universe_metrics_un_dia_mas_alla_del_limite_es_obsoleto(conn):
+    """El día siguiente al límite exacto SÍ debe quedar fuera — confirma que
+    el límite de arriba no es 'siempre pasa', sino la frontera real."""
+    from pipeline.ingest.universe_maintenance import refresh_universe_metrics
+
+    as_of = date(2026, 6, 15)
+    un_dia_mas_alla = as_of - timedelta(days=config.MAX_PRICE_STALENESS_DAYS + 1)
+    _empresa(conn, "1", "OBSOLETO", 100.0, 1e9, last_day=un_dia_mas_alla)
+
+    refresh_universe_metrics(conn, as_of=as_of)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT market_cap_last_usd, in_investable_universe FROM universe WHERE ticker = 'OBSOLETO'")
+        row = cur.fetchone()
+    assert row["market_cap_last_usd"] is None
+    assert row["in_investable_universe"] is False
 
 
 @pytestmark_db

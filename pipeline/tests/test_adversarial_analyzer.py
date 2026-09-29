@@ -144,6 +144,39 @@ def test_run_batch_and_collect_sin_requests_no_crea_batch():
     assert run_batch_and_collect(client, requests_=[]) == ({}, None)
 
 
+def test_run_batch_and_collect_corta_tras_la_cota_de_espera(monkeypatch):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + M1): un batch que se
+    queda atascado en 'in_progress' para siempre (incidente del lado de
+    Anthropic) no debe colgar el proceso sin límite — antes de esta sesión,
+    `while True` sin cota solo se paraba con el timeout-minutes del job de
+    GitHub Actions (sin definir -> 360 min por defecto)."""
+    from pipeline.analyze import adversarial_analyzer as aa
+    from pipeline import config
+
+    class _ClienteAtascado:
+        def create(self, requests):
+            return SimpleNamespace(id="batch_atascado", processing_status="in_progress")
+
+        def retrieve(self, batch_id):
+            return SimpleNamespace(id=batch_id, processing_status="in_progress")  # nunca "ended"
+
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ClienteAtascado()))
+
+    # Reloj falso: avanza más que la cota en cada llamada a monotonic(), y
+    # time.sleep no duerme de verdad — el test no debe tardar 2 horas reales.
+    reloj = {"t": 0.0}
+
+    def _monotonic_falso():
+        reloj["t"] += config.BATCH_MAX_WAIT_SECONDS + 1
+        return reloj["t"]
+
+    monkeypatch.setattr(aa.time, "monotonic", _monotonic_falso)
+    monkeypatch.setattr(aa.time, "sleep", lambda _: None)
+
+    with pytest.raises(TimeoutError, match="in_progress"):
+        run_batch_and_collect(client, requests_=[{"custom_id": custom_id_de(1, "judge")}])
+
+
 # ---------------------------------------------------------------------------
 # Caché de 24h — contra Postgres real
 # ---------------------------------------------------------------------------
@@ -229,6 +262,81 @@ class TestCacheAgainstRealPostgres:
         assert get_cached_analysis(self.conn, "ACME", "8K_2.02_EARNINGS", date(2024, 1, 2)) is not None
         assert get_cached_analysis(self.conn, "ACME", "8K_2.02_EARNINGS", date(2024, 4, 1)) is None
         assert get_cached_analysis(self.conn, "ACME", "8K_2.02_EARNINGS", date(2023, 12, 31)) is None
+
+    def _insert_pending_event(self, cik: str, ticker: str, event_class: str, d0: str) -> int:
+        """Un evento SIN análisis propio — el 'request' que get_cached_analyses_batch
+        intenta resolver contra la caché de otro evento del mismo (ticker, event_class)."""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
+                "VALUES (%s,%s,'X','2024-01-01','2024-01-01') ON CONFLICT (cik) DO NOTHING",
+                (cik, ticker),
+            )
+            cur.execute(
+                """
+                INSERT INTO events (cik, ticker, source, is_satellite, event_class, item_codes,
+                    accession_number, source_url, filed_at, d0_close_date, classification_method,
+                    classification_confidence, raw_text_hash)
+                VALUES (%s,%s,'EDGAR',FALSE,%s,ARRAY['2.02'],%s,'https://x',%s,%s,'RULE',1.0,%s)
+                RETURNING event_id
+                """,
+                (cik, ticker, event_class, f"acc-req-{cik}", d0, d0, f"hash-req-{cik}"),
+            )
+            event_id = cur.fetchone()["event_id"]
+        self.conn.commit()
+        return event_id
+
+    def test_batch_devuelve_el_mismo_resultado_que_la_version_de_una_sola_fila(self):
+        """IMPROVEMENT_PLAN.md M2: get_cached_analyses_batch en UNA consulta
+        debe dar exactamente el mismo hit/miss por evento que llamar a
+        get_cached_analysis() una vez por fila (el bucle que sustituye)."""
+        from pipeline.analyze.adversarial_analyzer import get_cached_analyses_batch
+
+        self._insert_event_with_analysis("10", "ACME", "8K_2.02_EARNINGS", "1 hour")  # dentro de ventana
+        self._insert_event_with_analysis("11", "BETA", "8K_2.02_EARNINGS", "25 hours")  # fuera de ventana
+
+        req_hit = self._insert_pending_event("12", "ACME", "8K_2.02_EARNINGS", "2024-01-02")
+        req_miss_ventana = self._insert_pending_event("13", "BETA", "8K_2.02_EARNINGS", "2024-01-02")
+        req_miss_clase = self._insert_pending_event("14", "ACME", "8K_1.01_MATERIAL_AGMT", "2024-01-02")
+
+        event_rows = [
+            {"event_id": req_hit, "ticker": "ACME", "event_class": "8K_2.02_EARNINGS", "d0_close_date": date(2024, 1, 2)},
+            {"event_id": req_miss_ventana, "ticker": "BETA", "event_class": "8K_2.02_EARNINGS", "d0_close_date": date(2024, 1, 2)},
+            {"event_id": req_miss_clase, "ticker": "ACME", "event_class": "8K_1.01_MATERIAL_AGMT", "d0_close_date": date(2024, 1, 2)},
+        ]
+
+        results = get_cached_analyses_batch(self.conn, event_rows)
+
+        assert req_hit in results
+        assert results[req_hit]["net_conviction"] == pytest.approx(0.5)
+        assert req_miss_ventana not in results
+        assert req_miss_clase not in results
+
+    def test_batch_con_lista_vacia_no_consulta_la_bd(self):
+        from pipeline.analyze.adversarial_analyzer import get_cached_analyses_batch
+
+        assert get_cached_analyses_batch(self.conn, []) == {}
+
+    def test_batch_respeta_la_ventana_de_d0_gap_por_fila_no_globalmente(self):
+        """Dos requests con 'as_of' distintos en el mismo lote: cada uno debe
+        evaluar su propia ventana BETWEEN as_of-gap AND as_of, no una compartida
+        entre todas las filas del lote."""
+        from pipeline.analyze.adversarial_analyzer import get_cached_analyses_batch
+
+        self._insert_event_with_analysis("20", "ACME", "8K_2.02_EARNINGS", "1 hour")  # D0 2024-01-01
+
+        req_mismo_episodio = self._insert_pending_event("21", "ACME", "8K_2.02_EARNINGS", "2024-01-02")
+        req_otro_trimestre = self._insert_pending_event("22", "ACME", "8K_2.02_EARNINGS", "2024-04-01")
+
+        event_rows = [
+            {"event_id": req_mismo_episodio, "ticker": "ACME", "event_class": "8K_2.02_EARNINGS", "d0_close_date": date(2024, 1, 2)},
+            {"event_id": req_otro_trimestre, "ticker": "ACME", "event_class": "8K_2.02_EARNINGS", "d0_close_date": date(2024, 4, 1)},
+        ]
+
+        results = get_cached_analyses_batch(self.conn, event_rows)
+
+        assert req_mismo_episodio in results
+        assert req_otro_trimestre not in results
 
 
 # --- custom_id contra el patrón real de la Batch API ------------------------

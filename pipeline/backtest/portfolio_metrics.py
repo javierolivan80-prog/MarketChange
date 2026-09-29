@@ -16,6 +16,22 @@ import numpy as np
 TRADING_DAYS_PER_YEAR = 252
 INSUFFICIENT_SAMPLE_THRESHOLD = 20
 CALIBRATION_TARGET = 0.6
+# Con solo 2 puntos, una regresión lineal de un predictor tiene 0 grados de
+# libertad residuales: la recta pasa EXACTAMENTE por los 2 puntos siempre
+# (salvo que compartan x o y, ya guardado aparte), así que r_squared=1.0 no
+# es una señal real de ajuste, es una certeza matemática sin importar los
+# datos. 3 es el mínimo con algún grado de libertad — sigue siendo un n
+# minúsculo, pero al menos no está garantizado de antemano (IMPROVEMENT_PLAN.md R12).
+MIN_TRADES_FOR_REGRESSION = 3
+
+# Piso de historia para anualizar un retorno (IMPROVEMENT_PLAN.md M20):
+# heurístico, como el resto de umbrales del módulo, no derivado de una
+# teoría estadística formal. total_return / n_years extrapola linealmente
+# lo que pasó en un tramo corto a un año entero — con una curva de 1-2 días,
+# un movimiento de un par de puntos porcentuales cualquiera se convierte en
+# un "annual_return" de cientos o miles por ciento, un número que no informa
+# de nada real y que además Calmar hereda (annual_return / max_drawdown).
+MIN_DAYS_FOR_ANNUALIZATION = 30
 
 
 # ============================================================================
@@ -95,6 +111,12 @@ def compute_equity_metrics(
     annual_return: retorno SIMPLE anualizado (total_return / n_años), no
     compuesto — más fácil de interpretar para un POC y consistente con cómo
     el spec describe la fórmula ("total_return / n_years"), no con un CAGR.
+    None si la curva cubre menos de MIN_DAYS_FOR_ANNUALIZATION días: con un
+    tramo tan corto, extrapolar linealmente a un año entero produce un
+    número sin sentido (un par de puntos porcentuales en 1-2 días se
+    convierten en cientos o miles por ciento) en vez de "esconderlo bajo un
+    umbral" — calmar_ratio, que depende de annual_return, hereda el mismo
+    None por el mismo motivo.
 
     risk_free_daily: tasa libre de riesgo diaria por fecha, opcional. Si se
     pasa, se resta de los retornos diarios antes de Sharpe/Sortino (más
@@ -110,7 +132,7 @@ def compute_equity_metrics(
     total_return = (final_balance - starting_capital) / starting_capital
     n_days = max((dates[-1] - dates[0]).days, 1)
     n_years = n_days / 365.25
-    annual_return = total_return / n_years
+    annual_return = total_return / n_years if n_days >= MIN_DAYS_FOR_ANNUALIZATION else None
 
     peak = balances[0]
     max_dd = 0.0
@@ -139,7 +161,7 @@ def compute_equity_metrics(
         elif len(downside) == 1:
             sortino_ratio = float(arr.mean() / abs(downside[0]) * np.sqrt(TRADING_DAYS_PER_YEAR))
 
-    calmar_ratio = (annual_return / max_drawdown) if max_drawdown > 0 else None
+    calmar_ratio = (annual_return / max_drawdown) if (annual_return is not None and max_drawdown > 0) else None
     recovery_factor = (total_return / max_drawdown) if max_drawdown > 0 else None
 
     return {
@@ -169,7 +191,18 @@ def compute_metrics_by_event_type(trades_with_event_class: list[dict]) -> dict[s
     (ese sí está anualizado sobre retornos diarios de la curva de equity;
     este es un ratio riesgo/retorno POR TRADE, sobre una muestra con
     duraciones de holding distintas). Se documenta para no confundir ambos
-    números al leer el reporte."""
+    números al leer el reporte.
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md R12): sharpe_per_trade se
+    calculaba con n>=2 y se devolvía como número aunque insufficient_sample
+    ya lo marcara True (n<20) — el flag existía, pero el número seguía
+    mostrándose igual en el dashboard. Un ratio riesgo/retorno con 3-5
+    trades no es "ruidoso pero informativo": es prácticamente aleatorio, y
+    presentarlo con la misma precisión que uno con 50 invita a confiar en
+    él. Ahora se OCULTA (None) por debajo de INSUFFICIENT_SAMPLE_THRESHOLD,
+    no solo se flagea — win_rate/avg_return se dejan igual porque son
+    directamente interpretables (un 60% con n=5 se lee como "60% de 5", no
+    como una medida calibrada de riesgo)."""
     groups: dict[str, list[float]] = defaultdict(list)
     for t in trades_with_event_class:
         groups[t["event_class"]].append(float(t["pnl_pct"]))
@@ -180,7 +213,11 @@ def compute_metrics_by_event_type(trades_with_event_class: list[dict]) -> dict[s
         arr = np.array(pnls)
         win_rate = float((arr > 0).mean())
         avg_return = float(arr.mean())
-        sharpe_per_trade = float(avg_return / arr.std(ddof=1)) if n >= 2 and arr.std(ddof=1) > 0 else None
+        sharpe_per_trade = (
+            float(avg_return / arr.std(ddof=1))
+            if n >= INSUFFICIENT_SAMPLE_THRESHOLD and arr.std(ddof=1) > 0
+            else None
+        )
         result[event_class] = {
             "event_type": event_class,
             "n_trades": n,
@@ -280,19 +317,34 @@ def compute_prediction_regression(trades: list[dict]) -> dict:
     por clase) — es el insumo del scatter "prediction vs actual" y su
     regresión que pide el spec como output. R² = correlación² para una
     regresión lineal simple de un solo predictor (equivalente matemático,
-    evita añadir una dependencia de regresión solo para esto)."""
+    evita añadir una dependencia de regresión solo para esto).
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md R12): con exactamente 2
+    trades, una recta de un solo predictor pasa SIEMPRE por los 2 puntos
+    exactamente (0 grados de libertad residuales) — r_squared=1.0 no es una
+    señal de que el modelo funcione, es una certeza matemática
+    independiente de los datos, y se devolvía sin ningún aviso. Por debajo
+    de MIN_TRADES_FOR_REGRESSION (3, el mínimo con algún grado de libertad)
+    se OCULTA r_squared en vez de mostrar un número técnicamente calculable
+    pero vacío de contenido. scatter SÍ se sigue devolviendo con esos pocos
+    puntos (ver los propios puntos nunca es engañoso, ajustarles una recta
+    y resumirla en un R² sí lo es). insufficient_sample (n<20, mismo umbral
+    que compute_metrics_by_event_type) se expone también para los casos
+    intermedios donde r_squared SÍ se calcula pero sigue siendo una muestra
+    pequeña — el caller decide si lo muestra con un aviso o lo oculta."""
     if len(trades) < 2:
-        return {"n_trades": len(trades), "r_squared": None, "scatter": []}
+        return {"n_trades": len(trades), "r_squared": None, "scatter": [], "insufficient_sample": True}
 
     predicted = np.array([float(t["ev"]) * 100 for t in trades])
     actual = np.array([float(t["actual_move_pct"]) for t in trades])
     scatter = [{"predicted": float(p), "actual": float(a)} for p, a in zip(predicted, actual)]
+    insufficient_sample = len(trades) < INSUFFICIENT_SAMPLE_THRESHOLD
 
-    if predicted.std() == 0 or actual.std() == 0:
-        return {"n_trades": len(trades), "r_squared": None, "scatter": scatter}
+    if len(trades) < MIN_TRADES_FOR_REGRESSION or predicted.std() == 0 or actual.std() == 0:
+        return {"n_trades": len(trades), "r_squared": None, "scatter": scatter, "insufficient_sample": insufficient_sample}
 
     correlation = float(np.corrcoef(predicted, actual)[0, 1])
-    return {"n_trades": len(trades), "r_squared": correlation**2, "scatter": scatter}
+    return {"n_trades": len(trades), "r_squared": correlation**2, "scatter": scatter, "insufficient_sample": insufficient_sample}
 
 
 def top_n_trades(trades: list[dict], n: int = 10, winners: bool = True) -> list[dict]:

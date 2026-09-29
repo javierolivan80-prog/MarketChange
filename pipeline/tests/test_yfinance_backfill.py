@@ -10,11 +10,16 @@ real.
 """
 from __future__ import annotations
 
+import os
+from datetime import date
+
 import pandas as pd
 import pytest
 
+from pipeline.ingest import yfinance_backfill
 from pipeline.ingest.yfinance_backfill import (
     COLUMNAS_REQUERIDAS,
+    _download_one_with_retry,
     _validar_columnas,
     aplanar_columnas,
     extraer_ticker_del_lote,
@@ -294,3 +299,292 @@ def test_confirmar_forzar_cualquier_otra_respuesta_cancela():
     assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "") is False
     assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "no") is False
     assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "s") is False  # "si" completo, no una abreviatura
+
+
+# ---------------------------------------------------------------------------
+# _flag_full_gap / _store_with_gap_detection (IMPROVEMENT_PLAN.md M10, parte 2/2)
+#
+# Instrucción explícita del usuario: "flagea tickers deslistados... no
+# intentes llenar gaps". Sin test hasta ahora de que el flag en sí se escriba
+# donde toca (y solo donde toca) contra la tabla prices real.
+# ---------------------------------------------------------------------------
+
+
+def _df_precios(fechas: list[str], close=100.0) -> pd.DataFrame:
+    idx = pd.to_datetime(fechas)
+    n = len(fechas)
+    return pd.DataFrame(
+        {
+            "Open": [close] * n,
+            "High": [close + 1] * n,
+            "Low": [close - 1] * n,
+            "Close": [close] * n,
+            "Adj Close": [close] * n,
+            "Volume": [1000] * n,
+        },
+        index=idx,
+    )
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+class TestGapDetectionAgainstRealPostgres:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        from pipeline.db.connection import get_connection, init_schema
+
+        self.conn = get_connection()
+        init_schema(self.conn)
+        with self.conn.cursor() as cur:
+            cur.execute("TRUNCATE prices")
+        self.conn.commit()
+        yield
+        self.conn.close()
+
+    def _filas(self, ticker: str) -> list[dict]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT trade_date, close_raw, survivorship_warning FROM prices "
+                "WHERE ticker = %s ORDER BY trade_date",
+                (ticker,),
+            )
+            return cur.fetchall()
+
+    def test_flag_full_gap_inserta_una_fila_centinela_en_start_sin_precio(self):
+        from pipeline.ingest.yfinance_backfill import _flag_full_gap
+
+        _flag_full_gap(self.conn, "DESLISTADO", date(2026, 1, 5), date(2026, 1, 10))
+
+        filas = self._filas("DESLISTADO")
+        assert len(filas) == 1
+        assert filas[0]["trade_date"] == date(2026, 1, 5)
+        assert filas[0]["close_raw"] is None  # no se inventa precio, solo se marca
+        assert filas[0]["survivorship_warning"] is True
+
+    def test_flag_full_gap_no_pisa_un_precio_real_ya_guardado(self):
+        """Si ya hay una fila de precio real en esa fecha (de una descarga
+        anterior) y luego se marca full_gap para un rango que la incluye, el
+        UPDATE de ON CONFLICT solo debe tocar survivorship_warning, nunca
+        borrar el precio que ya estaba."""
+        from pipeline.ingest.yfinance_backfill import _flag_full_gap, _store_with_gap_detection
+
+        _store_with_gap_detection(self.conn, "ACME", _df_precios(["2026-01-05"], close=42.0), set())
+        _flag_full_gap(self.conn, "ACME", date(2026, 1, 5), date(2026, 1, 10))
+
+        filas = self._filas("ACME")
+        assert len(filas) == 1
+        assert float(filas[0]["close_raw"]) == pytest.approx(42.0)
+        assert filas[0]["survivorship_warning"] is True
+
+    def test_store_with_gap_detection_inserta_los_precios_del_dataframe(self):
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        df = _df_precios(["2026-01-05", "2026-01-06"], close=50.0)
+        _store_with_gap_detection(self.conn, "ACME", df, {date(2026, 1, 5), date(2026, 1, 6)})
+
+        filas = self._filas("ACME")
+        assert len(filas) == 2
+        assert all(float(f["close_raw"]) == pytest.approx(50.0) for f in filas)
+        assert all(f["survivorship_warning"] is False for f in filas)
+
+    def test_store_with_gap_detection_marca_los_dias_faltantes_dentro_del_rango(self):
+        """El propio ticker cotizó el 5 y el 7 de enero, pero no el 6 (que sí
+        era un día de mercado esperado) — debe quedar marcado como hueco sin
+        inventar un precio para ese día."""
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        df = _df_precios(["2026-01-05", "2026-01-07"])
+        expected_days = {date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)}
+        _store_with_gap_detection(self.conn, "ACME", df, expected_days)
+
+        filas = {f["trade_date"]: f for f in self._filas("ACME")}
+        assert len(filas) == 3
+        assert filas[date(2026, 1, 6)]["close_raw"] is None
+        assert filas[date(2026, 1, 6)]["survivorship_warning"] is True
+        assert filas[date(2026, 1, 5)]["survivorship_warning"] is False
+        assert filas[date(2026, 1, 7)]["survivorship_warning"] is False
+
+    def test_store_with_gap_detection_no_marca_dias_fuera_del_rango_propio_del_ticker(self):
+        """expected_days puede cubrir un rango más amplio que compartido entre
+        varios tickers de un mismo lote (ver _descargar_grupo). Un día de
+        mercado ANTES de que este ticker empezara a cotizar en el rango
+        pedido no es un hueco suyo — no debe marcarse."""
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        df = _df_precios(["2026-01-07"])  # el ticker solo trae datos desde el 7
+        expected_days = {date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)}
+        _store_with_gap_detection(self.conn, "ACME", df, expected_days)
+
+        filas = self._filas("ACME")
+        assert len(filas) == 1  # ni el 5 ni el 6 se marcaron como huecos de ACME
+        assert filas[0]["trade_date"] == date(2026, 1, 7)
+
+    def test_store_with_gap_detection_es_upsert_actualiza_el_precio(self):
+        from pipeline.ingest.yfinance_backfill import _store_with_gap_detection
+
+        _store_with_gap_detection(self.conn, "ACME", _df_precios(["2026-01-05"], close=10.0), set())
+        _store_with_gap_detection(self.conn, "ACME", _df_precios(["2026-01-05"], close=20.0), set())
+
+        filas = self._filas("ACME")
+        assert len(filas) == 1  # no se duplicó
+        assert float(filas[0]["close_raw"]) == pytest.approx(20.0)
+
+
+# ---------------------------------------------------------------------------
+# _download_one_with_retry / _descargar_lote_con_reintentos (IMPROVEMENT_PLAN.md M10)
+#
+# Nunca se han probado directamente: yfinance "no tiene una jerarquía de
+# excepciones propia estable" (comentario del propio código), así que lo que
+# importa comprobar es que CUALQUIER excepción activa el backoff y que tras
+# MAX_RETRIES se rinde devolviendo None en vez de propagar — el propio código
+# lo llama "la etapa más frágil del pipeline".
+#
+# _retry_with_backoff — IMPROVEMENT_PLAN.md Q5: antes, _download_one_with_retry
+# y _descargar_lote_con_reintentos duplicaban el MISMO bucle de reintentos
+# palabra por palabra; ninguno de los dos tenía test hasta esta sesión.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _sin_esperas_reales(monkeypatch):
+    monkeypatch.setattr(yfinance_backfill.time, "sleep", lambda _: None)
+
+
+def test_download_one_with_retry_reintenta_ante_fallo_transitorio(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        if intentos["n"] == 1:
+            raise ConnectionError("429 de Yahoo")
+        return _df_plano()
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert intentos["n"] == 2
+    assert resultado is not None
+    assert list(resultado["Close"]) == [10.2, 11.2]
+
+
+def test_download_one_with_retry_aplana_el_multiindex_que_devuelve_yfinance(monkeypatch):
+    monkeypatch.setattr("yfinance.download", lambda *a, **kw: _df_multiindex("AAPL"))
+
+    resultado = _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert not isinstance(resultado.columns, pd.MultiIndex)
+
+
+def test_download_one_with_retry_se_rinde_tras_max_retries(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        raise ConnectionError("caída persistente")
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert resultado is None
+    assert intentos["n"] == yfinance_backfill.MAX_RETRIES
+
+
+def test_download_one_with_retry_none_no_revienta_al_aplanar(monkeypatch):
+    """yf.download puede devolver None (p. ej. ticker sin ningún dato en el
+    rango) — no debe intentar aplanar un DataFrame inexistente."""
+    monkeypatch.setattr("yfinance.download", lambda *a, **kw: None)
+
+    assert _download_one_with_retry("AAPL", _date(2026, 9, 9), _date(2026, 9, 10)) is None
+
+
+def test_descargar_lote_con_reintentos_reintenta_y_devuelve_el_lote(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        if intentos["n"] == 1:
+            raise ConnectionError("429 de Yahoo")
+        return _df_multiindex("AAPL")
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = yfinance_backfill._descargar_lote_con_reintentos(["AAPL"], _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert intentos["n"] == 2
+    assert resultado is not None
+
+
+def test_descargar_lote_con_reintentos_se_rinde_tras_max_retries(monkeypatch):
+    intentos = {"n": 0}
+
+    def _download(*a, **kw):
+        intentos["n"] += 1
+        raise ConnectionError("caída persistente")
+
+    monkeypatch.setattr("yfinance.download", _download)
+
+    resultado = yfinance_backfill._descargar_lote_con_reintentos(["AAPL", "MSFT"], _date(2026, 9, 9), _date(2026, 9, 10))
+
+    assert resultado is None
+    assert intentos["n"] == yfinance_backfill.MAX_RETRIES
+
+
+def test_retry_with_backoff_devuelve_el_resultado_si_no_hay_fallo():
+    from pipeline.ingest.yfinance_backfill import _retry_with_backoff
+
+    assert _retry_with_backoff(lambda: 42, "algo") == 42
+
+
+def test_retry_with_backoff_reintenta_y_acaba_bien():
+    from pipeline.ingest.yfinance_backfill import _retry_with_backoff
+
+    intentos = {"n": 0}
+
+    def _func():
+        intentos["n"] += 1
+        if intentos["n"] < 3:
+            raise RuntimeError("fallo transitorio")
+        return "ok"
+
+    assert _retry_with_backoff(_func, "algo") == "ok"
+    assert intentos["n"] == 3
+
+
+def test_retry_with_backoff_devuelve_none_tras_agotar_intentos():
+    from pipeline.ingest.yfinance_backfill import MAX_RETRIES, _retry_with_backoff
+
+    intentos = {"n": 0}
+
+    def _func():
+        intentos["n"] += 1
+        raise RuntimeError("siempre falla")
+
+    assert _retry_with_backoff(_func, "algo") is None
+    assert intentos["n"] == MAX_RETRIES
+
+
+def test_download_one_with_retry_usa_retry_with_backoff_compartido(monkeypatch):
+    """Regresión de cableado (IMPROVEMENT_PLAN.md Q5): _download_one_with_retry
+    debe pasar por el bucle de reintentos compartido, no por uno propio — se
+    verifica de punta a punta (yf.download falla dos veces y luego responde)
+    en vez de mockear _retry_with_backoff, para probar la integración real."""
+    import yfinance as yf
+
+    import pipeline.ingest.yfinance_backfill as yfb
+
+    llamadas = {"n": 0}
+
+    def _fake_download(*a, **kw):
+        llamadas["n"] += 1
+        if llamadas["n"] < 2:
+            raise RuntimeError("fallo transitorio")
+        return pd.DataFrame({"Close": [10.0]})
+
+    monkeypatch.setattr(yf, "download", _fake_download)
+    monkeypatch.setattr(yfb, "aplanar_columnas", lambda df, ticker: df)
+
+    resultado = yfb._download_one_with_retry("AAPL", _INICIO, _FIN)
+
+    assert llamadas["n"] == 2
+    assert resultado is not None

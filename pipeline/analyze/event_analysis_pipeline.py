@@ -33,13 +33,13 @@ import logging
 from datetime import date, timedelta
 
 from pipeline import config
-from pipeline.analyze.abstention_engine import NOVELTY_FLOOR, AbstentionInputs, as_json as abstention_as_json, decide_all_strategies
+from pipeline.analyze.abstention_engine import AbstentionInputs, as_json as abstention_as_json, decide_all_strategies, objective_no_trade_reason
 from pipeline.analyze.adversarial_analyzer import (
     EventContext,
     build_bull_bear_batch,
     build_judge_batch,
     custom_id_de,
-    get_cached_analysis,
+    get_cached_analyses_batch,
     run_batch_and_collect,
     validar_salida_judge,
 )
@@ -137,6 +137,50 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
     return row
 
 
+def spend_today_usd(conn) -> float:
+    """Gasto ESTIMADO ya incurrido hoy en Bull/Bear/Judge (IMPROVEMENT_PLAN.md
+    A2) — hallazgo de auditoría: no hace falta una tabla nueva de gasto,
+    event_analyses YA es el libro de cuentas: cada fila con from_cache=FALSE
+    y model_version_bull_bear distinto de 'SKIPPED_OBJETIVO_NO_TRADE' es
+    exactamente un evento que sí pagó una llamada real a la Batch API (los
+    de caché y los descartados por una condición objetiva o por el techo de
+    EV, A1, cuestan 0 — ver process_chunk). Crear una tabla aparte solo para
+    volver a contar lo que esta consulta ya cuenta sería una segunda fuente
+    de verdad redundante, no una simplificación.
+
+    'Hoy' es CURRENT_DATE en la zona horaria de Postgres (UTC por defecto en
+    Neon/Supabase) — no se ajusta a hora de mercado de EE. UU. a propósito:
+    con 3 corridas/día (nightly_pipeline.yml), un desfase de unas horas en el
+    corte del día no cambia la conclusión de si hay presupuesto o no, y
+    ajustarlo sería complejidad sin beneficio real (mismo principio de
+    parsimonia que el resto del proyecto)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*) AS n
+            FROM event_analyses
+            WHERE analyzed_at::date = CURRENT_DATE
+              AND from_cache = FALSE
+              AND model_version_bull_bear <> 'SKIPPED_OBJECTIVE_NO_TRADE'
+            """
+        )
+        n = cur.fetchone()["n"]
+    return round(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, 4)
+
+
+def remaining_daily_budget_events(conn) -> int | None:
+    """Cuántos eventos MÁS caben hoy dentro de config.DAILY_SPEND_CAP_USD,
+    dado lo que spend_today_usd() dice que ya se ha gastado. None si el tope
+    diario está desactivado (DAILY_SPEND_CAP_USD <= 0 — configuración
+    explícita para desactivarlo, no el caso por defecto)."""
+    if config.DAILY_SPEND_CAP_USD <= 0:
+        return None
+    remaining_usd = config.DAILY_SPEND_CAP_USD - spend_today_usd(conn)
+    if remaining_usd <= 0:
+        return 0
+    return int(remaining_usd / config.ANALYSIS_EST_COST_PER_EVENT_USD)
+
+
 def check_fda_crl_without_8k(conn, cik: str, event_class: str, d0_close_date: date) -> bool:
     """Regla 6 de abstention_engine: una CRL de FDA sin 8-K correspondiente
     todavía no está comunicada oficialmente por la empresa. Solo aplica a
@@ -190,27 +234,25 @@ def process_chunk(conn, client, event_rows: list[dict]):
     que quedarse con lo que devuelve esta función, no seguir usando la
     conexión original a ciegas.
     """
-    cache_hits: dict[int, dict] = {}
-    needs_llm: list[dict] = []
-    for ev in event_rows:
-        cached = get_cached_analysis(conn, ev["ticker"], ev["event_class"], ev["d0_close_date"])
-        if cached:
-            cache_hits[ev["event_id"]] = cached
-        else:
-            needs_llm.append(ev)
+    cache_hits = get_cached_analyses_batch(conn, event_rows)
+    needs_llm = [ev for ev in event_rows if ev["event_id"] not in cache_hits]
 
-    # Pre-filtro de novelty (Etapa 2, adelantada): abstention_engine.py aplica
-    # `if novelty_score < NOVELTY_FLOOR: NO_TRADE` como la PRIMERA de sus 7
-    # condiciones, antes incluso de mirar lo que dijeron Bull/Bear/Judge. Eso
-    # significa que para un evento con novelty baja, el resultado final es
-    # NO_TRADE en las 3 estrategias SIN IMPORTAR qué responda el debate de
-    # IA — pagar ese debate no cambia ni una sola decisión, solo gasta
-    # tokens. novelty se calcula aquí (enrichment + guidance/rumor, ambos
-    # solo Postgres, sin coste) ANTES de construir el batch, para no invocar
-    # Bull/Bear/Judge en los eventos que van a descartarse igual.
+    # Pre-filtro de condiciones objetivas (Etapa 2 + Etapa 8, adelantadas —
+    # hallazgo de auditoría IMPROVEMENT_PLAN.md R5, extiende el pre-filtro
+    # que antes solo cubría novelty): de las 7 reglas de
+    # abstention_engine.decide_for_strategy, 5 (novelty, survivorship
+    # warning, modelo de factores sin ajustar, CRL de FDA sin 8-K, e
+    # iliquidez) NO dependen en absoluto de lo que diga Bull/Bear/Judge — ver
+    # abstention_engine.objective_no_trade_reason(). Si CUALQUIERA dispara,
+    # el resultado final es NO_TRADE en las 3 estrategias SIN IMPORTAR qué
+    # responda el debate de IA — pagar ese debate no cambia ni una sola
+    # decisión, solo gasta tokens. Todos estos datos se calculan aquí
+    # (enrichment + guidance/rumor + el cruce EDGAR/FDA, todo solo Postgres,
+    # sin coste) ANTES de construir el batch, para no invocar Bull/Bear/Judge
+    # en los eventos que van a descartarse igual.
     precomputed_by_id: dict[int, tuple] = {}
     llm_candidates: list[dict] = []
-    skipped_low_novelty_ids: set[int] = set()
+    skipped_ids_with_reason: dict[int, str] = {}
     for ev in needs_llm:
         enrichment = fetch_and_compute_enrichment(conn, ev)
         has_guidance, rumor_flag = compute_novelty_signals(conn, ev["ticker"], ev["d0_close_date"])
@@ -221,15 +263,25 @@ def process_chunk(conn, client, event_rows: list[dict]):
                 rumor_flag=rumor_flag,
             )
         )
-        precomputed_by_id[ev["event_id"]] = (enrichment, novelty)
-        if novelty.score < NOVELTY_FLOOR:
-            skipped_low_novelty_ids.add(ev["event_id"])
+        is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
+        precomputed_by_id[ev["event_id"]] = (enrichment, novelty, is_fda_crl_without_8k)
+        skip_reason = objective_no_trade_reason(
+            novelty_score=novelty.score,
+            had_survivorship_warning=enrichment.had_survivorship_warning,
+            beta_available=enrichment.beta_vs_spy is not None,
+            high_low_range_pct=enrichment.high_low_range_pct,
+            adv_usd_60d=enrichment.adv_usd_60d,
+            is_fda_crl_without_8k=is_fda_crl_without_8k,
+        )
+        if skip_reason is not None:
+            skipped_ids_with_reason[ev["event_id"]] = skip_reason
         else:
             llm_candidates.append(ev)
 
     logger.info(
-        "Chunk de %d eventos: %d en caché, %d requieren LLM, %d descartados por novelty < %d (NO_TRADE garantizado igualmente, se ahorra el debate de IA)",
-        len(event_rows), len(cache_hits), len(llm_candidates), len(skipped_low_novelty_ids), NOVELTY_FLOOR,
+        "Chunk de %d eventos: %d en caché, %d requieren LLM, %d descartados por condición objetiva "
+        "(NO_TRADE garantizado igualmente, se ahorra el debate de IA)",
+        len(event_rows), len(cache_hits), len(llm_candidates), len(skipped_ids_with_reason),
     )
 
     bull_bear_results: dict[str, dict] = {}
@@ -283,7 +335,7 @@ def process_chunk(conn, client, event_rows: list[dict]):
             _process_single_event(
                 conn, ev, cache_hits.get(event_id), bull_bear_results, judge_results, bb_batch_id, judge_batch_id,
                 precomputed=precomputed_by_id.get(event_id),
-                skipped_low_novelty=event_id in skipped_low_novelty_ids,
+                skip_reason=skipped_ids_with_reason.get(event_id),
             )
         except Exception:
             logger.exception("Fallo analizando evento %d — se continúa con el siguiente", ev["event_id"])
@@ -311,20 +363,20 @@ def process_chunk(conn, client, event_rows: list[dict]):
 
 def _process_single_event(
     conn, ev: dict, cache_hit: dict | None, bull_bear_results: dict, judge_results: dict, bb_batch_id: str | None, judge_batch_id: str | None,
-    precomputed: tuple | None = None, skipped_low_novelty: bool = False,
+    precomputed: tuple | None = None, skip_reason: str | None = None,
 ) -> None:
     event_id = ev["event_id"]
 
     # --- Etapa 1: enrichment (SIEMPRE fresco — ver docstring del módulo) ---
     # --- Etapa 2: novelty (SIEMPRE fresco) ---
-    # Si process_chunk ya las calculó para decidir el pre-filtro de novelty
-    # (ver su docstring), se reutilizan aquí en vez de repetir las mismas
-    # consultas a Postgres — no cambia el resultado, solo evita el trabajo
-    # duplicado. Los cache_hits no pasan por ese pre-filtro (no lo necesitan,
-    # no van a llamar al LLM), así que para ellos se calculan aquí igual que
-    # siempre.
+    # Si process_chunk ya las calculó para decidir el pre-filtro de
+    # condiciones objetivas (ver su docstring), se reutilizan aquí en vez de
+    # repetir las mismas consultas a Postgres — no cambia el resultado, solo
+    # evita el trabajo duplicado. Los cache_hits no pasan por ese pre-filtro
+    # (no lo necesitan, no van a llamar al LLM), así que para ellos se
+    # calculan aquí igual que siempre.
     if precomputed is not None:
-        enrichment, novelty = precomputed
+        enrichment, novelty, is_fda_crl_without_8k = precomputed
     else:
         enrichment = fetch_and_compute_enrichment(conn, ev)
         # Fase 3: has_prior_guidance/rumor_flag ya no son siempre None — se
@@ -340,8 +392,9 @@ def _process_single_event(
                 rumor_flag=rumor_flag,
             )
         )
+        is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
 
-    # --- Etapas 3-5: Bull/Bear/Judge (de caché, de LLM, o descartado por novelty baja) ---
+    # --- Etapas 3-5: Bull/Bear/Judge (de caché, de LLM, o descartado por una condición objetiva) ---
     from_cache = cache_hit is not None
     if from_cache:
         bull_output = cache_hit["bull_analyst_output"]
@@ -352,21 +405,22 @@ def _process_single_event(
         model_bull_bear = cache_hit["model_version_bull_bear"]
         model_judge = cache_hit["model_version_judge"]
         batch_bb, batch_judge = None, None
-    elif skipped_low_novelty:
-        # No se invocó Bull/Bear/Judge para este evento: novelty.score ya
-        # está por debajo de abstention_engine.NOVELTY_FLOOR, y esa regla es
-        # la PRIMERA que evalúa decide_for_strategy — dispara NO_TRADE en las
-        # 3 estrategias sin mirar net_conviction/confidence en absoluto. Un
-        # net_conviction=0/confidence=0 aquí no cambia el veredicto final,
-        # solo dice explícitamente "no se gastó IA en este evento" en vez de
-        # simular una opinión que nunca se le pidió al modelo.
-        bull_output = {"skipped_low_novelty": True, "reason": f"novelty_score={novelty.score:.0f} < {NOVELTY_FLOOR} — NO_TRADE garantizado, no se invoca el debate de IA"}
-        bear_output = {"skipped_low_novelty": True, "reason": f"novelty_score={novelty.score:.0f} < {NOVELTY_FLOOR} — NO_TRADE garantizado, no se invoca el debate de IA"}
-        judge_output = {"skipped_low_novelty": True, "reason": f"novelty_score={novelty.score:.0f} < {NOVELTY_FLOOR} — NO_TRADE garantizado, no se invoca el debate de IA"}
+    elif skip_reason is not None:
+        # No se invocó Bull/Bear/Judge para este evento: una de las 5
+        # condiciones objetivas de abstention_engine.objective_no_trade_reason
+        # ya dispara NO_TRADE en las 3 estrategias sin mirar
+        # net_conviction/confidence en absoluto. Un net_conviction=0/
+        # confidence=0 aquí no cambia el veredicto final, solo dice
+        # explícitamente "no se gastó IA en este evento" en vez de simular
+        # una opinión que nunca se le pidió al modelo.
+        placeholder_reason = f"{skip_reason} — NO_TRADE garantizado, no se invoca el debate de IA"
+        bull_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
+        bear_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
+        judge_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
         net_conviction = 0.0
         confidence_in_conviction = 0.0
-        model_bull_bear = "SKIPPED_LOW_NOVELTY"
-        model_judge = "SKIPPED_LOW_NOVELTY"
+        model_bull_bear = "SKIPPED_OBJECTIVE_NO_TRADE"
+        model_judge = "SKIPPED_OBJECTIVE_NO_TRADE"
         batch_bb, batch_judge = None, None
     else:
         bull_output = bull_bear_results.get(custom_id_de(event_id, "bull"))
@@ -388,8 +442,7 @@ def _process_single_event(
     # --- Etapa 7: EV engine ---
     ev_result = compute_ev(net_conviction, confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence)
 
-    # --- Etapa 8: abstention engine ---
-    is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
+    # --- Etapa 8: abstention engine (is_fda_crl_without_8k ya calculado arriba) ---
     abstention_inputs = AbstentionInputs(
         novelty_score=novelty.score,
         confidence_in_conviction=confidence_in_conviction,
@@ -596,6 +649,31 @@ if __name__ == "__main__":
         f"{cola['listos']} con texto y listos (~{cola['coste_estimado_listos_usd']} $). "
         f"Tope por corrida: {config.ANALYSIS_MAX_EVENTS_PER_RUN or 'sin tope'}."
     )
+
+    # Tope de GASTO DIARIO ACUMULADO (IMPROVEMENT_PLAN.md A2) — distinto del
+    # tope por corrida de arriba: ese no sabe cuánto han gastado YA las otras
+    # corridas de hoy (nightly_pipeline.yml programa 3 al día). gasto_hoy_usd
+    # cuenta lo ya incurrido; presupuesto_eventos es cuánto MÁS cabe hoy. El
+    # tope efectivo de esta corrida es el más bajo de los dos.
+    gasto_hoy_usd = spend_today_usd(conn)
+    presupuesto_eventos = remaining_daily_budget_events(conn)
+    print(
+        f"Gasto de hoy: ~{gasto_hoy_usd} $ de {config.DAILY_SPEND_CAP_USD:.2f} $ "
+        f"({config.DAILY_SPEND_CAP_EUR:.2f} €/día). "
+        f"Presupuesto restante hoy: {'sin tope' if presupuesto_eventos is None else f'{presupuesto_eventos} eventos'}."
+    )
+    if presupuesto_eventos == 0:
+        print(
+            "::warning title=Presupuesto diario agotado::Las corridas anteriores de hoy ya "
+            f"gastaron ~{gasto_hoy_usd} $ de los {config.DAILY_SPEND_CAP_USD:.2f} $ del tope diario. "
+            f"{cola['listos']} eventos siguen en cola; se retoma sin hacer nada más en cuanto haya "
+            "presupuesto (mañana, o si se sube DAILY_SPEND_CAP_EUR)."
+        )
+        raise SystemExit(0)
+    max_events = config.ANALYSIS_MAX_EVENTS_PER_RUN
+    if presupuesto_eventos is not None:
+        max_events = presupuesto_eventos if max_events is None else min(max_events, presupuesto_eventos)
+
     # api_key EXPLÍCITO: ver la nota en adversarial_analyzer.py. Sin esto, el
     # chequeo de arriba puede pasar (la variable existe) y aun así reventar
     # más abajo si el secreto trae un salto de línea, porque la librería sin
@@ -606,7 +684,7 @@ if __name__ == "__main__":
         processed, conn = run_pipeline(
             conn,
             client,
-            max_events=config.ANALYSIS_MAX_EVENTS_PER_RUN,
+            max_events=max_events,
             min_market_cap=config.ANALYSIS_MIN_MARKET_CAP_USD,
             require_text=True,
         )

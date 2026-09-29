@@ -13,6 +13,7 @@ import pytest
 
 from pipeline.ingest.filing_text import (
     MAX_TEXT_CHARS,
+    _truncate_at_sentence_boundary,
     extract_best_text,
     parse_submission_documents,
     strip_html_to_text,
@@ -119,6 +120,43 @@ def test_extract_best_text_truncates_to_max_chars():
     huge_doc = [{"type": "8-K", "sequence": 1, "filename": "x.htm", "raw_text": "A" * (MAX_TEXT_CHARS * 3)}]
     result = extract_best_text(huge_doc, prefer_exhibit=False)
     assert result["length_chars"] <= MAX_TEXT_CHARS
+
+
+# ---------------------------------------------------------------------------
+# _truncate_at_sentence_boundary (IMPROVEMENT_PLAN.md M8)
+# ---------------------------------------------------------------------------
+
+
+def test_truncate_at_sentence_boundary_no_corta_si_ya_cabe():
+    assert _truncate_at_sentence_boundary("Frase corta.", 100) == "Frase corta."
+
+
+def test_truncate_at_sentence_boundary_corta_en_el_ultimo_punto():
+    texto = "Primera frase. Segunda frase. Tercera frase que se pasa del límite."
+    limite = len("Primera frase. Segunda frase.") + 5  # cae a mitad de la tercera
+    resultado = _truncate_at_sentence_boundary(texto, limite)
+    assert resultado == "Primera frase. Segunda frase."
+
+
+def test_truncate_at_sentence_boundary_reconoce_exclamacion_e_interrogacion():
+    assert _truncate_at_sentence_boundary("¿Todo bien? Sí. Más texto de sobra aquí", 15) == "¿Todo bien? Sí."
+
+
+def test_truncate_at_sentence_boundary_sin_puntuacion_cercana_cae_al_corte_duro():
+    """Un bloque largo sin fin de frase (p. ej. una tabla de cifras) no debe
+    perder más de la mitad del presupuesto buscando un punto que no está."""
+    texto = "1234567890" * 200  # sin ningún '.', '!' o '?'
+    resultado = _truncate_at_sentence_boundary(texto, 100)
+    assert resultado == texto[:100]
+    assert len(resultado) == 100
+
+
+def test_truncate_at_sentence_boundary_ignora_un_punto_demasiado_lejos_del_limite():
+    """Un punto que deja más de la mitad del presupuesto sin usar no cuenta
+    como un buen corte — mejor el corte duro que tirar la mayoría del texto."""
+    texto = "X. " + ("Y" * 200)  # el único punto está casi al principio
+    resultado = _truncate_at_sentence_boundary(texto, 100)
+    assert resultado == texto[:100]
 
 
 def test_extract_best_text_falls_back_to_first_when_no_sequence_present():
@@ -253,3 +291,100 @@ class TestPopulateAgainstRealPostgres:
         assert rows[bueno]["ok"] is True
         assert rows[malo]["filing_text_attempts"] == filing_text.MAX_ATTEMPTS
         assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0  # ya no se reintenta
+
+    def test_populate_guarda_length_chars_e_includes_exhibit_correctamente(self):
+        """Cobertura del UPDATE en sí (IMPROVEMENT_PLAN.md M7): antes solo se
+        comprobaba que filing_text quedara relleno, no que el resto de columnas
+        que se escriben en el mismo UPDATE (length_chars, includes_exhibit,
+        extracted_at) llevaran el valor correcto."""
+        from pipeline.ingest.filing_text import populate_missing_filing_text
+
+        event_id = self._seed_event()
+        populate_missing_filing_text(self.conn)
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT filing_text, filing_text_length_chars, filing_text_includes_exhibit, "
+                "filing_text_extracted_at FROM events WHERE event_id = %s",
+                (event_id,),
+            )
+            row = cur.fetchone()
+        assert row["filing_text_length_chars"] == len(row["filing_text"])
+        assert row["filing_text_includes_exhibit"] is True
+        assert row["filing_text_extracted_at"] is not None
+
+    def test_populate_incrementa_intentos_cuando_el_texto_extraido_queda_vacio(self, monkeypatch):
+        """Un submission que descarga bien pero del que extract_best_text no
+        saca texto (p. ej. todo el contenido es XBRL/binario) no debe
+        confundirse con un éxito ni quedarse reintentando para siempre sin
+        contar el intento."""
+        from pipeline.ingest import filing_text
+
+        event_id = self._seed_event()
+
+        class _VacioResp:
+            text = "<DOCUMENT><TYPE>8-K</TYPE><TEXT></TEXT></DOCUMENT>"
+
+        monkeypatch.setattr("pipeline.ingest.filing_text.throttled_get", lambda url, **kw: _VacioResp())
+
+        assert filing_text.populate_missing_filing_text(self.conn) == 0
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT filing_text, filing_text_attempts FROM events WHERE event_id = %s",
+                (event_id,),
+            )
+            row = cur.fetchone()
+        assert row["filing_text"] is None
+        assert row["filing_text_attempts"] == 1
+
+    def test_populate_procesa_los_mas_recientes_primero(self):
+        """ORDER BY d0_close_date DESC: con limit=1 debe tocar siempre el
+        evento con la fecha más reciente, no el que se insertó primero."""
+        from pipeline.ingest.filing_text import populate_missing_filing_text
+
+        antiguo = self._seed_event()
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO events (cik, ticker, source, is_satellite, event_class, item_codes,
+                    accession_number, source_url, filed_at, d0_close_date, classification_method,
+                    classification_confidence, raw_text_hash)
+                VALUES ('1','ACME','EDGAR',FALSE,'8K_2.02_EARNINGS',ARRAY['2.02'],'acc2','https://www.sec.gov/x',
+                        '2026-01-10','2026-01-10','RULE',1.0,'h2')
+                RETURNING event_id
+                """
+            )
+            reciente = cur.fetchone()["event_id"]
+        self.conn.commit()
+
+        assert populate_missing_filing_text(self.conn, limit=1) == 1
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT event_id, filing_text IS NOT NULL AS ok FROM events ORDER BY event_id")
+            rows = {r["event_id"]: r["ok"] for r in cur.fetchall()}
+        assert rows[reciente] is True
+        assert rows[antiguo] is False
+
+    def test_un_error_permanente_salta_directo_a_max_attempts(self, monkeypatch):
+        """IMPROVEMENT_PLAN.md M5: un 404/403/400 no es mala suerte transitoria
+        — reintentarlo 3 noches seguidas no cambia el resultado. Con
+        PermanentHTTPError, el evento se aparta de la cola en la PRIMERA
+        pasada en vez de necesitar MAX_ATTEMPTS intentos."""
+        from pipeline.ingest import filing_text
+        from pipeline.ingest.edgar_http import PermanentHTTPError
+
+        malo = self._seed_event()
+
+        def _get(url, **kw):
+            raise PermanentHTTPError("404 en " + url)
+
+        monkeypatch.setattr("pipeline.ingest.filing_text.throttled_get", _get)
+        assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0
+
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT filing_text_attempts FROM events WHERE event_id = %s", (malo,))
+            row = cur.fetchone()
+        assert row["filing_text_attempts"] == filing_text.MAX_ATTEMPTS
+        # Ya no aparece en la cola pendiente — no hace falta gastar más intentos.
+        assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0

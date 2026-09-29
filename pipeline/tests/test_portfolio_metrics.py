@@ -9,6 +9,7 @@ import pytest
 from pipeline.backtest.portfolio_metrics import (
     CALIBRATION_TARGET,
     INSUFFICIENT_SAMPLE_THRESHOLD,
+    MIN_TRADES_FOR_REGRESSION,
     bucket_by_confidence,
     compute_asymmetry_report,
     compute_calibration,
@@ -136,13 +137,44 @@ def test_equity_metrics_sharpe_positive_for_steady_gains():
 
 
 def test_equity_metrics_calmar_and_recovery_factor_use_drawdown():
+    # >=MIN_DAYS_FOR_ANNUALIZATION para que annual_return no sea None aquí
+    # (eso se prueba aparte, ver test_equity_metrics_curva_corta_no_anualiza).
     curve = [
-        {"trade_date": date(2024, 1, i + 1), "balance": b}
-        for i, b in enumerate([100_000, 150_000, 120_000])  # dd desde 150k a 120k = -20%
+        {"trade_date": date(2024, 1, 1), "balance": 100_000},
+        {"trade_date": date(2024, 2, 1), "balance": 150_000},  # dd desde 150k a 120k = -20%
+        {"trade_date": date(2024, 3, 1), "balance": 120_000},
     ]
     m = compute_equity_metrics(curve, starting_capital=100_000.0)
+    assert m["annual_return"] is not None
     assert m["calmar_ratio"] == pytest.approx(m["annual_return"] / m["max_drawdown"])
     assert m["recovery_factor"] == pytest.approx(m["total_return"] / m["max_drawdown"])
+
+
+def test_equity_metrics_curva_corta_no_anualiza():
+    """REGRESIÓN (IMPROVEMENT_PLAN.md M20): con 2 días de curva, extrapolar
+    linealmente a un año entero convertía un +5% en un annual_return de
+    cientos de veces ese valor — un número que no informa de nada real.
+    Por debajo de MIN_DAYS_FOR_ANNUALIZATION, annual_return (y calmar_ratio,
+    que depende de él) deben ser None en vez de un número disparatado."""
+    curve = [
+        {"trade_date": date(2024, 1, 1), "balance": 100_000.0},
+        {"trade_date": date(2024, 1, 2), "balance": 105_000.0},
+    ]
+    m = compute_equity_metrics(curve, starting_capital=100_000.0)
+    assert m["total_return"] == pytest.approx(0.05)  # total_return SÍ se calcula, no es lo que explota
+    assert m["annual_return"] is None
+    assert m["calmar_ratio"] is None
+
+
+def test_equity_metrics_justo_en_el_limite_de_dias_si_anualiza():
+    from pipeline.backtest.portfolio_metrics import MIN_DAYS_FOR_ANNUALIZATION
+
+    curve = [
+        {"trade_date": date(2024, 1, 1), "balance": 100_000.0},
+        {"trade_date": date(2024, 1, 1) + timedelta(days=MIN_DAYS_FOR_ANNUALIZATION), "balance": 105_000.0},
+    ]
+    m = compute_equity_metrics(curve, starting_capital=100_000.0)
+    assert m["annual_return"] is not None
 
 
 def test_equity_metrics_risk_free_rate_reduces_sharpe():
@@ -173,6 +205,28 @@ def test_metrics_by_event_type_threshold_boundary():
     trades = [_trade(1, event_class="X")] * INSUFFICIENT_SAMPLE_THRESHOLD
     result = compute_metrics_by_event_type(trades)
     assert result["X"]["insufficient_sample"] is False  # exactamente 20, no "< 20"
+
+
+def test_metrics_by_event_type_hides_sharpe_when_sample_insufficient():
+    """IMPROVEMENT_PLAN.md R12: sharpe_per_trade se OCULTA (None) por debajo
+    de INSUFFICIENT_SAMPLE_THRESHOLD, no solo se flagea — antes se calculaba
+    y mostraba un número con solo n>=2, aunque insufficient_sample ya
+    dijera True."""
+    trades = [_trade(p, event_class="A") for p in [5, -2, 3]]  # n=3, varianza>0, pero < 20
+    result = compute_metrics_by_event_type(trades)
+    assert result["A"]["insufficient_sample"] is True
+    assert result["A"]["sharpe_per_trade"] is None
+    # win_rate/avg_return SÍ se siguen mostrando: son directamente
+    # interpretables sin necesitar un n grande para no ser engañosos.
+    assert result["A"]["win_rate"] is not None
+    assert result["A"]["avg_return"] is not None
+
+
+def test_metrics_by_event_type_shows_sharpe_once_sample_is_sufficient():
+    trades = [_trade(p % 5 - 2, event_class="B") for p in range(INSUFFICIENT_SAMPLE_THRESHOLD)]
+    result = compute_metrics_by_event_type(trades)
+    assert result["B"]["insufficient_sample"] is False
+    assert result["B"]["sharpe_per_trade"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +301,27 @@ def test_prediction_regression_scatter_has_one_point_per_trade():
     trades = [_trade(0, ev=0.001, actual_move_pct=1), _trade(0, ev=0.002, actual_move_pct=2)]
     result = compute_prediction_regression(trades)
     assert len(result["scatter"]) == 2
+
+
+def test_prediction_regression_hides_r_squared_with_exactly_two_trades():
+    """IMPROVEMENT_PLAN.md R12: con 2 puntos, una recta de un solo predictor
+    pasa SIEMPRE exactamente por ambos (0 grados de libertad) — r_squared=1.0
+    es una certeza matemática, no una señal real, y antes se devolvía sin
+    ningún aviso. scatter SÍ se sigue devolviendo: ver los 2 puntos nunca es
+    engañoso, resumirlos en un R² sí lo es."""
+    trades = [_trade(0, ev=0.001, actual_move_pct=1), _trade(0, ev=0.002, actual_move_pct=2)]
+    result = compute_prediction_regression(trades)
+    assert result["r_squared"] is None
+    assert len(result["scatter"]) == 2
+    assert result["insufficient_sample"] is True
+
+
+def test_prediction_regression_shows_r_squared_from_min_trades_onward():
+    assert MIN_TRADES_FOR_REGRESSION == 3  # documenta el umbral que fija el test
+    trades = [_trade(0, ev=e, actual_move_pct=e * 100 * 2) for e in [0.001, 0.002, 0.003]]
+    result = compute_prediction_regression(trades)
+    assert result["r_squared"] == pytest.approx(1.0, abs=1e-6)
+    assert result["insufficient_sample"] is True  # 3 < 20: se calcula, pero se marca pequeño
 
 
 def test_top_n_trades_winners_and_losers():

@@ -69,6 +69,14 @@ jobs:
   # esquema no verificado.
   test:
     runs-on: ubuntu-latest
+    # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + A4): ningún job de este
+    # workflow tenía timeout-minutes, así que un cuelgue real (Postgres de
+    # servicio que no arranca, un test que se queda esperando red) solo
+    # paraba con el límite de 360 min que pone GitHub por defecto —
+    # gastando 6 horas de minutos de CI por cada cuelgue. La suite completa
+    # tarda un par de minutos (ver runs reales); 15 min da margen de sobra
+    # sin acercarse al default. Cifra conservadora, no medida con precisión.
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -95,9 +103,38 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/money_poc_test
         run: python -m pytest pipeline/tests/ -v
 
+      - name: Aviso de infraestructura si este job falla (IMPROVEMENT_PLAN.md A3)
+        # Distinto de las alertas de NEGOCIO (señales/paper trading, al final
+        # de ingest_and_analyze): esto avisa de que el PIPELINE MISMO se rompió
+        # (tests en rojo, Postgres de servicio no disponible), algo que hoy no
+        # notificaba nada — había que entrar a mano a la pestaña Actions para
+        # enterarse. `if: failure()` (no `!cancelled()`): solo cuando de
+        # verdad falló algo, nunca en una cancelación manual. Sin dependencias
+        # nuevas: pipeline.notify.telegram es solo stdlib (ver su docstring),
+        # así que esto funciona aunque `pip install` de arriba haya fallado —
+        # lo único que hace falta es que actions/checkout haya corrido.
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          from pipeline.notify import telegram
+          telegram.send_message('🔴 Nightly Pipeline: el job \"test\" ha fallado.\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')
+          "
+
   ingest_and_analyze:
     needs: test
     runs-on: ubuntu-latest
+    # Job largo: ingesta EDGAR/XBRL/Fama-French, extracción de texto, análisis
+    # con IA (acotado por config.BATCH_MAX_WAIT_SECONDS = 2h, ver
+    # adversarial_analyzer.run_batch_and_collect), backtest, validación y
+    # paper trading — y, en la pasada nocturna, además el backfill de precios
+    # de yfinance (la etapa más lenta y frágil, ARCHITECTURE_LEAN.md §7).
+    # 180 min es una cota conservadora sin medir con precisión el caso peor
+    # real; el objetivo es parar un cuelgue de verdad (p. ej. yfinance
+    # colgado), no ajustar al segundo una corrida normal.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -119,10 +156,24 @@ jobs:
         run: |
           YESTERDAY=$(date -u -d "yesterday" +%Y-%m-%d)
           if [ -n "${{ github.event.inputs.backfill_start }}" ]; then
+            START="${{ github.event.inputs.backfill_start }}"
             END="${{ github.event.inputs.backfill_end }}"
             [ -z "$END" ] && END="$YESTERDAY"
-            echo "Backfill histórico: ${{ github.event.inputs.backfill_start }} -> $END"
-            python -m pipeline.ingest.edgar_scraper --start "${{ github.event.inputs.backfill_start }}" --end "$END"
+            # Tope de volumen (IMPROVEMENT_PLAN.md A5): --start/--end no tenía
+            # techo — un solo error tecleando la fecha (p. ej. un año de menos)
+            # lanzaría un backfill de décadas contra EDGAR sin que nada lo
+            # avisara antes de gastar horas de runner. El propio proyecto solo
+            # necesita histórico desde BACKTEST_START (2021-01-01): un rango
+            # manual nunca debería superar por mucho la ventana de 5 años que
+            # ya cubre el histórico completo.
+            MAX_BACKFILL_DAYS=2000
+            DIAS=$(( ($(date -u -d "$END" +%s) - $(date -u -d "$START" +%s)) / 86400 ))
+            if [ "$DIAS" -gt "$MAX_BACKFILL_DAYS" ]; then
+              echo "::error::Rango de backfill de $DIAS días, por encima del tope de $MAX_BACKFILL_DAYS. Si de verdad hace falta, lanza el workflow varias veces con tramos más cortos."
+              exit 1
+            fi
+            echo "Backfill histórico: $START -> $END ($DIAS días)"
+            python -m pipeline.ingest.edgar_scraper --start "$START" --end "$END"
           elif [ -n "${{ github.event.inputs.single_day }}" ]; then
             python -m pipeline.ingest.edgar_scraper --start "${{ github.event.inputs.single_day }}" --end "${{ github.event.inputs.single_day }}"
           else
@@ -242,9 +293,16 @@ jobs:
         # Calcula universe.market_cap_last_usd / adv_usd_60d /
         # in_investable_universe, que existían en el schema pero nunca se
         # rellenaban. El análisis con IA de más abajo usa esto para priorizar
-        # empresas grandes y no gastar en micro-caps. Barato (una sentencia
-        # SQL): corre en todas las pasadas. --list 25 deja en el log las 25
-        # mayores y cuántos eventos tienen pendientes.
+        # empresas grandes y no gastar en micro-caps.
+        #
+        # Solo en la pasada nocturna (IMPROVEMENT_PLAN.md M13): sus DOS únicos
+        # insumos, precios (yfinance_backfill) y cuentas (xbrl_fundamentals),
+        # son ellos mismos "solo nocturna" (ver esos pasos arriba) — no que
+        # correrlo intradía sea caro, es que recalcularía sobre EXACTAMENTE
+        # los mismos datos que ya tiene, dos veces al día, sin que el
+        # resultado pueda cambiar. --list 25 deja en el log las 25 mayores y
+        # cuántos eventos tienen pendientes.
+        if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.universe_maintenance --list 25
@@ -357,6 +415,24 @@ jobs:
           python -m pipeline.notify.signals_notifier
           python -m pipeline.notify.alerts_notifier
 
+      - name: Aviso de infraestructura si este job falla (IMPROVEMENT_PLAN.md A3)
+        # Cubre, entre otros, los dos ejemplos citados en A3 — "Ingesta EDGAR"
+        # e "Ingesta factores Fama-French" — y cualquier otro paso de este
+        # job: `if: failure()` dispara si CUALQUIER step anterior falló,
+        # aunque los pasos de después hayan seguido corriendo con
+        # `!cancelled()`. Distinto del aviso de NEGOCIO de arriba (señales/
+        # alerts): ese informa de resultados; este informa de que el
+        # pipeline se rompió, y antes de esta sesión nada lo hacía.
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          from pipeline.notify import telegram
+          telegram.send_message('🔴 Nightly Pipeline: el job \"ingest_and_analyze\" ha fallado.\n${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}')
+          "
+
   # El backfill de precios (yfinance) va en un job SEPARADO, manual, no en el
   # cron nocturno normal: es la etapa lenta y frágil (ARCHITECTURE_LEAN.md §7)
   # y solo hace falta ejecutarla una vez para el histórico, más incrementos
@@ -368,6 +444,11 @@ jobs:
     # paralelo, así que en un arranque en frío descargaría un universo vacío.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.backfill_start == ''
     runs-on: ubuntu-latest
+    # Mismo motivo que ingest_and_analyze (IMPROVEMENT_PLAN.md R6 + A4): un
+    # backfill manual de precios de todo el universo es justo el caso más
+    # lento y frágil del pipeline (ARCHITECTURE_LEAN.md §7) — cota
+    # conservadora, no medida con precisión.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
