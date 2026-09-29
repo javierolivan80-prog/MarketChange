@@ -317,6 +317,85 @@ def test_persist_validation_report_upsert_overwrites(conn):
         assert cur.fetchone()["n"] == 1
 
 
+# ---------------------------------------------------------------------------
+# _safe_get / lecturas defensivas de JSONB — IMPROVEMENT_PLAN.md M18: un
+# portfolio_report con un campo faltante (drift de esquema entre cuándo se
+# guardó y cuándo se lee) no debe tumbar la generación completa del reporte
+# con un KeyError. Puras, sin BD.
+# ---------------------------------------------------------------------------
+
+
+def _portfolio_report_incompleto() -> dict:
+    """Un portfolio_report con CONSERVATIVE completo y AGGRESSIVE con varios
+    campos faltantes (simula una versión persistida antes de añadir esos
+    campos, o un rename de clave) — el caso real que motivó M18."""
+    return {
+        "versions": {
+            "CONSERVATIVE": {
+                "trade_metrics": {"win_rate": 0.6, "total_trades": 20},
+                "equity_metrics": {"sharpe_ratio": 1.5, "total_return": 0.1, "max_drawdown": -0.05},
+                "calibration": {"calibration_score": 0.7},
+                "no_lookahead_violations": [],
+                "top_10_winners": [{"ticker": "A", "pnl_pct": 5.0, "exit_reason": "TP"}],
+                "top_10_losers": [{"ticker": "B", "pnl_pct": -3.0, "exit_reason": "SL"}],
+            },
+            "AGGRESSIVE": {
+                # Sin "equity_metrics", sin "calibration", sin "top_10_losers" —
+                # el drift de esquema simulado.
+                "trade_metrics": {"win_rate": 0.4, "total_trades": 5},
+                "no_lookahead_violations": [],
+                "top_10_winners": [{"ticker": "C", "pnl_pct": 2.0, "exit_reason": "TIMEOUT"}],
+            },
+        }
+    }
+
+
+def test_evaluate_all_versions_decision_no_revienta_con_campos_faltantes():
+    from pipeline.validation.report import evaluate_all_versions_decision
+
+    decisions = evaluate_all_versions_decision(_portfolio_report_incompleto())
+
+    assert set(decisions.keys()) == {"CONSERVATIVE", "AGGRESSIVE"}
+    # AGGRESSIVE, con datos faltantes, nunca puede salir GREENLIGHT (None no
+    # cuenta como "sí pasa el umbral" — ver generate_decision).
+    assert decisions["AGGRESSIVE"]["option"] != "A"
+
+
+def test_backtest_table_no_revienta_con_campos_faltantes():
+    from pipeline.validation.report import _backtest_table
+
+    tabla = _backtest_table(_portfolio_report_incompleto())
+
+    assert "CONSERVATIVE" in tabla
+    assert "AGGRESSIVE" in tabla
+    assert "—" in tabla  # el hueco de AGGRESSIVE se muestra, no rompe la tabla
+
+
+def test_safe_get_loguea_cuando_falta_la_clave(caplog):
+    import logging
+
+    from pipeline.validation.report import _safe_get
+
+    with caplog.at_level(logging.WARNING, logger="pipeline.validation.report"):
+        valor = _safe_get({}, "no_existe", "por_defecto", "contexto_de_prueba")
+
+    assert valor == "por_defecto"
+    assert "no_existe" in caplog.text
+    assert "contexto_de_prueba" in caplog.text
+
+
+def test_safe_get_no_loguea_cuando_la_clave_esta(caplog):
+    import logging
+
+    from pipeline.validation.report import _safe_get
+
+    with caplog.at_level(logging.WARNING, logger="pipeline.validation.report"):
+        valor = _safe_get({"x": 1}, "x", 0, "ctx")
+
+    assert valor == 1
+    assert caplog.text == ""
+
+
 def test_backtest_table_acepta_un_subconjunto_de_versiones():
     """IMPROVEMENT_PLAN.md Q3: _backtest_table ahora acepta qué versiones
     mostrar, para poder reutilizarla en el apéndice DYNAMIC vs BALANCED sin
