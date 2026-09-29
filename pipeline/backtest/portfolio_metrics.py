@@ -17,6 +17,15 @@ TRADING_DAYS_PER_YEAR = 252
 INSUFFICIENT_SAMPLE_THRESHOLD = 20
 CALIBRATION_TARGET = 0.6
 
+# Piso de historia para anualizar un retorno (IMPROVEMENT_PLAN.md M20):
+# heurístico, como el resto de umbrales del módulo, no derivado de una
+# teoría estadística formal. total_return / n_years extrapola linealmente
+# lo que pasó en un tramo corto a un año entero — con una curva de 1-2 días,
+# un movimiento de un par de puntos porcentuales cualquiera se convierte en
+# un "annual_return" de cientos o miles por ciento, un número que no informa
+# de nada real y que además Calmar hereda (annual_return / max_drawdown).
+MIN_DAYS_FOR_ANNUALIZATION = 30
+
 
 # ============================================================================
 # Métricas a nivel trade (no requieren la curva de equity)
@@ -95,6 +104,12 @@ def compute_equity_metrics(
     annual_return: retorno SIMPLE anualizado (total_return / n_años), no
     compuesto — más fácil de interpretar para un POC y consistente con cómo
     el spec describe la fórmula ("total_return / n_years"), no con un CAGR.
+    None si la curva cubre menos de MIN_DAYS_FOR_ANNUALIZATION días: con un
+    tramo tan corto, extrapolar linealmente a un año entero produce un
+    número sin sentido (un par de puntos porcentuales en 1-2 días se
+    convierten en cientos o miles por ciento) en vez de "esconderlo bajo un
+    umbral" — calmar_ratio, que depende de annual_return, hereda el mismo
+    None por el mismo motivo.
 
     risk_free_daily: tasa libre de riesgo diaria por fecha, opcional. Si se
     pasa, se resta de los retornos diarios antes de Sharpe/Sortino (más
@@ -110,7 +125,7 @@ def compute_equity_metrics(
     total_return = (final_balance - starting_capital) / starting_capital
     n_days = max((dates[-1] - dates[0]).days, 1)
     n_years = n_days / 365.25
-    annual_return = total_return / n_years
+    annual_return = total_return / n_years if n_days >= MIN_DAYS_FOR_ANNUALIZATION else None
 
     peak = balances[0]
     max_dd = 0.0
@@ -139,7 +154,7 @@ def compute_equity_metrics(
         elif len(downside) == 1:
             sortino_ratio = float(arr.mean() / abs(downside[0]) * np.sqrt(TRADING_DAYS_PER_YEAR))
 
-    calmar_ratio = (annual_return / max_drawdown) if max_drawdown > 0 else None
+    calmar_ratio = (annual_return / max_drawdown) if (annual_return is not None and max_drawdown > 0) else None
     recovery_factor = (total_return / max_drawdown) if max_drawdown > 0 else None
 
     return {
