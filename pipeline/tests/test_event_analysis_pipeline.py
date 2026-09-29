@@ -172,6 +172,78 @@ def test_fda_crl_without_8k_ignores_8k_filed_after_d0(conn):
 
 
 # ---------------------------------------------------------------------------
+# spend_today_usd / remaining_daily_budget_events — IMPROVEMENT_PLAN.md A2
+# ---------------------------------------------------------------------------
+
+
+def test_spend_today_usd_counts_only_real_llm_calls(conn):
+    """Solo cuenta como gasto una fila con from_cache=FALSE y
+    model_version_bull_bear distinto de 'SKIPPED_OBJECTIVE_NO_TRADE' — las
+    otras dos no pagaron ninguna llamada real a la Batch API."""
+    from pipeline.analyze.event_analysis_pipeline import spend_today_usd
+    from pipeline import config
+
+    eid_real = _seed_event(conn, "1", "REAL", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid_real, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+
+    eid_cache = _seed_event(conn, "2", "CACHED", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid_cache, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    eid_skip = _seed_event(conn, "3", "SKIP", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid_skip, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET from_cache = TRUE WHERE event_id = %s", (eid_cache,))
+        cur.execute("UPDATE event_analyses SET model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE' WHERE event_id = %s", (eid_skip,))
+    conn.commit()
+
+    assert spend_today_usd(conn) == pytest.approx(config.ANALYSIS_EST_COST_PER_EVENT_USD)
+
+
+def test_spend_today_usd_ignores_rows_from_other_days(conn):
+    from pipeline.analyze.event_analysis_pipeline import spend_today_usd
+
+    eid = _seed_event(conn, "1", "AYER", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET analyzed_at = now() - interval '1 day' WHERE event_id = %s", (eid,))
+    conn.commit()
+
+    assert spend_today_usd(conn) == 0.0
+
+
+def test_remaining_daily_budget_events_counts_down_from_the_cap(conn, monkeypatch):
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline import config
+
+    monkeypatch.setattr(config, "DAILY_SPEND_CAP_USD", config.ANALYSIS_EST_COST_PER_EVENT_USD * 3)
+
+    assert eap.remaining_daily_budget_events(conn) == 3
+
+    eid = _seed_event(conn, "1", "GASTADO", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+
+    assert eap.remaining_daily_budget_events(conn) == 2
+
+
+def test_remaining_daily_budget_events_zero_when_cap_already_spent(conn, monkeypatch):
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline import config
+
+    monkeypatch.setattr(config, "DAILY_SPEND_CAP_USD", config.ANALYSIS_EST_COST_PER_EVENT_USD)
+    eid = _seed_event(conn, "1", "GASTADO", date(2024, 1, 1))
+    _seed_minimal_event_analysis(conn, eid, "NO_TRADE", "NO_TRADE", "NO_TRADE")
+
+    assert eap.remaining_daily_budget_events(conn) == 0
+
+
+def test_remaining_daily_budget_events_none_when_cap_disabled(conn, monkeypatch):
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline import config
+
+    monkeypatch.setattr(config, "DAILY_SPEND_CAP_USD", 0.0)
+    assert eap.remaining_daily_budget_events(conn) is None
+
+
+# ---------------------------------------------------------------------------
 # compute_day3_stats
 # ---------------------------------------------------------------------------
 

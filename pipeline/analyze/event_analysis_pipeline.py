@@ -137,6 +137,50 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
     return row
 
 
+def spend_today_usd(conn) -> float:
+    """Gasto ESTIMADO ya incurrido hoy en Bull/Bear/Judge (IMPROVEMENT_PLAN.md
+    A2) — hallazgo de auditoría: no hace falta una tabla nueva de gasto,
+    event_analyses YA es el libro de cuentas: cada fila con from_cache=FALSE
+    y model_version_bull_bear distinto de 'SKIPPED_OBJETIVO_NO_TRADE' es
+    exactamente un evento que sí pagó una llamada real a la Batch API (los
+    de caché y los descartados por una condición objetiva o por el techo de
+    EV, A1, cuestan 0 — ver process_chunk). Crear una tabla aparte solo para
+    volver a contar lo que esta consulta ya cuenta sería una segunda fuente
+    de verdad redundante, no una simplificación.
+
+    'Hoy' es CURRENT_DATE en la zona horaria de Postgres (UTC por defecto en
+    Neon/Supabase) — no se ajusta a hora de mercado de EE. UU. a propósito:
+    con 3 corridas/día (nightly_pipeline.yml), un desfase de unas horas en el
+    corte del día no cambia la conclusión de si hay presupuesto o no, y
+    ajustarlo sería complejidad sin beneficio real (mismo principio de
+    parsimonia que el resto del proyecto)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*) AS n
+            FROM event_analyses
+            WHERE analyzed_at::date = CURRENT_DATE
+              AND from_cache = FALSE
+              AND model_version_bull_bear <> 'SKIPPED_OBJECTIVE_NO_TRADE'
+            """
+        )
+        n = cur.fetchone()["n"]
+    return round(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, 4)
+
+
+def remaining_daily_budget_events(conn) -> int | None:
+    """Cuántos eventos MÁS caben hoy dentro de config.DAILY_SPEND_CAP_USD,
+    dado lo que spend_today_usd() dice que ya se ha gastado. None si el tope
+    diario está desactivado (DAILY_SPEND_CAP_USD <= 0 — configuración
+    explícita para desactivarlo, no el caso por defecto)."""
+    if config.DAILY_SPEND_CAP_USD <= 0:
+        return None
+    remaining_usd = config.DAILY_SPEND_CAP_USD - spend_today_usd(conn)
+    if remaining_usd <= 0:
+        return 0
+    return int(remaining_usd / config.ANALYSIS_EST_COST_PER_EVENT_USD)
+
+
 def check_fda_crl_without_8k(conn, cik: str, event_class: str, d0_close_date: date) -> bool:
     """Regla 6 de abstention_engine: una CRL de FDA sin 8-K correspondiente
     todavía no está comunicada oficialmente por la empresa. Solo aplica a
@@ -611,6 +655,31 @@ if __name__ == "__main__":
         f"{cola['listos']} con texto y listos (~{cola['coste_estimado_listos_usd']} $). "
         f"Tope por corrida: {config.ANALYSIS_MAX_EVENTS_PER_RUN or 'sin tope'}."
     )
+
+    # Tope de GASTO DIARIO ACUMULADO (IMPROVEMENT_PLAN.md A2) — distinto del
+    # tope por corrida de arriba: ese no sabe cuánto han gastado YA las otras
+    # corridas de hoy (nightly_pipeline.yml programa 3 al día). gasto_hoy_usd
+    # cuenta lo ya incurrido; presupuesto_eventos es cuánto MÁS cabe hoy. El
+    # tope efectivo de esta corrida es el más bajo de los dos.
+    gasto_hoy_usd = spend_today_usd(conn)
+    presupuesto_eventos = remaining_daily_budget_events(conn)
+    print(
+        f"Gasto de hoy: ~{gasto_hoy_usd} $ de {config.DAILY_SPEND_CAP_USD:.2f} $ "
+        f"({config.DAILY_SPEND_CAP_EUR:.2f} €/día). "
+        f"Presupuesto restante hoy: {'sin tope' if presupuesto_eventos is None else f'{presupuesto_eventos} eventos'}."
+    )
+    if presupuesto_eventos == 0:
+        print(
+            "::warning title=Presupuesto diario agotado::Las corridas anteriores de hoy ya "
+            f"gastaron ~{gasto_hoy_usd} $ de los {config.DAILY_SPEND_CAP_USD:.2f} $ del tope diario. "
+            f"{cola['listos']} eventos siguen en cola; se retoma sin hacer nada más en cuanto haya "
+            "presupuesto (mañana, o si se sube DAILY_SPEND_CAP_EUR)."
+        )
+        raise SystemExit(0)
+    max_events = config.ANALYSIS_MAX_EVENTS_PER_RUN
+    if presupuesto_eventos is not None:
+        max_events = presupuesto_eventos if max_events is None else min(max_events, presupuesto_eventos)
+
     # api_key EXPLÍCITO: ver la nota en adversarial_analyzer.py. Sin esto, el
     # chequeo de arriba puede pasar (la variable existe) y aun así reventar
     # más abajo si el secreto trae un salto de línea, porque la librería sin
@@ -621,7 +690,7 @@ if __name__ == "__main__":
         processed, conn = run_pipeline(
             conn,
             client,
-            max_events=config.ANALYSIS_MAX_EVENTS_PER_RUN,
+            max_events=max_events,
             min_market_cap=config.ANALYSIS_MIN_MARKET_CAP_USD,
             require_text=True,
         )
