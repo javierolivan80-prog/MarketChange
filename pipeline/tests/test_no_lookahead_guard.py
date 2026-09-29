@@ -70,19 +70,12 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "Bloque __main__ del smoke test manual (--smoke-test), fuera del "
         "camino de producción."
     ),
-    (
-        "quality_score.py",
-        "SELECT * FROM fundamentals WHERE cik = %s ORDER BY fiscal_period_end",
-    ): (
-        "Rama as_of_date=None de fetch_annual_rows: vista EN VIVO del "
-        "dashboard, donde 'todo lo publicado hasta hoy' ES la respuesta "
-        "correcta — hoy no tiene futuro del que hacer look-ahead. La rama "
-        "con as_of_date (la que usaría un backtest) sí acota por filed_at, y "
-        "el docstring de la función advierte explícitamente de que en un "
-        "backtest hay que pasar la fecha simulada. Si algún día esto se usa "
-        "desde un backtest, esta entrada debe desaparecer y la rama sin "
-        "acotar con ella."
-    ),
+    # La entrada que hasta la sesión 11 (IMPROVEMENT_PLAN.md R11) cubría la
+    # rama as_of_date=None de fetch_annual_rows ("SELECT * FROM fundamentals
+    # WHERE cik = %s ORDER BY fiscal_period_end") ya no hace falta: esa rama
+    # sin acotar se eliminó — as_of_date es ahora obligatoria y siempre
+    # concreta (ver quality_score.fetch_annual_rows), así que la única query
+    # que queda ya está acotada por filed_at sin necesidad de allowlist.
 }
 
 

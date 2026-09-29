@@ -16,7 +16,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from pipeline.backtest.portfolio_report import run_full_backtest
-from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, tag_suffix
+from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, git_sha_corto, tag_suffix
 from pipeline.backtest.sensitivity import run_sensitivity_analysis
 from pipeline.validation.decision import generate_decision
 from pipeline.validation.event_study import run_event_study
@@ -166,26 +166,46 @@ def _event_study_table(event_study: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def _backtest_table(portfolio_report: dict) -> str:
+def _backtest_table(portfolio_report: dict, decisions: dict[str, dict] | None = None, versions: tuple[str, ...] = VERSION_ORDER) -> str:
+    """La columna "Rec" reutiliza el MISMO veredicto de PARTE 6
+    (`decisions`, ya calculado por `evaluate_all_versions_decision` con los
+    umbrales GREENLIGHT/YELLOWLIGHT/REDLIGHT de `decision.py`) — hallazgo de
+    auditoría (IMPROVEMENT_PLAN.md R2): antes calculaba su propio criterio
+    ad hoc, inline y más laxo (`win_rate>0.55 and sharpe>1.0`, sin mirar
+    drawdown, calibración, n_trades ni violaciones anti-look-ahead), lo que
+    podía mostrar "YES" aquí y "REDLIGHT" en PARTE 6 para la MISMA versión en
+    el MISMO documento, sin explicación. Una sola fuente de verdad por
+    veredicto, no dos criterios distintos en el mismo reporte.
+
+    decisions=None (usado por el apéndice DYNAMIC vs BALANCED,
+    IMPROVEMENT_PLAN.md Q3): DYNAMIC no pasa por evaluate_all_versions_decision
+    (esa etapa solo cubre CONSERVATIVE/BALANCED/AGGRESSIVE), así que no hay
+    veredicto real que reutilizar ahí — "Rec" muestra "—" en vez de fingir uno."""
     lines = ["| Versión | Total Return | Sharpe | Max DD | Win Rate | N | Rec |", "|---|---|---|---|---|---|---|"]
-    for version in VERSION_ORDER:
+    for version in versions:
         v = portfolio_report["versions"].get(version)
         if not v:
             continue
         ctx = f"portfolio_report.versions.{version}"
         em = _safe_get(v, "equity_metrics", {}, ctx)
         tm = _safe_get(v, "trade_metrics", {}, ctx)
-        win_rate, sharpe = tm.get("win_rate"), em.get("sharpe_ratio")
-        rec = "YES" if (win_rate or 0) > 0.55 and (sharpe or 0) > 1.0 else "NO"
+        decision = decisions.get(version) if decisions else None
+        rec = decision["option"] if decision else "—"
         lines.append(
-            f"| {version} | {_fmt_pct(em.get('total_return'))} | {_fmt_num(sharpe)} | "
-            f"{_fmt_pct(em.get('max_drawdown'))} | {_fmt_pct(win_rate)} | {tm.get('total_trades', 0)} | {rec} |"
+            f"| {version} | {_fmt_pct(em.get('total_return'))} | {_fmt_num(em.get('sharpe_ratio'))} | "
+            f"{_fmt_pct(em.get('max_drawdown'))} | {_fmt_pct(tm.get('win_rate'))} | {tm.get('total_trades', 0)} | {rec} |"
         )
     return "\n".join(lines)
 
 
 def _sensitivity_table(sensitivity: dict) -> str:
-    lines = ["| Scenario | Conservative Return | Aggressive Return | Impact |", "|---|---|---|---|"]
+    # R13 (IMPROVEMENT_PLAN.md): BALANCED entra en la tabla — puede ser
+    # best_version en PARTE 6, así que su sensibilidad tiene que verse igual
+    # que las otras dos, no solo la de Conservative/Aggressive.
+    lines = [
+        "| Scenario | Conservative Return (n) | Balanced Return (n) | Aggressive Return (n) | Impact |",
+        "|---|---|---|---|---|",
+    ]
     scenarios = sensitivity["scenarios"]
     scenario_keys = ["baseline", "commission_plus_0.1pct", "spread_plus_0.2pct", "latency_d_plus_2", "confidence_minus_20pct", "high_vix_regime", "low_vix_regime"]
     scenario_labels = {
@@ -198,16 +218,36 @@ def _sensitivity_table(sensitivity: dict) -> str:
         "low_vix_regime": "Régimen bajo-VIX",
     }
     cons = scenarios.get("CONSERVATIVE", {})
+    bal = scenarios.get("BALANCED", {})
     aggr = scenarios.get("AGGRESSIVE", {})
     baseline_cons = cons.get("baseline", {}).get("total_return")
+
+    def _cell(scenario: dict) -> str:
+        # (n) por escenario (IMPROVEMENT_PLAN.md R14): sin esto, un return
+        # que se desploma en un escenario podía ser "el escenario importa" o
+        # simplemente "la muestra se redujo a la mitad" — indistinguibles.
+        return f"{_fmt_pct(scenario.get('total_return'))} (n={scenario.get('n_trades', 0)})"
+
     for key in scenario_keys:
-        c = cons.get(key, {})
-        a = aggr.get(key, {})
-        c_ret, a_ret = c.get("total_return"), a.get("total_return")
+        c, b, a = cons.get(key, {}), bal.get(key, {}), aggr.get(key, {})
+        c_ret = c.get("total_return")
         impact = "—"
         if key != "baseline" and c_ret is not None and baseline_cons is not None:
             impact = f"{(c_ret - baseline_cons) * 100:+.2f}pp vs baseline (Conservative)"
-        lines.append(f"| {scenario_labels[key]} | {_fmt_pct(c_ret)} | {_fmt_pct(a_ret)} | {impact} |")
+        lines.append(f"| {scenario_labels[key]} | {_cell(c)} | {_cell(b)} | {_cell(a)} | {impact} |")
+
+    # n_missing_vix (IMPROVEMENT_PLAN.md R15): metadato POR VERSIÓN, no por
+    # escenario (split_by_vix_regime se corre una vez por versión) — una
+    # línea aparte en vez de una columna más, para no repetir el mismo
+    # número en las 2 filas de régimen VIX de cada versión.
+    n_missing = {v: scenarios.get(v, {}).get("n_missing_vix") for v in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")}
+    if any(n is not None for n in n_missing.values()):
+        lines.append("")
+        lines.append(
+            "*Trades sin vix_d0 disponible (excluidos del split alto/bajo-VIX): "
+            + ", ".join(f"{v.capitalize()}={n if n is not None else '—'}" for v, n in n_missing.items())
+            + "*"
+        )
     return "\n".join(lines)
 
 
@@ -297,7 +337,9 @@ puede tener un efecto real más pequeño que el MDE actual, no cero.
 
 ## PARTE 2 — Backtesting (viabilidad operativa)
 
-{_backtest_table(portfolio_report)}
+{_backtest_table(portfolio_report, decisions)}
+
+Rec = la misma decisión de PARTE 6 (A=GREENLIGHT, B=YELLOWLIGHT, C=REDLIGHT) — un único criterio, no un umbral aparte para esta tabla.
 
 Reporte de sesgos (sobre todo el universo, no por versión): {bias.get('n_delisted', '—')}/{bias.get('n_total_tickers', '—')} tickers deslistados ({_fmt_num(bias.get('survivorship_bias_pct'), 1)}% posible sesgo de supervivencia) · {bias.get('n_price_gaps', '—')}/{bias.get('n_price_rows', '—')} filas de precio con gap ({_fmt_num(bias.get('data_gap_pct'), 1)}%).
 
@@ -339,6 +381,21 @@ spec:
 {chr(10).join(f"- **{v}**: {decisions[v]['label']} — {'; '.join(decisions[v]['reasons'])}" for v in decisions)}
 
 **Veredicto global: {best_decision['label']}** (la mejor de las 3 versiones evaluadas, empates a favor de Conservative).
+
+## Apéndice — DYNAMIC vs BALANCED (IMPROVEMENT_PLAN.md Q3, comparación experimental)
+
+DYNAMIC no es una de las 3 versiones del spec (ver `portfolio_strategies.py`,
+nota 5 de su docstring): reutiliza el criterio de SI operar de BALANCED y
+solo cambia el sizing (ponderado por EV×confianza en vez del interpolado
+por confianza fijo). Se corre y persiste en cada backtest igual que las
+otras 3, pero queda fuera de PARTE 2/3/6 a propósito — no es candidata al
+veredicto de inversión hasta que se demuestre que aporta algo sobre
+BALANCED con evidencia real, no solo con la lógica de diseño. Esta tabla
+existe para que esa comparación sea visible sin tener que ir a buscar el
+JSON crudo — no cambia el veredicto de arriba ni las 3 versiones que sí lo
+determinan.
+
+{_backtest_table(portfolio_report, versions=("BALANCED", "DYNAMIC"))}
 
 ## PARTE 7 — Next steps
 
@@ -485,7 +542,6 @@ def generate_full_validation_report(conn, run_batch_tag: str | None = None, docs
 if __name__ == "__main__":
     import argparse
     import logging
-    import subprocess
 
     logging.basicConfig(level=logging.INFO)
     from pipeline.db.connection import get_connection
@@ -533,12 +589,10 @@ if __name__ == "__main__":
         # Mismo esquema de tag (incluido el sufijo -OOS) que
         # backtest/portfolio_report.py:__main__ — tiene que coincidir
         # exactamente para encontrar el portfolio_report de esta misma
-        # corrida en vez de calcular uno nuevo.
-        try:
-            git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-        except Exception:
-            git_sha = "unknown"
-        tag = f"{date.today().isoformat()}-{git_sha}{tag_suffix(sample)}"
+        # corrida en vez de calcular uno nuevo. git_sha_corto() (ver
+        # sample_split.py, IMPROVEMENT_PLAN.md Q8) es la MISMA función que
+        # llama portfolio_report.py, no una copia independiente.
+        tag = f"{date.today().isoformat()}-{git_sha_corto()}{tag_suffix(sample)}"
         payload = persist_validation_report(conn, tag, sample=sample)
         if payload.get("sample") == SAMPLE_OOS:
             print(f"\n{'=' * 70}\n⚠️  {OOS_WARNING}\n{'=' * 70}\n")

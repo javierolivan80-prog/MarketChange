@@ -160,6 +160,43 @@ def test_run_paper_trading_report_compares_against_existing_historical_backtest(
     assert comparison["historical_win_rate"] == pytest.approx(0.55)
 
 
+def test_compare_with_historical_backtest_flags_aggressive_exit_mechanics(conn):
+    """IMPROVEMENT_PLAN.md M14: AGGRESSIVE usa una mecánica de salida distinta
+    en paper trading (un único TP al primer tramo del trailing) que en el
+    backtest histórico (trailing-stop escalonado real) — la comparación debe
+    avisarlo con un 'caveat', y solo para AGGRESSIVE, no para las otras 2
+    versiones (que no tienen esa divergencia)."""
+    import json
+
+    from pipeline.paper_trading.report import compare_with_historical_backtest
+
+    fake_hist = {
+        "run_batch_tag": "hist-m14",
+        "versions": {
+            "CONSERVATIVE": {"trade_metrics": {"win_rate": 0.55}},
+            "AGGRESSIVE": {"trade_metrics": {"win_rate": 0.40}},
+            "BALANCED": {"trade_metrics": {"win_rate": 0.50}},
+        },
+    }
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO portfolio_reports (run_batch_tag, report_json) VALUES ('hist-m14', %s)",
+            (json.dumps(fake_hist),),
+        )
+    conn.commit()
+
+    for version, win_rate in (("CONSERVATIVE", 0.55), ("AGGRESSIVE", 0.40), ("BALANCED", 0.50)):
+        comparison = compare_with_historical_backtest(
+            conn, version, week_trade_metrics={"win_rate": win_rate}
+        )
+        assert comparison["comparable"] is True
+        if version == "AGGRESSIVE":
+            assert comparison.get("caveat")
+            assert "mecánica de salida" in comparison["caveat"]
+        else:
+            assert comparison.get("caveat") is None
+
+
 def test_open_position_unrealized_pnl_uses_latest_available_price(conn):
     from pipeline.paper_trading.report import run_paper_trading_report
 

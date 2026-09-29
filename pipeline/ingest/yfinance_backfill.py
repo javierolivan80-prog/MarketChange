@@ -44,6 +44,34 @@ BACKOFF_BASE_S = 2         # 2, 4, 8, 16 — misma política que el resto del pr
 DOWNLOAD_THREADS = 8       # descargas en paralelo dentro de un lote (ver _descargar_lote_con_reintentos)
 
 
+def _retry_with_backoff(func, description: str):
+    """Reintenta func() hasta MAX_RETRIES veces con backoff BACKOFF_BASE_S *
+    2**intento (2, 4, 8, 16s — misma secuencia que edgar_http.throttled_get,
+    aunque calculada con una fórmula en vez de una lista literal: ambos
+    archivos hablan con APIs distintas y no comparten dependencias, así que
+    no había manera limpia de que compartieran una sola constante sin
+    acoplar dos módulos que no tienen nada más en común).
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md Q5): _download_one_with_retry
+    y _descargar_lote_con_reintentos tenían el MISMO bucle de reintentos
+    duplicado palabra por palabra, solo cambiando qué se llama y qué texto
+    se loguea — exactamente el tipo de cosa que diverge en silencio con el
+    tiempo (un cambio en una copia y no en la otra).
+
+    func no debe tener efectos secundarios que no sean seguros de repetir
+    (aquí, siempre una llamada de red de solo lectura a yfinance). Devuelve
+    el resultado de func(), o None si se agotan los intentos."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            return func()
+        except Exception as exc:  # yfinance no tiene una jerarquía de excepciones propia estable
+            delay = BACKOFF_BASE_S * (2**attempt)
+            logger.warning("Fallo %s (intento %d): %s — esperando %ds", description, attempt, exc, delay)
+            time.sleep(delay)
+    logger.error("%s falló tras %d intentos", description, MAX_RETRIES)
+    return None
+
+
 def _trading_days_expected(start: date, end: date) -> set[date]:
     """Días en los que la bolsa abre de verdad, festivos incluidos.
 
@@ -121,23 +149,18 @@ def _validar_columnas(df: pd.DataFrame, ticker: str) -> None:
 def _download_one_with_retry(ticker: str, start: date, end: date) -> pd.DataFrame | None:
     import yfinance as yf
 
-    for attempt in range(MAX_RETRIES):
-        try:
-            df = yf.download(
-                ticker,
-                start=start.isoformat(),
-                end=(end + timedelta(days=1)).isoformat(),
-                auto_adjust=False,  # crítico: queremos Close crudo Y Adj Close por separado
-                progress=False,
-                threads=False,
-            )
-            return aplanar_columnas(df, ticker) if df is not None else None
-        except Exception as exc:  # yfinance no tiene una jerarquía de excepciones propia estable
-            delay = BACKOFF_BASE_S * (2**attempt)
-            logger.warning("Fallo descargando %s (intento %d): %s — esperando %ds", ticker, attempt, exc, delay)
-            time.sleep(delay)
-    logger.error("Descarga de %s falló tras %d intentos, se omite", ticker, MAX_RETRIES)
-    return None
+    def _intentar():
+        df = yf.download(
+            ticker,
+            start=start.isoformat(),
+            end=(end + timedelta(days=1)).isoformat(),
+            auto_adjust=False,  # crítico: queremos Close crudo Y Adj Close por separado
+            progress=False,
+            threads=False,
+        )
+        return aplanar_columnas(df, ticker) if df is not None else None
+
+    return _retry_with_backoff(_intentar, f"descargando {ticker}")
 
 
 def _descargar_lote_con_reintentos(tickers: list[str], start: date, end: date) -> pd.DataFrame | None:
@@ -155,31 +178,23 @@ def _descargar_lote_con_reintentos(tickers: list[str], start: date, end: date) -
     """
     import yfinance as yf
 
-    for intento in range(MAX_RETRIES):
-        try:
-            return yf.download(
-                tickers,
-                start=start.isoformat(),
-                end=(end + timedelta(days=1)).isoformat(),
-                auto_adjust=False,
-                progress=False,
-                # threads=False hacía que yfinance recorriera el lote EN SERIE
-                # por dentro: agrupar no quitaba ni una petición, solo movía el
-                # bucle dentro de la librería. Por eso el primer run con lotes
-                # tardó lo mismo (1h 24m). Un número modesto y explícito, no
-                # True: el límite de Yahoo no está documentado y con 50 hilos a
-                # la vez el 429 es seguro.
-                threads=DOWNLOAD_THREADS,
-            )
-        except Exception as exc:  # yfinance no tiene jerarquía de excepciones estable
-            espera = BACKOFF_BASE_S * (2**intento)
-            logger.warning(
-                "Fallo descargando el lote de %d tickers (intento %d): %s — esperando %ds",
-                len(tickers), intento, exc, espera,
-            )
-            time.sleep(espera)
-    logger.error("El lote de %d tickers falló tras %d intentos", len(tickers), MAX_RETRIES)
-    return None
+    def _intentar():
+        return yf.download(
+            tickers,
+            start=start.isoformat(),
+            end=(end + timedelta(days=1)).isoformat(),
+            auto_adjust=False,
+            progress=False,
+            # threads=False hacía que yfinance recorriera el lote EN SERIE
+            # por dentro: agrupar no quitaba ni una petición, solo movía el
+            # bucle dentro de la librería. Por eso el primer run con lotes
+            # tardó lo mismo (1h 24m). Un número modesto y explícito, no
+            # True: el límite de Yahoo no está documentado y con 50 hilos a
+            # la vez el 429 es seguro.
+            threads=DOWNLOAD_THREADS,
+        )
+
+    return _retry_with_backoff(_intentar, f"descargando el lote de {len(tickers)} tickers")
 
 
 def extraer_ticker_del_lote(df: pd.DataFrame | None, ticker: str) -> pd.DataFrame | None:

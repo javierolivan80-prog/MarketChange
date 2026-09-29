@@ -7,6 +7,7 @@ integración contra Postgres real (mismo patrón que test_db_integration.py —
 se salta si no hay DATABASE_URL)."""
 from __future__ import annotations
 
+import io
 import json
 import os
 from datetime import date, datetime, timezone
@@ -107,6 +108,131 @@ def test_send_message_truncates_long_text(monkeypatch):
 
     telegram.send_message("x" * 5000)
     assert len(captured["body"]["text"]) <= telegram.MAX_MESSAGE_LENGTH
+
+
+def test_truncate_html_aware_closes_open_tags():
+    """IMPROVEMENT_PLAN.md M16: un truncado por caracteres a secas puede
+    cortar a mitad de una etiqueta o dejarla sin cerrar — la Bot API rechaza
+    el mensaje ENTERO por HTML mal formado, no solo lo trunca."""
+    from pipeline.notify.telegram import _truncate_html_aware
+
+    texto = "<b>" + "x" * 50 + "</b>"
+    resultado = _truncate_html_aware(texto, limit=20)
+
+    assert resultado.count("<b>") == resultado.count("</b>")
+    assert resultado.endswith("… (truncado)")
+    # No debe quedar una etiqueta a medias tras el corte (p.ej. "<b" sin ">").
+    assert "<b" not in resultado.split("</b>")[0][3:]
+
+
+def test_truncate_html_aware_no_corta_dentro_de_la_etiqueta():
+    """Un límite que caería justo en mitad de <a href="..."> debe recortar
+    ANTES de esa etiqueta, no dejarla partida."""
+    from pipeline.notify.telegram import _truncate_html_aware
+
+    texto = "hola " + '<a href="https://example.com/muy/largo/de/verdad">enlace</a>' + " fin"
+    # Límite justo a mitad de la apertura de la etiqueta <a ...>.
+    resultado = _truncate_html_aware(texto, limit=len("hola ") + 10)
+
+    assert "<a" not in resultado.replace("… (truncado)", "")
+
+
+def test_truncate_html_aware_texto_sin_etiquetas_se_comporta_como_antes():
+    from pipeline.notify import telegram
+
+    resultado = telegram._truncate_html_aware("x" * 5000, limit=telegram.MAX_MESSAGE_LENGTH)
+    assert len(resultado) <= telegram.MAX_MESSAGE_LENGTH
+
+
+def test_send_message_reintenta_ante_error_transitorio(monkeypatch):
+    """IMPROVEMENT_PLAN.md M15: antes, un solo fallo de red perdía el
+    mensaje sin más — ahora se reintenta con el mismo patrón de backoff que
+    el resto del proyecto."""
+    from pipeline.notify import telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "TESTTOKEN")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(telegram.time, "sleep", lambda _: None)
+
+    intentos = {"n": 0}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"ok": True}).encode("utf-8")
+
+    def fake_urlopen(request, timeout=None):
+        intentos["n"] += 1
+        if intentos["n"] < 2:
+            raise telegram.urllib.error.URLError("conexión cortada")
+        return FakeResponse()
+
+    monkeypatch.setattr(telegram.urllib.request, "urlopen", fake_urlopen)
+
+    assert telegram.send_message("hola") is True
+    assert intentos["n"] == 2
+
+
+def test_send_message_no_reintenta_un_error_permanente(monkeypatch):
+    """Un 400 (p.ej. HTML mal formado, chat_id inválido) no se arregla
+    reintentando — mismo principio que edgar_http.PermanentHTTPError."""
+    from pipeline.notify import telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "TESTTOKEN")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(telegram.time, "sleep", lambda _: None)
+
+    intentos = {"n": 0}
+
+    def fake_urlopen(request, timeout=None):
+        intentos["n"] += 1
+        raise telegram.urllib.error.HTTPError(
+            request.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"description": "bad request"}')
+        )
+
+    monkeypatch.setattr(telegram.urllib.request, "urlopen", fake_urlopen)
+
+    assert telegram.send_message("hola") is False
+    assert intentos["n"] == 1
+
+
+def test_send_message_reintenta_un_429(monkeypatch):
+    """429 (rate limit) SÍ es transitorio — mismo criterio que edgar_http.py."""
+    from pipeline.notify import telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "TESTTOKEN")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(telegram.time, "sleep", lambda _: None)
+
+    intentos = {"n": 0}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"ok": True}).encode("utf-8")
+
+    def fake_urlopen(request, timeout=None):
+        intentos["n"] += 1
+        if intentos["n"] == 1:
+            raise telegram.urllib.error.HTTPError(
+                request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b'{"description": "flood"}')
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(telegram.urllib.request, "urlopen", fake_urlopen)
+
+    assert telegram.send_message("hola") is True
+    assert intentos["n"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -320,3 +446,39 @@ def test_notify_new_alerts_dedupes_across_reruns(conn, monkeypatch):
     assert first_run == 1
     assert second_run == 0  # ya se había mandado, no se repite
     assert len(sent_messages) == 1
+
+
+@pytestmark_db
+def test_notify_new_alerts_loguea_las_perdidas(conn, monkeypatch, caplog):
+    """IMPROVEMENT_PLAN.md M15: una alert reclamada (dedup) cuyo envío falla
+    se pierde para siempre — antes, sin ninguna métrica que lo visibilice
+    más allá de un warning suelto por alert. Ahora hay un resumen agregado."""
+    import logging
+
+    from pipeline.notify import alerts_notifier, telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "TESTTOKEN")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(telegram, "send_message", lambda text, parse_mode="HTML": False)
+
+    report = {
+        "versions": {
+            "BALANCED": {
+                "alerts": [{"type": "WARNING", "version": "BALANCED", "message": "fallo de envío de prueba"}]
+            }
+        }
+    }
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO paper_trading_reports (run_batch_tag, week_start, week_end, report_json) "
+            "VALUES ('2024-W11', %s, %s, %s)",
+            (date(2024, 3, 11), date(2024, 3, 15), json.dumps(report)),
+        )
+    conn.commit()
+
+    with caplog.at_level(logging.WARNING, logger="pipeline.notify.alerts_notifier"):
+        sent = alerts_notifier.notify_new_alerts(conn)
+
+    assert sent == 0
+    assert "1 alert(s)" in caplog.text
+    assert "perdidas para siempre" in caplog.text

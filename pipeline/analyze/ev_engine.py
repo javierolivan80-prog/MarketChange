@@ -17,6 +17,26 @@ CONSERVATIVE_MULTIPLIER < 1 < AGGRESSIVE_MULTIPLIER: Conservative pide una
 señal más fuerte que sobreviva ser amortiguada Y superar un umbral más alto;
 Aggressive amplifica la misma señal Y usa un umbral más bajo. Es un efecto
 compuesto deliberado, no dos parámetros redundantes.
+
+CALIBRACIÓN MANUAL — cómo validarla empíricamente cuando haya datos
+(IMPROVEMENT_PLAN.md R8, a verificar): EV_THRESHOLDS, _MAGNITUDE_MULTIPLIER,
+_SIZING_SCALE y _MAX_POSITION_SIZE_PCT están fijados a mano, sin ajuste
+contra ningún histórico — y el propio `_raw_point_estimate` multiplica
+confidence_in_conviction/100 por impact_confidence/100, así que dos entradas
+moderadas (60% y 60%, por ejemplo) ya reducen el EV crudo al 36% de su valor
+antes de aplicar el multiplicador de magnitud, lo que puede hacer que la
+mayoría de eventos reales nunca cruce EV_THRESHOLDS con datos de confianza
+típica. Verificarlo no requiere código nuevo:
+`event_analysis_pipeline.compute_day3_stats(conn)` YA calcula exactamente
+esto (pct_trade_conservative/balanced/aggressive, avg_confidence_in_conviction,
+avg_ev_balanced) y ya avisa si el % TRADE resultante es "demasiado permisivo"
+(>70%) o "demasiado restrictivo" (<10%) — el mecanismo de medición existe y
+está testeado (test_day3_stats_*), lo que falta es correrlo contra una
+corrida real con eventos genuinos de EDGAR, no contra datos sintéticos de
+sandbox (ver docs/VALIDATION_REPORT.md, que ya avisa de esa misma limitación
+para sus propios números). Por eso esta sesión no toca ninguna de estas
+constantes: cambiarlas sin ese dato sería sustituir una calibración manual
+por otra igual de arbitraria.
 """
 from __future__ import annotations
 
