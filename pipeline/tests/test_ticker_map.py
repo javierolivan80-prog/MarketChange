@@ -50,18 +50,20 @@ def test_resolve_usa_normalize_cik(monkeypatch):
     assert ticker_map.resolve("0000320193") == "AAPL"
 
 
-def test_fetch_and_build_map_usa_throttled_get_no_requests_desnudo(monkeypatch, tmp_path):
+def test_fetch_and_build_map_usa_throttled_get_no_requests_desnudo(monkeypatch):
     """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R7): antes de esta sesión,
     _fetch_and_build_map hacía un requests.get desnudo, sin retry/backoff —
-    un fallo transitorio aquí (sin caché en disco todavía) tumbaba el día
-    entero de ingesta EDGAR, porque resolve() se llama por cada filing.
-    edgar_http.throttled_get ya tiene ese retry/backoff (mismo host,
-    www.sec.gov, mismo User-Agent) — este test confirma que se usa ESE en
-    vez de una llamada propia, no reimplementa el retry en sí (eso ya lo
-    prueba test_edgar_http.py)."""
+    un fallo transitorio aquí tumbaba el día entero de ingesta EDGAR, porque
+    resolve() se llama por cada filing. edgar_http.throttled_get ya tiene ese
+    retry/backoff (mismo host, www.sec.gov, mismo User-Agent) — este test
+    confirma que se usa ESE en vez de una llamada propia, no reimplementa el
+    retry en sí (eso ya lo prueba test_edgar_http.py).
+
+    Sin CACHE_PATH que monkeypatchear: la caché en disco se quitó en
+    IMPROVEMENT_PLAN.md Q6 (ver docstring del módulo) — solo queda la de
+    memoria del proceso, _cache."""
     from pipeline.ingest import ticker_map
 
-    monkeypatch.setattr(ticker_map, "CACHE_PATH", tmp_path / "cache.json")
     monkeypatch.setattr(ticker_map, "_cache", None)
     llamado = {}
 

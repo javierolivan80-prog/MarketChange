@@ -15,7 +15,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from pipeline.backtest.portfolio_report import run_full_backtest
-from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, tag_suffix
+from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, git_sha_corto, tag_suffix
 from pipeline.backtest.sensitivity import run_sensitivity_analysis
 from pipeline.validation.decision import generate_decision
 from pipeline.validation.event_study import run_event_study
@@ -486,7 +486,6 @@ def generate_full_validation_report(conn, run_batch_tag: str | None = None, docs
 if __name__ == "__main__":
     import argparse
     import logging
-    import subprocess
 
     logging.basicConfig(level=logging.INFO)
     from pipeline.db.connection import get_connection
@@ -534,12 +533,10 @@ if __name__ == "__main__":
         # Mismo esquema de tag (incluido el sufijo -OOS) que
         # backtest/portfolio_report.py:__main__ — tiene que coincidir
         # exactamente para encontrar el portfolio_report de esta misma
-        # corrida en vez de calcular uno nuevo.
-        try:
-            git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
-        except Exception:
-            git_sha = "unknown"
-        tag = f"{date.today().isoformat()}-{git_sha}{tag_suffix(sample)}"
+        # corrida en vez de calcular uno nuevo. git_sha_corto() (ver
+        # sample_split.py, IMPROVEMENT_PLAN.md Q8) es la MISMA función que
+        # llama portfolio_report.py, no una copia independiente.
+        tag = f"{date.today().isoformat()}-{git_sha_corto()}{tag_suffix(sample)}"
         payload = persist_validation_report(conn, tag, sample=sample)
         if payload.get("sample") == SAMPLE_OOS:
             print(f"\n{'=' * 70}\n⚠️  {OOS_WARNING}\n{'=' * 70}\n")
