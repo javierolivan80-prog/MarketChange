@@ -147,3 +147,55 @@ class TestAgainstRealPostgres:
         guidance, rumor = compute_novelty_signals(self.conn, "ACME", date(2024, 3, 1))
         assert guidance is True
         assert rumor is None
+
+    # -----------------------------------------------------------------------
+    # Integración real compute_novelty_signals -> compute_novelty
+    # (IMPROVEMENT_PLAN.md A6): hasta ahora cada extremo se probaba por
+    # separado — este archivo prueba compute_novelty_signals contra Postgres
+    # real, y test_novelty.py prueba compute_novelty con NoveltyInputs
+    # construidos A MANO. Nada verificaba que la TUPLA real que devuelve el
+    # primero encaje con lo que espera el segundo (el orden guidance/rumor
+    # podría invertirse en el caller, por ejemplo, sin que ningún test lo
+    # notara).
+    # -----------------------------------------------------------------------
+
+    def test_integracion_guidance_detectada_alimenta_compute_novelty_con_el_valor_real(self):
+        from pipeline.analyze.guidance_detector import compute_novelty_signals
+        from pipeline.analyze.novelty import NoveltyInputs, compute_novelty
+
+        self._seed_event_with_text("1", "ACME", date(2024, 2, 15), "We are raising our full-year outlook to $2B.")
+        has_guidance, rumor_flag = compute_novelty_signals(self.conn, "ACME", date(2024, 3, 1))
+        assert (has_guidance, rumor_flag) == (True, False)  # el mismo caso que ya prueba compute_novelty_signals solo
+
+        result = compute_novelty(NoveltyInputs(
+            pre_event_drift_pct=0.0,
+            has_prior_guidance=has_guidance,
+            rumor_flag=rumor_flag,
+        ))
+
+        assert "guidance" in result.components_used
+        assert "rumor" in result.components_used
+        assert result.components_unavailable == []
+        assert result.reasoning["has_prior_guidance"] is True
+        assert result.reasoning["rumor_flag"] is False
+
+    def test_integracion_sin_texto_previo_deja_ambos_componentes_sin_calcular(self):
+        """Ticker nuevo, sin ningún filing previo en la BD: compute_novelty_signals
+        da (None, None), y ese None real (no un True/False inventado a mano)
+        debe hacer que compute_novelty renormalice sobre solo 'drift'."""
+        from pipeline.analyze.guidance_detector import compute_novelty_signals
+        from pipeline.analyze.novelty import NoveltyInputs, compute_novelty
+
+        has_guidance, rumor_flag = compute_novelty_signals(self.conn, "NEWCO", date(2024, 3, 1))
+        assert (has_guidance, rumor_flag) == (None, None)
+
+        result = compute_novelty(NoveltyInputs(
+            pre_event_drift_pct=0.0,
+            has_prior_guidance=has_guidance,
+            rumor_flag=rumor_flag,
+        ))
+
+        assert result.components_used == ["drift"]
+        assert set(result.components_unavailable) == {"has_prior_guidance", "rumor_flag"}
+        assert result.score == pytest.approx(100.0)  # drift=0 -> componente de precio al máximo, único usado
+        assert result.reasoning["note_on_unavailable"] is not None
