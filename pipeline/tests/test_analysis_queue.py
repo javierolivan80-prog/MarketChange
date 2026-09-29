@@ -18,6 +18,7 @@ import pytest
 
 from pipeline.tests.fake_batch_api import validar_requests_como_la_api
 
+from pipeline import config
 from pipeline.ingest.universe_maintenance import is_investable
 
 pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
@@ -166,6 +167,46 @@ def test_refresh_universe_metrics_calcula_cap_y_flag(conn):
 
     lista = top_companies(conn, 10)
     assert [r["ticker"] for r in lista] == ["BIG"]
+
+
+@pytestmark_db
+def test_refresh_universe_metrics_limite_exacto_de_staleness_sigue_fresco(conn):
+    """IMPROVEMENT_PLAN.md M12: el único test existente probaba un precio muy
+    viejo (60 días) o implícitamente fresco (hoy) — nunca el límite EXACTO de
+    MAX_PRICE_STALENESS_DAYS. La condición SQL es `>=`, así que un precio de
+    hace EXACTAMENTE ese número de días todavía debe contar como válido."""
+    from pipeline.ingest.universe_maintenance import refresh_universe_metrics
+
+    as_of = date(2026, 6, 15)
+    limite = as_of - timedelta(days=config.MAX_PRICE_STALENESS_DAYS)
+    _empresa(conn, "1", "LIMITE", 100.0, 1e9, last_day=limite)
+
+    refresh_universe_metrics(conn, as_of=as_of)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT market_cap_last_usd, in_investable_universe FROM universe WHERE ticker = 'LIMITE'")
+        row = cur.fetchone()
+    assert row["market_cap_last_usd"] is not None
+    assert row["in_investable_universe"] is True
+
+
+@pytestmark_db
+def test_refresh_universe_metrics_un_dia_mas_alla_del_limite_es_obsoleto(conn):
+    """El día siguiente al límite exacto SÍ debe quedar fuera — confirma que
+    el límite de arriba no es 'siempre pasa', sino la frontera real."""
+    from pipeline.ingest.universe_maintenance import refresh_universe_metrics
+
+    as_of = date(2026, 6, 15)
+    un_dia_mas_alla = as_of - timedelta(days=config.MAX_PRICE_STALENESS_DAYS + 1)
+    _empresa(conn, "1", "OBSOLETO", 100.0, 1e9, last_day=un_dia_mas_alla)
+
+    refresh_universe_metrics(conn, as_of=as_of)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT market_cap_last_usd, in_investable_universe FROM universe WHERE ticker = 'OBSOLETO'")
+        row = cur.fetchone()
+    assert row["market_cap_last_usd"] is None
+    assert row["in_investable_universe"] is False
 
 
 @pytestmark_db
