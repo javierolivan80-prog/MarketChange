@@ -144,6 +144,39 @@ def test_run_batch_and_collect_sin_requests_no_crea_batch():
     assert run_batch_and_collect(client, requests_=[]) == ({}, None)
 
 
+def test_run_batch_and_collect_corta_tras_la_cota_de_espera(monkeypatch):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + M1): un batch que se
+    queda atascado en 'in_progress' para siempre (incidente del lado de
+    Anthropic) no debe colgar el proceso sin límite — antes de esta sesión,
+    `while True` sin cota solo se paraba con el timeout-minutes del job de
+    GitHub Actions (sin definir -> 360 min por defecto)."""
+    from pipeline.analyze import adversarial_analyzer as aa
+    from pipeline import config
+
+    class _ClienteAtascado:
+        def create(self, requests):
+            return SimpleNamespace(id="batch_atascado", processing_status="in_progress")
+
+        def retrieve(self, batch_id):
+            return SimpleNamespace(id=batch_id, processing_status="in_progress")  # nunca "ended"
+
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ClienteAtascado()))
+
+    # Reloj falso: avanza más que la cota en cada llamada a monotonic(), y
+    # time.sleep no duerme de verdad — el test no debe tardar 2 horas reales.
+    reloj = {"t": 0.0}
+
+    def _monotonic_falso():
+        reloj["t"] += config.BATCH_MAX_WAIT_SECONDS + 1
+        return reloj["t"]
+
+    monkeypatch.setattr(aa.time, "monotonic", _monotonic_falso)
+    monkeypatch.setattr(aa.time, "sleep", lambda _: None)
+
+    with pytest.raises(TimeoutError, match="in_progress"):
+        run_batch_and_collect(client, requests_=[{"custom_id": custom_id_de(1, "judge")}])
+
+
 # ---------------------------------------------------------------------------
 # Caché de 24h — contra Postgres real
 # ---------------------------------------------------------------------------

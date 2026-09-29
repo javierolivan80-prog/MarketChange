@@ -14,6 +14,7 @@ from pipeline.analyze.abstention_engine import (
     AbstentionInputs,
     decide_all_strategies,
     decide_for_strategy,
+    objective_no_trade_reason,
 )
 from pipeline.analyze.ev_engine import EV_THRESHOLDS
 
@@ -187,3 +188,83 @@ def test_short_direction_when_net_conviction_negative():
 def test_all_three_strategies_are_covered_by_decide_all_strategies(strategy):
     decisions = decide_all_strategies(_clean_inputs())
     assert strategy in decisions
+
+
+# ---------------------------------------------------------------------------
+# objective_no_trade_reason — hallazgo de auditoría (IMPROVEMENT_PLAN.md R5):
+# subconjunto de las 7 reglas que NO depende del Judge, usado por
+# event_analysis_pipeline.py para saltarse Bull/Bear/Judge cuando el NO_TRADE
+# ya está garantizado sin invocar a la IA.
+# ---------------------------------------------------------------------------
+
+
+def _clean_objective_kwargs(**overrides) -> dict:
+    base = dict(
+        novelty_score=80.0,
+        had_survivorship_warning=False,
+        beta_available=True,
+        high_low_range_pct=0.1,
+        adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD * 10,
+        is_fda_crl_without_8k=False,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_objective_no_trade_reason_none_when_all_clean():
+    assert objective_no_trade_reason(**_clean_objective_kwargs()) is None
+
+
+def test_objective_novelty_below_floor():
+    reason = objective_no_trade_reason(**_clean_objective_kwargs(novelty_score=NOVELTY_FLOOR - 1))
+    assert reason is not None
+    assert "novelty_score" in reason
+
+
+def test_objective_survivorship_warning():
+    reason = objective_no_trade_reason(**_clean_objective_kwargs(had_survivorship_warning=True))
+    assert reason is not None
+    assert "deslistado" in reason
+
+
+def test_objective_beta_unavailable():
+    reason = objective_no_trade_reason(**_clean_objective_kwargs(beta_available=False))
+    assert reason is not None
+    assert "contradictorios" in reason
+
+
+def test_objective_fda_crl_without_8k():
+    reason = objective_no_trade_reason(**_clean_objective_kwargs(is_fda_crl_without_8k=True))
+    assert reason is not None
+    assert "CRL" in reason
+
+
+def test_objective_illiquid_spread():
+    reason = objective_no_trade_reason(**_clean_objective_kwargs(high_low_range_pct=SPREAD_CEILING_PCT + 0.1))
+    assert reason is not None
+    assert "ilíquido" in reason
+
+
+def test_objective_illiquid_adv():
+    reason = objective_no_trade_reason(**_clean_objective_kwargs(adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD - 1))
+    assert reason is not None
+    assert "ADV" in reason
+
+
+def test_objective_judge_split_decision_is_not_covered_needs_judge():
+    """La regla 5b (Judge dividido) SÍ necesita el Judge — esta función solo
+    cubre las 5 condiciones objetivas, nunca la 2, la 3, ni la 5b. Con todo
+    lo demás limpio, debe devolver None (hace falta invocar a la IA)."""
+    assert objective_no_trade_reason(**_clean_objective_kwargs()) is None
+
+
+def test_objective_reason_matches_decide_for_strategy_for_shared_rules():
+    """Cuando objective_no_trade_reason dispara, decide_for_strategy() (con
+    cualquier confidence/net_conviction/ev que sea, ya que estas condiciones
+    ganan primero) debe reportar el MISMO motivo — ambas funciones no deben
+    divergir nunca en las reglas que comparten."""
+    kwargs = _clean_objective_kwargs(had_survivorship_warning=True)
+    objective_reason = objective_no_trade_reason(**kwargs)
+    full_inputs = _clean_inputs(had_survivorship_warning=True)
+    full_decision = decide_for_strategy(full_inputs, "BALANCED")
+    assert objective_reason == full_decision.reason_if_no_trade
