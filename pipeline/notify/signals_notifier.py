@@ -31,7 +31,20 @@ _DIRECTION_EMOJI = {"LONG": "🟢", "SHORT": "🔴"}
 def fetch_pending_signals(conn) -> list[dict]:
     """Eventos con trade_decision_* != 'NO_TRADE' en alguna versión y que
     todavía no se han notificado. Una fila por evento (no por versión) — el
-    mensaje agrupa las 3 versiones para no mandar 3 avisos del mismo evento."""
+    mensaje agrupa las 3 versiones para no mandar 3 avisos del mismo evento.
+
+    Investigado (IMPROVEMENT_PLAN.md M17): _format_message hace float() sobre
+    confidence_in_conviction/net_conviction/ev_* sin guarda de NULL, y el
+    WHERE de esta query no garantiza explícitamente que esas columnas vengan
+    pobladas para toda fila que matchee. Pero SÍ lo garantiza el esquema —
+    event_analyses.{net_conviction,confidence_in_conviction,ev_conservative,
+    ev_aggressive,ev_balanced} y events.{ticker,event_class,source_url,
+    filed_at} son NOT NULL en schema.sql — así que ninguna fila insertada por
+    el código actual (_store_event_analysis, upsert_events) puede tener un
+    NULL ahí. Confirmado el hallazgo como una falsa alarma para el código
+    actual: no se añade una guarda contra un NULL que el propio esquema ya
+    hace imposible (ver la disciplina general del proyecto de no validar lo
+    que no puede pasar)."""
     with conn.cursor() as cur:
         cur.execute(
             """
