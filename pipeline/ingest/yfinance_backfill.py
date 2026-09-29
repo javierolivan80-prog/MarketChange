@@ -282,6 +282,26 @@ def backfill_tickers(tickers: list[str], start: date, end: date, forzar: bool = 
     logger.info("Backfill de precios completo para %d tickers", len(tickers))
 
 
+def confirmar_forzar(n_tickers: int, start: date, end: date, *, leer_respuesta=input) -> bool:
+    """True si el usuario confirma un --forzar interactivamente (IMPROVEMENT_PLAN.md A7).
+
+    --forzar re-descarga el rango ENTERO para TODOS los tickers, ignorando
+    lo que ya está guardado — con el universo completo eso son miles de
+    peticiones a Yahoo Finance (ver el incidente de 1h24m documentado en
+    pendientes_de_descarga, que --forzar deshace a propósito). Un --forzar
+    tecleado sin querer, o copiado de un ejemplo sin pensarlo, no debería
+    arrancar en silencio.
+
+    leer_respuesta inyectable (por defecto input()) para poder probar esto
+    sin depender de stdin real."""
+    print(
+        f"--forzar va a re-descargar TODO el rango {start.isoformat()} -> {end.isoformat()} "
+        f"para los {n_tickers} tickers, aunque ya estén al día."
+    )
+    respuesta = leer_respuesta("Escribe 'si' para confirmar (cualquier otra cosa cancela): ")
+    return respuesta.strip().lower() == "si"
+
+
 def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_days: set[date]) -> None:
     for i in range(0, len(tickers), BATCH_SIZE):
         batch = tickers[i : i + BATCH_SIZE]
@@ -403,6 +423,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Rebaja el rango entero aunque ya esté guardado (por defecto solo se pide lo que falta)",
     )
+    parser.add_argument(
+        "--si",
+        action="store_true",
+        help="Confirma --forzar sin preguntar (para uso no interactivo, p.ej. desde un script)",
+    )
     args = parser.parse_args()
 
     from datetime import datetime as _dt
@@ -413,9 +438,16 @@ if __name__ == "__main__":
     else:
         ticker_list = [t.strip() for t in args.tickers.split(",")]
 
+    start_date = _dt.strptime(args.start, "%Y-%m-%d").date()
+    end_date = _dt.strptime(args.end, "%Y-%m-%d").date()
+
+    if args.forzar and not args.si and not confirmar_forzar(len(ticker_list), start_date, end_date):
+        print("Cancelado.")
+        raise SystemExit(0)
+
     backfill_tickers(
         ticker_list,
-        _dt.strptime(args.start, "%Y-%m-%d").date(),
-        _dt.strptime(args.end, "%Y-%m-%d").date(),
+        start_date,
+        end_date,
         forzar=args.forzar,
     )

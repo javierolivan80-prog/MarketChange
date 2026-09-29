@@ -269,3 +269,28 @@ def test_mezcla_de_tickers_al_dia_nuevos_y_a_medias():
     )
     assert al_dia == ["ALDIA"]
     assert dict(a_pedir) == {"AMEDIAS": _date(2026, 9, 2), "NUEVA": _INICIO}
+
+
+# ---------------------------------------------------------------------------
+# confirmar_forzar (IMPROVEMENT_PLAN.md A7)
+# ---------------------------------------------------------------------------
+
+
+def test_confirmar_forzar_acepta_si_en_minuscula():
+    from pipeline.ingest.yfinance_backfill import confirmar_forzar
+
+    assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "si") is True
+
+
+def test_confirmar_forzar_acepta_si_con_mayusculas_y_espacios():
+    from pipeline.ingest.yfinance_backfill import confirmar_forzar
+
+    assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "  SI  ") is True
+
+
+def test_confirmar_forzar_cualquier_otra_respuesta_cancela():
+    from pipeline.ingest.yfinance_backfill import confirmar_forzar
+
+    assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "") is False
+    assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "no") is False
+    assert confirmar_forzar(100, _INICIO, _FIN, leer_respuesta=lambda _: "s") is False  # "si" completo, no una abreviatura
