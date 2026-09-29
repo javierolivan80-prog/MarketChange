@@ -39,6 +39,7 @@ aproximación deliberada, documentada aquí en vez de en cada función:
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 import numpy as np
@@ -46,6 +47,8 @@ import numpy as np
 from pipeline.analyze.abstention_engine import CONFIDENCE_FLOOR
 from pipeline.backtest.portfolio_metrics import compute_equity_metrics, compute_trade_metrics
 from pipeline.backtest.portfolio_simulator import COMMISSION_BPS_ROUND_TRIP, gain_pct
+
+logger = logging.getLogger(__name__)
 
 SPREAD_SENSITIVITY_BPS = 20.0  # +0.2%
 COMMISSION_SENSITIVITY_BPS = 10.0  # +0.1%
@@ -84,7 +87,17 @@ def apply_extra_cost_bps(trades: list[dict], extra_bps: float) -> list[dict]:
 def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
     """Reprecia la entrada al segundo día de negociación tras d0_close_date
     (D+2) en vez del primero (D+1) — ver docstring del módulo sobre por qué
-    esto es una aproximación (mismo exit_date/exit_price)."""
+    esto es una aproximación (mismo exit_date/exit_price).
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md R14): antes, un trade sin un
+    D+2 disponible se descartaba con un `continue` silencioso — ni se
+    logueaba cuántos, ni el caller podía saber que el escenario de latencia
+    se calculó sobre MENOS trades que el baseline (un desplome del return
+    total podía ser "la latencia importa" o simplemente "la mitad de la
+    muestra desapareció", indistinguibles sin este dato). Ahora se loguea el
+    recuento, y run_sensitivity_analysis expone n_trades por escenario en la
+    tabla de PARTE 5 (summarize_scenario ya lo calculaba; solo faltaba
+    mostrarlo)."""
     with conn.cursor() as cur:
         cur.execute("SELECT event_id, d0_close_date FROM events WHERE event_id = ANY(%s)", ([t["event_id"] for t in trades],))
         d0_by_event = {r["event_id"]: r["d0_close_date"] for r in cur.fetchall()}
@@ -107,6 +120,13 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
         new_pnl_pct = actual_move_pct - COMMISSION_BPS_ROUND_TRIP / 100
         size = float(t["position_size_dollars"])
         adjusted.append({**t, "entry_price": new_entry_price, "pnl_pct": new_pnl_pct, "pnl_abs": size * (new_pnl_pct / 100)})
+
+    dropped = len(trades) - len(adjusted)
+    if dropped:
+        logger.warning(
+            "Sensibilidad de latencia (D+2): %d de %d trades descartados por no tener un D+2 disponible",
+            dropped, len(trades),
+        )
     return adjusted
 
 
@@ -168,13 +188,25 @@ def summarize_scenario(trades: list[dict], starting_capital: float) -> dict:
 
 
 def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float = 100_000.0) -> dict:
-    """Punto de entrada — corre los 5 escenarios del spec sobre
-    CONSERVATIVE y AGGRESSIVE (BALANCED es una mezcla de los dos, se omite
-    de la tabla por legibilidad, igual que el spec solo pide esas dos
-    columnas) y devuelve la tabla completa."""
+    """Punto de entrada — corre los 5 escenarios del spec sobre las 3
+    versiones de estrategia (CONSERVATIVE, BALANCED, AGGRESSIVE) y devuelve
+    la tabla completa.
+
+    Hallazgo de auditoría (IMPROVEMENT_PLAN.md R13): antes se omitía BALANCED
+    "por legibilidad", pero PARTE 6 (overall_verdict, validation/report.py)
+    SÍ puede elegir BALANCED como best_version para capital real — sin esta
+    sección, esa versión podía recomendarse sin que su sensibilidad a
+    costes/latencia/VIX se hubiera probado nunca. DYNAMIC se sigue omitiendo
+    a propósito: no es una de las 3 versiones que PARTE 6 evalúa como
+    candidata (ver decision.py/overall_verdict), así que no hay nada que
+    "recomendar sin probar" en su caso.
+
+    n_missing_vix (R15) y n_trades por escenario (R14, ya los calculaba
+    summarize_scenario) se exponen aquí para que _sensitivity_table pueda
+    mostrarlos — antes se calculaban y se descartaban."""
     scenarios: dict[str, dict[str, dict]] = {}
 
-    for version in ("CONSERVATIVE", "AGGRESSIVE"):
+    for version in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE"):
         trades = _fetch_trades_with_context(conn, version, run_batch_tag)
         baseline = summarize_scenario(trades, starting_capital)
 
@@ -192,6 +224,7 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
             "confidence_minus_20pct": summarize_scenario(confidence_trades, starting_capital),
             "high_vix_regime": summarize_scenario(vix_split.get("high_vix", []), starting_capital),
             "low_vix_regime": summarize_scenario(vix_split.get("low_vix", []), starting_capital),
+            "n_missing_vix": vix_split.get("n_missing_vix", 0),
         }
 
     return {"run_batch_tag": run_batch_tag, "scenarios": scenarios}

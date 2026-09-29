@@ -281,6 +281,10 @@ def test_mezcla_de_tickers_al_dia_nuevos_y_a_medias():
 # importa comprobar es que CUALQUIER excepción activa el backoff y que tras
 # MAX_RETRIES se rinde devolviendo None en vez de propagar — el propio código
 # lo llama "la etapa más frágil del pipeline".
+#
+# _retry_with_backoff — IMPROVEMENT_PLAN.md Q5: antes, _download_one_with_retry
+# y _descargar_lote_con_reintentos duplicaban el MISMO bucle de reintentos
+# palabra por palabra; ninguno de los dos tenía test hasta esta sesión.
 # ---------------------------------------------------------------------------
 
 
@@ -368,3 +372,63 @@ def test_descargar_lote_con_reintentos_se_rinde_tras_max_retries(monkeypatch):
 
     assert resultado is None
     assert intentos["n"] == yfinance_backfill.MAX_RETRIES
+
+
+def test_retry_with_backoff_devuelve_el_resultado_si_no_hay_fallo():
+    from pipeline.ingest.yfinance_backfill import _retry_with_backoff
+
+    assert _retry_with_backoff(lambda: 42, "algo") == 42
+
+
+def test_retry_with_backoff_reintenta_y_acaba_bien():
+    from pipeline.ingest.yfinance_backfill import _retry_with_backoff
+
+    intentos = {"n": 0}
+
+    def _func():
+        intentos["n"] += 1
+        if intentos["n"] < 3:
+            raise RuntimeError("fallo transitorio")
+        return "ok"
+
+    assert _retry_with_backoff(_func, "algo") == "ok"
+    assert intentos["n"] == 3
+
+
+def test_retry_with_backoff_devuelve_none_tras_agotar_intentos():
+    from pipeline.ingest.yfinance_backfill import MAX_RETRIES, _retry_with_backoff
+
+    intentos = {"n": 0}
+
+    def _func():
+        intentos["n"] += 1
+        raise RuntimeError("siempre falla")
+
+    assert _retry_with_backoff(_func, "algo") is None
+    assert intentos["n"] == MAX_RETRIES
+
+
+def test_download_one_with_retry_usa_retry_with_backoff_compartido(monkeypatch):
+    """Regresión de cableado (IMPROVEMENT_PLAN.md Q5): _download_one_with_retry
+    debe pasar por el bucle de reintentos compartido, no por uno propio — se
+    verifica de punta a punta (yf.download falla dos veces y luego responde)
+    en vez de mockear _retry_with_backoff, para probar la integración real."""
+    import yfinance as yf
+
+    import pipeline.ingest.yfinance_backfill as yfb
+
+    llamadas = {"n": 0}
+
+    def _fake_download(*a, **kw):
+        llamadas["n"] += 1
+        if llamadas["n"] < 2:
+            raise RuntimeError("fallo transitorio")
+        return pd.DataFrame({"Close": [10.0]})
+
+    monkeypatch.setattr(yf, "download", _fake_download)
+    monkeypatch.setattr(yfb, "aplanar_columnas", lambda df, ticker: df)
+
+    resultado = yfb._download_one_with_retry("AAPL", _INICIO, _FIN)
+
+    assert llamadas["n"] == 2
+    assert resultado is not None
