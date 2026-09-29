@@ -33,3 +33,17 @@ def test_resolve_matches_edgar_zero_padded_cik_format():
     assert resolve_against("0000320193", mapping) == "AAPL"
     assert resolve_against("320193", mapping) == "AAPL"
     assert resolve_against("0000000000", mapping) is None
+
+
+def test_resolve_usa_normalize_cik(monkeypatch):
+    """Regresión de cableado (IMPROVEMENT_PLAN.md Q4): resolve() debe pasar
+    por pipeline.ingest.cik.normalize_cik, no por una normalización inline
+    propia — si alguien reintroduce un `cik.lstrip("0")` local, este test
+    debe seguir pasando igual (normalize_cik hace lo mismo y algo más, ver
+    test_cik.py), pero deja de haber DOS sitios que mantener sincronizados."""
+    from pipeline.ingest import ticker_map
+
+    mapping = {str(entry["cik_str"]): entry["ticker"] for entry in SAMPLE_RAW.values()}
+    monkeypatch.setattr(ticker_map, "get_ticker_map", lambda: mapping)
+
+    assert ticker_map.resolve("0000320193") == "AAPL"

@@ -18,6 +18,7 @@ from pathlib import Path
 import requests
 
 from pipeline import config
+from pipeline.ingest.cik import normalize_cik
 
 logger = logging.getLogger(__name__)
 
@@ -67,4 +68,4 @@ def resolve(cik: str) -> str | None:
     """Devuelve el ticker para un CIK, o None si no está en el mapa (ej. CIKs
     de emisores sin acciones cotizadas — fondos, insiders individuales, etc.,
     que de todas formas no pertenecen al universo invertible)."""
-    return get_ticker_map().get(cik.lstrip("0") or "0")
+    return get_ticker_map().get(normalize_cik(cik))
