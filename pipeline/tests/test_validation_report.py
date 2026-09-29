@@ -113,6 +113,15 @@ def test_generate_full_validation_report_end_to_end(conn, tmp_path):
     assert "PARTE 7 — Next steps" in content
     assert result["best_decision"]["label"] in content
 
+    # IMPROVEMENT_PLAN.md Q3: DYNAMIC se corre y persiste como las otras 3,
+    # pero queda fuera de las decisiones de PARTE 6 — la comparación con
+    # BALANCED se hace visible en un apéndice aparte, no cambia el veredicto.
+    assert "DYNAMIC" not in result["decisions"]
+    assert "Apéndice — DYNAMIC vs BALANCED" in content
+    apendice = content.split("Apéndice — DYNAMIC vs BALANCED")[1].split("PARTE 7")[0]
+    assert "DYNAMIC" in apendice
+    assert "BALANCED" in apendice
+
 
 def test_generate_full_validation_report_oos_uses_separate_filename_and_banner(conn, tmp_path):
     """Misma fixture que el test de arriba (eventos todos en 2024, es decir,
@@ -266,3 +275,24 @@ def test_persist_validation_report_upsert_overwrites(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM validation_reports WHERE run_batch_tag = %s", (tag,))
         assert cur.fetchone()["n"] == 1
+
+
+def test_backtest_table_acepta_un_subconjunto_de_versiones():
+    """IMPROVEMENT_PLAN.md Q3: _backtest_table ahora acepta qué versiones
+    mostrar, para poder reutilizarla en el apéndice DYNAMIC vs BALANCED sin
+    duplicar la función — por defecto sigue mostrando las 3 de VERSION_ORDER."""
+    from pipeline.validation.report import _backtest_table
+
+    fake_metrics = {
+        "equity_metrics": {"total_return": 0.05, "sharpe_ratio": 1.2, "max_drawdown": -0.03},
+        "trade_metrics": {"win_rate": 0.6, "total_trades": 10},
+    }
+    portfolio_report = {"versions": {"BALANCED": fake_metrics, "DYNAMIC": fake_metrics, "CONSERVATIVE": fake_metrics}}
+
+    solo_dos = _backtest_table(portfolio_report, versions=("BALANCED", "DYNAMIC"))
+    assert "BALANCED" in solo_dos
+    assert "DYNAMIC" in solo_dos
+    assert "CONSERVATIVE" not in solo_dos
+
+    default = _backtest_table(portfolio_report)
+    assert "DYNAMIC" not in default  # sigue sin aparecer si no se pide explícitamente

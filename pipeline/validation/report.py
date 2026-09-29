@@ -135,9 +135,9 @@ def _event_study_table(event_study: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def _backtest_table(portfolio_report: dict) -> str:
+def _backtest_table(portfolio_report: dict, versions: tuple[str, ...] = VERSION_ORDER) -> str:
     lines = ["| Versión | Total Return | Sharpe | Max DD | Win Rate | N | Rec |", "|---|---|---|---|---|---|---|"]
-    for version in VERSION_ORDER:
+    for version in versions:
         v = portfolio_report["versions"].get(version)
         if not v:
             continue
@@ -302,6 +302,21 @@ spec:
 {chr(10).join(f"- **{v}**: {decisions[v]['label']} — {'; '.join(decisions[v]['reasons'])}" for v in decisions)}
 
 **Veredicto global: {best_decision['label']}** (la mejor de las 3 versiones evaluadas, empates a favor de Conservative).
+
+## Apéndice — DYNAMIC vs BALANCED (IMPROVEMENT_PLAN.md Q3, comparación experimental)
+
+DYNAMIC no es una de las 3 versiones del spec (ver `portfolio_strategies.py`,
+nota 5 de su docstring): reutiliza el criterio de SI operar de BALANCED y
+solo cambia el sizing (ponderado por EV×confianza en vez del interpolado
+por confianza fijo). Se corre y persiste en cada backtest igual que las
+otras 3, pero queda fuera de PARTE 2/3/6 a propósito — no es candidata al
+veredicto de inversión hasta que se demuestre que aporta algo sobre
+BALANCED con evidencia real, no solo con la lógica de diseño. Esta tabla
+existe para que esa comparación sea visible sin tener que ir a buscar el
+JSON crudo — no cambia el veredicto de arriba ni las 3 versiones que sí lo
+determinan.
+
+{_backtest_table(portfolio_report, versions=("BALANCED", "DYNAMIC"))}
 
 ## PARTE 7 — Next steps
 
