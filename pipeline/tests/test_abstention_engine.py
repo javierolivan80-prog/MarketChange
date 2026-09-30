@@ -8,15 +8,17 @@ import pytest
 
 from pipeline.analyze.abstention_engine import (
     CONFIDENCE_FLOOR,
+    EV_ABSTENTION_BUFFER,
     LIQUIDITY_ADV_FLOOR_USD,
     NOVELTY_FLOOR,
     SPREAD_CEILING_PCT,
     AbstentionInputs,
     decide_all_strategies,
     decide_for_strategy,
+    ev_ceiling_no_trade_reason,
     objective_no_trade_reason,
 )
-from pipeline.analyze.ev_engine import EV_THRESHOLDS
+from pipeline.analyze.ev_engine import EV_THRESHOLDS, compute_ev
 
 
 def _clean_inputs(**overrides) -> AbstentionInputs:
@@ -268,3 +270,65 @@ def test_objective_reason_matches_decide_for_strategy_for_shared_rules():
     full_inputs = _clean_inputs(had_survivorship_warning=True)
     full_decision = decide_for_strategy(full_inputs, "BALANCED")
     assert objective_reason == full_decision.reason_if_no_trade
+
+
+# ---------------------------------------------------------------------------
+# ev_ceiling_no_trade_reason — hallazgo de auditoría (IMPROVEMENT_PLAN.md A1):
+# el EV máximo posible (mejor caso del Judge: net_conviction=+1, confidence=
+# 100) tampoco depende del Judge una vez fijada la Etapa 6 (impact
+# estimation) — si ni ese techo cruza el umbral con buffer de ninguna
+# versión, tampoco hace falta invocar a la IA.
+# ---------------------------------------------------------------------------
+
+
+def _best_case_ev(expected_magnitude_pct: float, impact_confidence: float) -> dict[str, float]:
+    result = compute_ev(1.0, 100.0, expected_magnitude_pct, impact_confidence)
+    return {
+        "CONSERVATIVE": result.ev_conservative,
+        "BALANCED": result.ev_balanced,
+        "AGGRESSIVE": result.ev_aggressive,
+    }
+
+
+def test_ev_ceiling_none_when_best_case_clears_every_threshold():
+    # magnitud e impact_confidence generosos: incluso Conservative (el
+    # multiplicador de magnitud más bajo) debe cruzar su umbral+buffer.
+    best_case = _best_case_ev(expected_magnitude_pct=10.0, impact_confidence=100.0)
+    assert ev_ceiling_no_trade_reason(best_case) is None
+
+
+def test_ev_ceiling_fires_when_best_case_clears_no_threshold():
+    # magnitud/confianza ínfimas: el techo no cruza ni el umbral más bajo
+    # (Conservative) aun en el mejor caso posible del Judge.
+    best_case = _best_case_ev(expected_magnitude_pct=0.01, impact_confidence=1.0)
+    reason = ev_ceiling_no_trade_reason(best_case)
+    assert reason is not None
+    assert "techo=" in reason
+    assert "conservative" in reason and "balanced" in reason and "aggressive" in reason
+
+
+def test_ev_ceiling_matches_decide_for_strategy_rule_3_when_it_fires():
+    """Cuando el techo no cruza NINGÚN umbral, decide_for_strategy() con el
+    mejor caso real (net_conviction=1.0, confidence=100.0, el mismo ev
+    calculado con compute_ev) debe abstenerse en las 3 versiones por la regla
+    3 — si ev_ceiling_no_trade_reason dispara pero decide_for_strategy con el
+    mejor caso posible NO se abstuviera, ambas funciones estarían
+    divergiendo sobre el mismo umbral."""
+    best_case = _best_case_ev(expected_magnitude_pct=0.01, impact_confidence=1.0)
+    assert ev_ceiling_no_trade_reason(best_case) is not None
+
+    inputs = _clean_inputs(net_conviction=1.0, confidence_in_conviction=100.0, ev_by_strategy=best_case)
+    for strategy in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE"):
+        decision = decide_for_strategy(inputs, strategy)
+        assert decision.trade_decision == "NO_TRADE"
+        assert "ev=" in decision.reason_if_no_trade
+
+
+def test_ev_ceiling_uses_buffered_threshold_not_raw():
+    # Justo en el umbral crudo (sin el buffer de 50bps) de las 3 versiones:
+    # el techo NO debe cruzarlo (mismo criterio que decide_for_strategy,
+    # regla 3, que también exige threshold + EV_ABSTENTION_BUFFER).
+    at_raw_threshold = {s: EV_THRESHOLDS[s] for s in EV_THRESHOLDS}
+    assert EV_ABSTENTION_BUFFER > 0
+    reason = ev_ceiling_no_trade_reason(at_raw_threshold)
+    assert reason is not None

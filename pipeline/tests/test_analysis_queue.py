@@ -138,6 +138,59 @@ def _evento(conn, cik, ticker, d0, text="texto real del filing"):
     return eid
 
 
+def _seed_car_results_for_class(conn, event_class, before_date, n=20, car_pct=5.0, window_days=20):
+    """Hallazgo de auditoría (IMPROVEMENT_PLAN.md A1): con la Etapa 6 (impact
+    estimation) adelantada a ANTES del bloque LLM, un evento sin ningún
+    análogo histórico tiene EV de mejor caso = 0 -> ev_ceiling_no_trade_reason
+    dispara siempre -> el LLM nunca se invoca. Correcto en general (ver su
+    docstring), pero los tests de este fichero que SÍ quieren ejercitar el
+    camino de Bull/Bear/Judge (para probar el manejo de errores/reintentos
+    del batch, no la abstención) necesitan algún análogo con magnitud real
+    para que el corte no dispare antes de tiempo. Los análogos ya se guardan
+    con su propio event_analyses (como si ya se hubieran analizado antes),
+    para no aparecer también en fetch_events_needing_analysis."""
+    with conn.cursor() as cur:
+        for i in range(n):
+            cik = f"analog-{event_class}-{i}"
+            ticker = f"ANLG{i}"
+            d0 = before_date - timedelta(days=365 + i)
+            cur.execute(
+                "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
+                "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (cik) DO NOTHING",
+                (cik, ticker, f"{ticker} Inc", d0, d0),
+            )
+            cur.execute(
+                """
+                INSERT INTO events (cik, ticker, source, event_class, accession_number, source_url, filed_at,
+                    d0_close_date, classification_method, raw_text_hash, filing_text)
+                VALUES (%s,%s,'EDGAR',%s,%s,'https://x',%s,%s,'RULE',%s,'texto')
+                RETURNING event_id
+                """,
+                (cik, ticker, event_class, f"acc-{cik}", d0, d0, f"h-{cik}"),
+            )
+            eid = cur.fetchone()["event_id"]
+            car = (car_pct + (0.5 if i % 2 == 0 else -0.5)) / 100.0
+            cur.execute(
+                "INSERT INTO car_results (event_id, window_days, car, abnormal_volume_ratio, n_estimation_days) "
+                "VALUES (%s,%s,%s,1.2,200)",
+                (eid, window_days, car),
+            )
+            cur.execute(
+                """
+                INSERT INTO event_analyses (
+                    event_id, novelty_score, novelty_reasoning, bull_analyst_output, bear_analyst_output,
+                    judge_output, net_conviction, confidence_in_conviction, impact_estimation,
+                    n_historical_analogues, ev_calculation, ev_conservative, ev_aggressive, ev_balanced,
+                    abstention_decision, trade_decision_conservative, trade_decision_aggressive,
+                    trade_decision_balanced, model_version_bull_bear, model_version_judge
+                ) VALUES (%s, 60, '{}', '{}', '{}', '{}', 0.5, 70, '{}', 5, '{}', 0.01, 0.02, 0.015, '{}',
+                    'NO_TRADE', 'NO_TRADE', 'NO_TRADE', 'claude-haiku-4-5', 'claude-sonnet-4-6')
+                """,
+                (eid,),
+            )
+    conn.commit()
+
+
 @pytestmark_db
 def test_refresh_universe_metrics_calcula_cap_y_flag(conn):
     from pipeline.ingest.universe_maintenance import refresh_universe_metrics, top_companies
@@ -220,6 +273,7 @@ def test_run_pipeline_no_entra_en_bucle_si_la_ia_falla(conn):
     from pipeline.analyze.event_analysis_pipeline import run_pipeline
 
     _empresa(conn, "1", "MEGA", 100.0, 3e9)
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", date(2026, 9, 1))
     _evento(conn, "1", "MEGA", date(2026, 9, 1))
     fake = _ClienteQueFalla()
     client = SimpleNamespace(messages=SimpleNamespace(batches=fake))
@@ -235,6 +289,7 @@ def test_run_pipeline_respeta_el_tope_de_eventos(conn):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, run_pipeline
 
     _empresa(conn, "1", "MEGA", 100.0, 3e9)
+    _seed_car_results_for_class(conn, "8K_2.02_EARNINGS", date(2026, 9, 1))
     for i in range(7):
         _evento(conn, "1", "MEGA", date(2026, 9, 1) + timedelta(days=i))
     fake = _ClienteQueFalla()
