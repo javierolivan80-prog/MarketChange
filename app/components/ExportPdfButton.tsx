@@ -141,7 +141,7 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
   return (
     <button
       onClick={handleExport}
-      className="rounded border border-border-strong px-3 py-1.5 text-sm text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
+      className="rounded border border-border-strong px-3 py-1.5 font-mono text-sm uppercase tracking-wide text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
     >
       Exportar informe (PDF)
     </button>

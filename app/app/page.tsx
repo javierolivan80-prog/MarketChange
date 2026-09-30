@@ -34,7 +34,7 @@ const VERDICT_COPY: Record<string, { title: string; color: string; text: string 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="min-w-[160px] flex-1 rounded border border-border-subtle bg-surface p-3">
-      <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">{label}</p>
+      <p className="mb-1 font-mono text-xs uppercase tracking-wide text-text-secondary">{label}</p>
       <p className="num text-3xl font-bold text-foreground">{value}</p>
       {hint && <p className="mt-1 text-xs text-text-tertiary">{hint}</p>}
     </div>
@@ -102,7 +102,7 @@ export default async function InicioPage() {
     <main className="mx-auto max-w-5xl p-4">
       <Nav active="/" />
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">MarketChange — Panel</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">MarketChange — Panel</h1>
         <p className="mt-1 text-sm text-text-secondary">Resumen de un vistazo. Todo lo de aquí tiene el detalle completo en las otras pestañas.</p>
       </header>
 
