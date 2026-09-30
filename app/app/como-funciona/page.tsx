@@ -25,7 +25,7 @@ export default function ComoFuncionaPage() {
     <main className="mx-auto max-w-3xl p-6">
       <Nav active="/como-funciona" />
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Cómo funciona</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Cómo funciona</h1>
         <p className="mt-1 text-sm text-text-secondary">Qué hace el sistema, paso a paso, sin dar nada por sabido.</p>
       </header>
 

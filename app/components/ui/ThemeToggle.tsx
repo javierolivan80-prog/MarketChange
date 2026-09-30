@@ -31,7 +31,7 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
       aria-pressed={isDark}
-      className="rounded border border-border-subtle px-2 py-1.5 text-xs text-text-secondary hover:border-border-strong hover:text-foreground"
+      className="rounded border border-border-subtle px-2 py-1.5 font-mono text-xs uppercase tracking-wide text-text-secondary hover:border-border-strong hover:text-foreground"
     >
       {isDark ? "Oscuro" : "Claro"}
     </button>

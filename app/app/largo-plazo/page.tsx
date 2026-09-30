@@ -63,7 +63,7 @@ export default async function LargoPlazoPage() {
     <main className="mx-auto max-w-5xl p-6">
       <Nav active="/largo-plazo" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Largo plazo</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Largo plazo</h1>
         <p className="num mt-1 text-sm text-text-secondary">
           Empresas ordenadas por calidad de negocio y precio, según sus cuentas anuales auditadas. Horizonte de años, no de días. Datos
           a {asOfDate} · {scores.length} empresas analizadas.

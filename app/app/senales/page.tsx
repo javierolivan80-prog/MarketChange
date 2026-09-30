@@ -35,7 +35,7 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
     <main className="mx-auto max-w-7xl p-6">
       <Nav active="/senales" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Señales</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Señales</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           Cada evento analizado, más reciente primero. Abre una fila para ver el razonamiento completo — quién opina qué, cuántos casos
           parecidos hubo antes, la condición de invalidación de cada estrategia y el filing de origen. Máx. 500 eventos.

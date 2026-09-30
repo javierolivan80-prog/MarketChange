@@ -67,7 +67,7 @@ export default async function CarteraPage() {
       <Nav active="/cartera" />
       <header className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Cartera</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Cartera</h1>
           <ExportPdfButton report={report} />
         </div>
         <p className="mt-1 text-sm text-text-secondary">Cómo le ha ido al sistema si se hubiera operado — todo simulado, nunca con dinero real.</p>

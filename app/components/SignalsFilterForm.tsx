@@ -113,10 +113,10 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         />
       </div>
       <div className="flex gap-2">
-        <button type="submit" className="rounded bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700">
+        <button type="submit" className="rounded bg-accent-600 px-3 py-1.5 font-mono text-sm font-medium uppercase tracking-wide text-white hover:bg-accent-700">
           Filtrar
         </button>
-        <button type="button" onClick={clear} className="px-2 py-1.5 text-sm text-text-secondary hover:text-foreground">
+        <button type="button" onClick={clear} className="px-2 py-1.5 font-mono text-sm uppercase tracking-wide text-text-secondary hover:text-foreground">
           Limpiar
         </button>
       </div>

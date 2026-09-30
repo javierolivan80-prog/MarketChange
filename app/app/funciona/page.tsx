@@ -199,7 +199,7 @@ export default async function FuncionaPage() {
     <main className="mx-auto max-w-7xl p-6">
       <Nav active="/funciona" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">¿Funciona?</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">¿Funciona?</h1>
         <p className="mt-1 text-sm text-text-secondary">Todo lo que responde si te puedes fiar del sistema, y por qué.</p>
       </header>
 
