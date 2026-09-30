@@ -8,15 +8,17 @@ export const metadata: Metadata = {
 };
 
 // Script sin-flash: fija la clase .dark en <html> ANTES del primer pintado,
-// a partir de la preferencia guardada o, si no hay ninguna, del sistema.
-// Sin esto, con dark mode manual (ver ThemeToggle.tsx) la página siempre
+// a partir de la preferencia guardada o, si no hay ninguna, oscuro por
+// defecto (no la preferencia del sistema) — pedido explícitamente: la app
+// abre en oscuro como una terminal profesional, y solo pasa a claro si el
+// usuario lo elige a mano con ThemeToggle.tsx. Sin este script la página
 // arrancaría en claro y "saltaría" a oscuro tras hidratar — un parpadeo que
 // en un producto que aspira a verse serio se nota de inmediato.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var stored = localStorage.getItem("theme");
-    var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var dark = stored !== "light";
     document.documentElement.classList.toggle("dark", dark);
   } catch (e) {}
 })();

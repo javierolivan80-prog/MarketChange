@@ -14,8 +14,8 @@ const TABS = [
 
 export function Nav({ active }: { active: string }) {
   return (
-    <header className="-mx-6 mb-6 border-b border-border-subtle px-6">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 pt-4">
+    <header className="-mx-6 mb-4 border-b border-border-subtle px-6">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 pt-3">
         <Link href="/" className="text-sm font-semibold tracking-tight text-foreground">
           MarketChange
         </Link>
@@ -28,7 +28,7 @@ export function Nav({ active }: { active: string }) {
               key={tab.href}
               href={tab.href}
               aria-current={active === tab.href ? "page" : undefined}
-              className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
+              className={`-mb-px whitespace-nowrap border-b-2 px-3 py-1.5 text-sm ${
                 active === tab.href
                   ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
                   : "border-transparent text-text-secondary hover:text-foreground"
