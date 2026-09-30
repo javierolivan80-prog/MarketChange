@@ -147,9 +147,18 @@ export interface PortfolioRecommendation {
   findings: string[];
 }
 
+/** null = sin partición (todo el rango disponible, comportamiento histórico
+ * por defecto) · 'in_sample' / 'oos' = backtest acotado por fecha (ver
+ * pipeline/backtest/sample_split.py) — portfolio_report.py deja explícito
+ * cuál es para que un reporte OOS nunca se confunda con uno in-sample,
+ * ni en el JSON ni en lo que renderiza el dashboard. */
+export type SampleSplit = "in_sample" | "oos" | null;
+
 export interface PortfolioReport {
   run_batch_tag: string;
   starting_capital: number;
+  sample?: SampleSplit;
+  oos_warning?: string;
   versions: Record<StrategyVersion, PortfolioVersionReport>;
   bias_report: PortfolioBiasReport;
   recommendation: PortfolioRecommendation;
@@ -332,6 +341,8 @@ export interface VersionDecision {
 export interface ValidationReport {
   run_batch_tag: string;
   generated_at: string;
+  sample?: SampleSplit;
+  oos_warning?: string;
   event_study: EventStudy;
   sensitivity: Sensitivity;
   decisions: Record<StrategyVersion, VersionDecision>;

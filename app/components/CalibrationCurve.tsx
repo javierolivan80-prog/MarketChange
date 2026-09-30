@@ -11,7 +11,7 @@ import type { ConfidenceBucket } from "@/lib/queries";
 
 export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
   if (buckets.length === 0) {
-    return <div className="text-sm text-neutral-500 italic h-56 flex items-center justify-center">Sin datos suficientes.</div>;
+    return <div className="flex h-56 items-center justify-center text-sm italic text-text-tertiary">Sin datos suficientes.</div>;
   }
 
   const points = buckets.map((b) => ({ confidence: b.mean_confidence, hit_rate: b.hit_rate * 100, n: b.n }));

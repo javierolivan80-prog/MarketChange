@@ -6,6 +6,7 @@ import { ExportPdfButton } from "@/components/ExportPdfButton";
 import { DailyPnLChart } from "@/components/DailyPnLChart";
 import { ConfidenceBucketBars } from "@/components/ConfidenceBucketBars";
 import { Callout } from "@/components/ui/Callout";
+import { SampleBadge } from "@/components/ui/SampleBadge";
 import { formatPct, formatUsd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +16,6 @@ export const dynamic = "force-dynamic";
 // pregunta de fondo ("¿cómo le va a la cartera?"), solo que una mira el
 // histórico completo y la otra la semana en curso — tiene más sentido
 // como dos secciones de una misma pantalla que como dos pestañas sueltas.
-//
-// Nota sobre IN_SAMPLE/OOS: ese desglose (requisito de "Transparencia de
-// rendimiento" del brief) vive en el reporte de validación (Fase 6,
-// pipeline/validation/report.py → página ¿Funciona?), no en este backtest
-// de cartera — este reporte es una única corrida histórica, sin split de
-// muestra. Se etiqueta explícitamente abajo para no sugerir lo contrario.
 const VERSION_ORDER = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"] as const;
 const VERSION_LABELS: Record<string, string> = { CONSERVATIVE: "Conservador", AGGRESSIVE: "Agresivo", BALANCED: "Equilibrado" };
 
@@ -80,10 +75,12 @@ export default async function CarteraPage() {
 
       {/* Sección 1: histórico */}
       <section className="mb-10">
-        <div className="mb-3 flex items-baseline justify-between gap-2">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-base font-semibold text-foreground">Resultado histórico completo</h2>
-          <p className="text-xs text-text-tertiary">Corrida única — sin desglose in-sample/OOS (ver ¿Funciona? para el event study con esa separación)</p>
         </div>
+
+        <SampleBadge sample={report.sample} warning={report.oos_warning} />
+        <div className="mb-4" />
 
         {verdictIsYes ? (
           <Callout kind="positive" className="mb-4">
