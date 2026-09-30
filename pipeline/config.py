@@ -54,7 +54,18 @@ EDGAR_BASE = "https://www.sec.gov"
 
 # --- Universo invertible (ARCHITECTURE_LEAN.md §10) ---
 MIN_PRICE_USD = 5.0
-MIN_MARKET_CAP_USD = 300_000_000
+# Bajado de 300 M$ a 50 M$ (pedido explícito: cubrir small caps, no solo
+# medianas/grandes). Los filtros de PRECIO y VOLUMEN de abajo son los que de
+# verdad protegen de operar algo peligroso (centavos, iliquidez real); este
+# umbral es sobre todo una cuestión de tamaño/cobertura de información
+# (cuantas menos empresas comparables, menos fiable el histórico de
+# análogos), no de seguridad de ejecución — es el que tiene sentido relajar.
+# La ingesta de EDGAR (edgar_scraper.py) ya cubre el mercado entero sin
+# filtrar por tamaño: este número decide cuánto de ese mercado se ANALIZA y
+# se OPERA, no cuánto se ve. El control de gasto diario acumulado
+# (DAILY_SPEND_CAP_USD, más abajo) es lo que impide que más empresas
+# elegibles dispare el coste — racionará solo, sin tocar nada aquí.
+MIN_MARKET_CAP_USD = 50_000_000
 MIN_ADV_USD = 1_000_000
 # Un precio más viejo que esto no cuenta para decidir si la empresa es
 # invertible HOY (deslistadas, tickers que yfinance dejó de servir...).

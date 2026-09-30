@@ -29,7 +29,7 @@ pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="D
 def test_is_investable_aplica_los_tres_umbrales():
     assert is_investable(50.0, 2e9, 5e6) is True
     assert is_investable(4.0, 2e9, 5e6) is False      # precio < 5 $
-    assert is_investable(50.0, 1e8, 5e6) is False     # cap < 300 M$
+    assert is_investable(50.0, 3e7, 5e6) is False     # cap < 50 M$
     assert is_investable(50.0, 2e9, 5e5) is False     # volumen < 1 M$/día
 
 
@@ -144,7 +144,7 @@ def test_refresh_universe_metrics_calcula_cap_y_flag(conn):
     from pipeline.ingest.universe_maintenance import refresh_universe_metrics, top_companies
 
     _empresa(conn, "1", "BIG", 100.0, 1e9)            # 100 B$, 100 M$/día
-    _empresa(conn, "2", "SMALL", 10.0, 1e7)           # 100 M$ -> fuera
+    _empresa(conn, "2", "SMALL", 10.0, 2e6)           # 20 M$ -> fuera (< 50 M$)
     _empresa(conn, "3", "NOSHARES", 50.0, None)       # sin acciones -> fuera
     _empresa(conn, "4", "STALE", 100.0, 1e9, last_day=date.today() - timedelta(days=60))  # precio viejo
 
