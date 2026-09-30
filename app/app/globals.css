@@ -15,13 +15,13 @@
 @theme {
   --color-accent-50: oklch(0.97 0.014 255);
   --color-accent-100: oklch(0.93 0.03 255);
-  --color-accent-200: oklch(0.87 0.06 255);
-  --color-accent-300: oklch(0.78 0.09 255);
-  --color-accent-400: oklch(0.68 0.12 255);
-  --color-accent-500: oklch(0.58 0.14 258);
-  --color-accent-600: oklch(0.48 0.14 260);
-  --color-accent-700: oklch(0.4 0.12 261);
-  --color-accent-800: oklch(0.33 0.1 262);
+  --color-accent-200: oklch(0.87 0.07 255);
+  --color-accent-300: oklch(0.78 0.11 255);
+  --color-accent-400: oklch(0.7 0.16 255);
+  --color-accent-500: oklch(0.6 0.19 258);
+  --color-accent-600: oklch(0.5 0.19 260);
+  --color-accent-700: oklch(0.41 0.15 261);
+  --color-accent-800: oklch(0.33 0.11 262);
   --color-accent-900: oklch(0.27 0.08 262);
 }
 
@@ -38,16 +38,24 @@
   --focus-ring: var(--color-accent-600);
 }
 
+/* Modo oscuro: negro real (no "gris oscuro" tipo neutral-950) — la app abre
+   en este modo por defecto (ver el script de layout.tsx y ThemeToggle.tsx).
+   El contraste entre --surface y --background es deliberadamente bajo (las
+   tarjetas casi se funden con el fondo) mientras que --border-subtle sube de
+   intensidad respecto a la versión anterior: sin ese borde más marcado, un
+   negro puro detrás de otro negro puro no define dónde empieza cada tarjeta.
+   El acento y el texto principal suben de brillo/contraste para el efecto
+   "terminal" pedido — más dramático que el gris tenue de antes. */
 .dark {
-  --background: var(--color-neutral-950);
-  --surface: var(--color-neutral-950);
-  --surface-raised: var(--color-neutral-900);
-  --surface-sunken: oklch(0.16 0 0);
-  --foreground: var(--color-neutral-100);
-  --text-secondary: var(--color-neutral-400);
-  --text-tertiary: var(--color-neutral-500);
-  --border-subtle: var(--color-neutral-800);
-  --border-strong: var(--color-neutral-700);
+  --background: oklch(0 0 0);
+  --surface: oklch(0.04 0 0);
+  --surface-raised: oklch(0.08 0 0);
+  --surface-sunken: oklch(0 0 0);
+  --foreground: oklch(0.97 0 0);
+  --text-secondary: oklch(0.72 0 0);
+  --text-tertiary: oklch(0.52 0 0);
+  --border-subtle: oklch(0.2 0 0);
+  --border-strong: oklch(0.32 0 0);
   --focus-ring: var(--color-accent-400);
 }
 
