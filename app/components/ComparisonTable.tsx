@@ -27,29 +27,31 @@ export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
   const table = useReactTable({ data: rows, columns, getCoreRowModel: getCoreRowModel() });
 
   return (
-    <table className="w-full text-left border-collapse text-sm">
-      <thead>
-        {table.getHeaderGroups().map((hg) => (
-          <tr key={hg.id} className="border-b border-neutral-300 dark:border-neutral-700">
-            {hg.headers.map((h) => (
-              <th key={h.id} className="py-2 pr-4 font-medium">
-                {flexRender(h.column.columnDef.header, h.getContext())}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id} className="border-b border-neutral-100 dark:border-neutral-900">
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id} className="py-2 pr-4 font-mono">
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="overflow-x-auto rounded border border-border-subtle">
+      <table className="w-full border-collapse text-left text-sm">
+        <thead>
+          {table.getHeaderGroups().map((hg) => (
+            <tr key={hg.id} className="border-b border-border-strong bg-surface-raised text-text-secondary">
+              {hg.headers.map((h) => (
+                <th key={h.id} className="py-2 pl-3 pr-4 font-medium first:pl-3 last:pr-3">
+                  {flexRender(h.column.columnDef.header, h.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id} className="border-b border-border-subtle">
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id} className="num py-2 pl-3 pr-4 font-mono text-foreground first:pl-3 last:pr-3">
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

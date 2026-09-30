@@ -1,40 +1,25 @@
 // PortfolioVersionCard.tsx — una columna por versión (Conservative/
 // Aggressive/Balanced) del reporte de backtest_report.py. Renderiza el JSON
 // ya calculado por Python (portfolio_metrics.py) tal cual llega — este
-// componente no recalcula ni una fórmula, solo formatea unidades (ver los
-// comentarios de unidad en cada fmt* de abajo, porque el JSON mezcla
-// fracciones 0-1 con puntos porcentuales ya multiplicados por 100, fiel a
-// como cada función de portfolio_metrics.py los devuelve).
+// componente no recalcula ni una fórmula, solo formatea unidades vía
+// lib/format.ts (el JSON mezcla fracciones 0-1 con puntos porcentuales ya
+// multiplicados por 100, fiel a como cada función de portfolio_metrics.py
+// los devuelve — ver los comentarios de unidad en cada fmt* de abajo).
 import type { PortfolioVersionReport } from "@/lib/queries";
 import { PortfolioEquityCurve } from "./PortfolioEquityCurve";
 import { ScatterPredictedActual } from "./ScatterPredictedActual";
 import { ConfidenceBucketBars } from "./ConfidenceBucketBars";
 import { ReturnHistogram } from "./ReturnHistogram";
 import { DrawdownChart } from "./DrawdownChart";
+import { Callout } from "@/components/ui/Callout";
+import { SignedPct } from "@/components/ui/DirectionBadge";
+import { formatFracAsPct, formatPct, formatUsd, formatNum } from "@/lib/format";
 
 const VERSION_LABELS: Record<string, string> = {
-  CONSERVATIVE: "Conservative",
-  AGGRESSIVE: "Aggressive",
-  BALANCED: "Balanced",
+  CONSERVATIVE: "Conservador",
+  AGGRESSIVE: "Agresivo",
+  BALANCED: "Balanceado",
 };
-
-function fmtFraction(v: number | null, digits = 1): string {
-  return v === null || v === undefined ? "—" : `${(v * 100).toFixed(digits)}%`;
-}
-
-function fmtPctPoints(v: number | null | undefined, digits = 2): string {
-  return v === null || v === undefined ? "—" : `${v.toFixed(digits)}%`;
-}
-
-function fmtRatio(v: number | null, digits = 2): string {
-  return v === null || v === undefined ? "—" : v.toFixed(digits);
-}
-
-function fmtDollars(v: number | null): string {
-  return v === null || v === undefined
-    ? "—"
-    : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
 
 export function PortfolioVersionCard({
   report,
@@ -47,74 +32,72 @@ export function PortfolioVersionCard({
   const eventTypeRows = Object.values(report.metrics_by_event_type);
 
   return (
-    <div className="flex-1 min-w-[300px] border border-neutral-200 dark:border-neutral-800 rounded-lg p-4">
-      <h2 className="text-lg font-semibold mb-3">{VERSION_LABELS[report.version] ?? report.version}</h2>
+    <div className="flex-1 min-w-[300px] rounded border border-border-subtle bg-surface p-4">
+      <h2 className="mb-3 text-base font-semibold tracking-tight text-foreground">{VERSION_LABELS[report.version] ?? report.version}</h2>
 
       {no_lookahead_violations.length > 0 && (
-        <div className="border border-red-400 bg-red-50 dark:bg-red-950 dark:border-red-800 rounded p-2 mb-3 text-xs">
-          <p className="font-medium text-red-700 dark:text-red-400 mb-1">
-            ⚠ {no_lookahead_violations.length} violación(es) anti-look-ahead — resultado NO fiable
-          </p>
-          <ul className="list-disc list-inside text-red-600 dark:text-red-300">
+        <Callout kind="critical" className="mb-3">
+          <p className="font-medium">{no_lookahead_violations.length} violación(es) anti-look-ahead — resultado no fiable.</p>
+          <ul className="mt-1 list-inside list-disc font-normal normal-case">
             {no_lookahead_violations.slice(0, 3).map((v, i) => (
               <li key={i}>{v}</li>
             ))}
           </ul>
-        </div>
+        </Callout>
       )}
 
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm mb-3">
-        <dt className="text-neutral-500">Trades</dt>
-        <dd className="text-right font-mono">{tm.total_trades}</dd>
+      <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+        <dt className="text-text-secondary">Trades</dt>
+        <dd className="num text-right text-foreground">{tm.total_trades}</dd>
 
-        <dt className="text-neutral-500">Win rate</dt>
-        <dd className="text-right font-mono">{fmtFraction(tm.win_rate)}</dd>
+        <dt className="text-text-secondary">Win rate</dt>
+        <dd className="num text-right text-foreground">{formatFracAsPct(tm.win_rate, 1)}</dd>
 
-        <dt className="text-neutral-500">Profit factor</dt>
-        <dd className="text-right font-mono">{fmtRatio(tm.profit_factor)}</dd>
+        <dt className="text-text-secondary">Profit factor</dt>
+        <dd className="num text-right text-foreground">{formatNum(tm.profit_factor)}</dd>
 
-        <dt className="text-neutral-500">Expectancy</dt>
-        <dd className="text-right font-mono">{fmtPctPoints(tm.expectancy)}</dd>
+        <dt className="text-text-secondary">Expectancy</dt>
+        <dd className="num text-right text-foreground">{formatPct(tm.expectancy)}</dd>
 
-        <dt className="text-neutral-500">Balance final</dt>
-        <dd className="text-right font-mono">{fmtDollars(em.final_balance)}</dd>
+        <dt className="text-text-secondary">Balance final</dt>
+        <dd className="num text-right text-foreground">{formatUsd(em.final_balance, 0)}</dd>
 
-        <dt className="text-neutral-500">Retorno total</dt>
-        <dd className="text-right font-mono">{fmtFraction(em.total_return)}</dd>
+        <dt className="text-text-secondary">Retorno total</dt>
+        <dd className="num text-right text-foreground">{formatFracAsPct(em.total_return, 1)}</dd>
 
-        <dt className="text-neutral-500">Sharpe</dt>
-        <dd className="text-right font-mono">{fmtRatio(em.sharpe_ratio)}</dd>
+        <dt className="text-text-secondary">Sharpe</dt>
+        <dd className="num text-right text-foreground">{formatNum(em.sharpe_ratio)}</dd>
 
-        <dt className="text-neutral-500">Sortino</dt>
-        <dd className="text-right font-mono">{fmtRatio(em.sortino_ratio)}</dd>
+        <dt className="text-text-secondary">Sortino</dt>
+        <dd className="num text-right text-foreground">{formatNum(em.sortino_ratio)}</dd>
 
-        <dt className="text-neutral-500">Calmar</dt>
-        <dd className="text-right font-mono">{fmtRatio(em.calmar_ratio)}</dd>
+        <dt className="text-text-secondary">Calmar</dt>
+        <dd className="num text-right text-foreground">{formatNum(em.calmar_ratio)}</dd>
 
-        <dt className="text-neutral-500">Max drawdown</dt>
-        <dd className="text-right font-mono">{fmtFraction(em.max_drawdown)}</dd>
+        <dt className="text-text-secondary">Max drawdown</dt>
+        <dd className="num text-right text-foreground">{formatFracAsPct(em.max_drawdown, 1)}</dd>
 
-        <dt className="text-neutral-500">Recovery factor</dt>
-        <dd className="text-right font-mono">{fmtRatio(em.recovery_factor)}</dd>
+        <dt className="text-text-secondary">Recovery factor</dt>
+        <dd className="num text-right text-foreground">{formatNum(em.recovery_factor)}</dd>
 
-        <dt className="text-neutral-500">Rachas (G/P)</dt>
-        <dd className="text-right font-mono">
+        <dt className="text-text-secondary">Rachas (G/P)</dt>
+        <dd className="num text-right text-foreground">
           {tm.consecutive_wins}/{tm.consecutive_losses}
         </dd>
 
-        <dt className="text-neutral-500">Calibración</dt>
-        <dd className={`text-right font-mono ${cal.meets_target ? "text-green-600 dark:text-green-400" : ""}`}>
-          {fmtRatio(cal.calibration_score)}
+        <dt className="text-text-secondary">Calibración</dt>
+        <dd className={`num text-right ${cal.meets_target ? "text-emerald-700 dark:text-emerald-400" : "text-foreground"}`}>
+          {formatNum(cal.calibration_score)}
         </dd>
 
-        <dt className="text-neutral-500">R² predicho-real</dt>
-        <dd className="text-right font-mono">{fmtRatio(report.prediction_regression.r_squared)}</dd>
+        <dt className="text-text-secondary">R² predicho-real</dt>
+        <dd className="num text-right text-foreground">{formatNum(report.prediction_regression.r_squared)}</dd>
       </dl>
 
       {asymmetry.n_trades > 0 && (
-        <p className="text-xs text-neutral-500 mb-3">
-          Asimetría (umbral ±{asymmetry.threshold_pct}%): {fmtPctPoints(asymmetry.pct_reaching_positive_threshold, 0)}{" "}
-          alcanzan +umbral vs {fmtPctPoints(asymmetry.pct_reaching_negative_threshold, 0)} -umbral
+        <p className="num mb-3 text-xs text-text-tertiary">
+          Asimetría (umbral ±{asymmetry.threshold_pct}%): {formatPct(asymmetry.pct_reaching_positive_threshold, 0)} alcanzan +umbral vs{" "}
+          {formatPct(asymmetry.pct_reaching_negative_threshold, 0)} -umbral
           {asymmetry.asymmetric_favoring_gains !== null &&
             (asymmetry.asymmetric_favoring_gains ? " (favorece ganancias)" : " (favorece pérdidas)")}
         </p>
@@ -124,34 +107,32 @@ export function PortfolioVersionCard({
         <PortfolioEquityCurve points={report.equity_curve} startingCapital={startingCapital} />
       </div>
 
-      <details className="text-xs mb-3">
-        <summary className="cursor-pointer text-neutral-500 mb-2">Drawdown (underwater plot)</summary>
+      <details className="mb-3 text-xs">
+        <summary className="mb-2 cursor-pointer text-text-secondary">Drawdown (underwater plot)</summary>
         <DrawdownChart equityCurve={report.equity_curve} />
       </details>
 
-      <details className="text-xs mb-3">
-        <summary className="cursor-pointer text-neutral-500 mb-2">Distribución de retornos</summary>
+      <details className="mb-3 text-xs">
+        <summary className="mb-2 cursor-pointer text-text-secondary">Distribución de retornos</summary>
         <ReturnHistogram pnlPcts={report.all_trades.map((t) => t.pnl_pct)} />
       </details>
 
-      <details className="text-xs mb-3">
-        <summary className="cursor-pointer text-neutral-500 mb-2">Predicho vs. real (scatter)</summary>
+      <details className="mb-3 text-xs">
+        <summary className="mb-2 cursor-pointer text-text-secondary">Predicho vs. real (scatter)</summary>
         <ScatterPredictedActual points={report.prediction_regression.scatter} rSquared={report.prediction_regression.r_squared} />
       </details>
 
-      <details className="text-xs mb-3">
-        <summary className="cursor-pointer text-neutral-500 mb-2">
+      <details className="mb-3 text-xs">
+        <summary className="mb-2 cursor-pointer text-text-secondary">
           Win rate por banda de confidence {report.confidence_calibration.correlation !== null && `(correl=${report.confidence_calibration.correlation.toFixed(2)})`}
         </summary>
         <ConfidenceBucketBars buckets={report.confidence_calibration.buckets} />
       </details>
 
       {temporal_stability && (
-        <details className="text-xs mb-3">
-          <summary className="cursor-pointer text-neutral-500 mb-1">
-            Estabilidad temporal (split {temporal_stability.split_date})
-          </summary>
-          <p className={temporal_stability.stable === false ? "text-amber-600 dark:text-amber-400" : "text-neutral-500"}>
+        <details className="mb-3 text-xs">
+          <summary className="mb-1 cursor-pointer text-text-secondary">Estabilidad temporal (split {temporal_stability.split_date})</summary>
+          <p className={temporal_stability.stable === false ? "text-amber-700 dark:text-amber-400" : "text-text-secondary"}>
             {temporal_stability.stable === null
               ? "Muestra insuficiente para comparar"
               : temporal_stability.stable
@@ -159,35 +140,42 @@ export function PortfolioVersionCard({
                 : "Diverge entre periodos"}
           </p>
           {temporal_stability.warnings.map((w, i) => (
-            <p key={i} className="text-amber-600 dark:text-amber-400">
-              ⚠ {w}
-            </p>
+            <Callout key={i} kind="warning" className="mt-1">
+              {w}
+            </Callout>
           ))}
         </details>
       )}
 
       {eventTypeRows.length > 0 && (
-        <details className="text-xs mb-3">
-          <summary className="cursor-pointer text-neutral-500 mb-2">Por tipo de evento ({eventTypeRows.length})</summary>
-          <table className="w-full text-left border-collapse">
+        <details className="mb-3 text-xs">
+          <summary className="mb-2 cursor-pointer text-text-secondary">Por tipo de evento ({eventTypeRows.length})</summary>
+          <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
-                <th className="py-1 pr-2">Clase</th>
-                <th className="py-1 pr-2 text-right">N</th>
-                <th className="py-1 pr-2 text-right">Win rate</th>
-                <th className="py-1 pr-2 text-right">Retorno medio</th>
+              <tr className="border-b border-border-subtle">
+                <th className="py-1 pr-2 font-medium text-text-secondary">Clase</th>
+                <th className="py-1 pr-2 text-right font-medium text-text-secondary">N</th>
+                <th className="py-1 pr-2 text-right font-medium text-text-secondary">Win rate</th>
+                <th className="py-1 pr-2 text-right font-medium text-text-secondary">Retorno medio</th>
               </tr>
             </thead>
             <tbody>
               {eventTypeRows.map((row) => (
-                <tr key={row.event_type} className="border-b border-neutral-100 dark:border-neutral-900">
-                  <td className="py-1 pr-2">
+                <tr key={row.event_type} className="border-b border-border-subtle">
+                  <td className="py-1 pr-2 text-foreground">
                     {row.event_type.replace(/^8K_/, "")}
-                    {row.insufficient_sample && <span title="n < 20 — muestra insuficiente"> ⚠</span>}
+                    {row.insufficient_sample && (
+                      <span
+                        className="ml-1.5 rounded bg-amber-50 px-1 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                        title="n < 20 — muestra insuficiente"
+                      >
+                        n bajo
+                      </span>
+                    )}
                   </td>
-                  <td className="py-1 pr-2 text-right font-mono">{row.n_trades}</td>
-                  <td className="py-1 pr-2 text-right font-mono">{fmtFraction(row.win_rate)}</td>
-                  <td className="py-1 pr-2 text-right font-mono">{fmtPctPoints(row.avg_return)}</td>
+                  <td className="num py-1 pr-2 text-right text-foreground">{row.n_trades}</td>
+                  <td className="num py-1 pr-2 text-right text-foreground">{formatFracAsPct(row.win_rate, 1)}</td>
+                  <td className="num py-1 pr-2 text-right text-foreground">{formatPct(row.avg_return)}</td>
                 </tr>
               ))}
             </tbody>
@@ -196,9 +184,7 @@ export function PortfolioVersionCard({
       )}
 
       <details className="text-xs">
-        <summary className="cursor-pointer text-neutral-500 mb-2">
-          Top 10 ganadores / perdedores
-        </summary>
+        <summary className="mb-2 cursor-pointer text-text-secondary">Top 10 ganadores / perdedores</summary>
         <TradeMiniTable trades={report.top_10_winners} />
         <div className="mt-2" />
         <TradeMiniTable trades={report.top_10_losers} />
@@ -209,24 +195,24 @@ export function PortfolioVersionCard({
 
 function TradeMiniTable({ trades }: { trades: PortfolioVersionReport["top_10_winners"] }) {
   if (trades.length === 0) {
-    return <p className="text-neutral-500 italic">Sin trades.</p>;
+    return <p className="italic text-text-tertiary">Sin trades.</p>;
   }
   return (
-    <table className="w-full text-left border-collapse">
+    <table className="w-full border-collapse text-left">
       <thead>
-        <tr className="border-b border-neutral-200 dark:border-neutral-800">
-          <th className="py-1 pr-2">Ticker</th>
-          <th className="py-1 pr-2">Salida</th>
-          <th className="py-1 pr-2 text-right">PnL %</th>
+        <tr className="border-b border-border-subtle">
+          <th className="py-1 pr-2 font-medium text-text-secondary">Ticker</th>
+          <th className="py-1 pr-2 font-medium text-text-secondary">Salida</th>
+          <th className="py-1 pr-2 text-right font-medium text-text-secondary">PnL</th>
         </tr>
       </thead>
       <tbody>
         {trades.map((t) => (
-          <tr key={`${t.event_id}-${t.exit_date}`} className="border-b border-neutral-100 dark:border-neutral-900">
-            <td className="py-1 pr-2 font-mono">{t.ticker ?? "—"}</td>
-            <td className="py-1 pr-2">{t.exit_reason}</td>
-            <td className={`py-1 pr-2 text-right font-mono ${t.pnl_pct >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-              {t.pnl_pct.toFixed(2)}
+          <tr key={`${t.event_id}-${t.exit_date}`} className="border-b border-border-subtle">
+            <td className="py-1 pr-2 font-mono text-foreground">{t.ticker ?? "—"}</td>
+            <td className="py-1 pr-2 text-text-secondary">{t.exit_reason}</td>
+            <td className="py-1 pr-2 text-right">
+              <SignedPct value={t.pnl_pct} />
             </td>
           </tr>
         ))}

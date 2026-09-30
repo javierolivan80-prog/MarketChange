@@ -12,7 +12,7 @@ import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Toolt
 
 export function ScatterPredictedActual({ points, rSquared }: { points: { predicted: number; actual: number }[]; rSquared: number | null }) {
   if (points.length === 0) {
-    return <div className="text-sm text-neutral-500 italic h-48 flex items-center justify-center">Sin trades todavía.</div>;
+    return <div className="flex h-48 items-center justify-center text-sm italic text-text-tertiary">Sin trades todavía.</div>;
   }
 
   const allValues = points.flatMap((p) => [p.predicted, p.actual]);
@@ -53,13 +53,13 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               formatter={(value) => `${Number(value).toFixed(2)}%`}
               cursor={{ strokeDasharray: "3 3" }}
             />
-            <Line data={diagonal} dataKey="actual" stroke="#9ca3af" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
-            <Scatter data={points} fill="#2563eb" fillOpacity={0.6} name="trades" />
+            <Line data={diagonal} dataKey="actual" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
+            <Scatter data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name="trades" />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-xs text-neutral-500 mt-1">
-        R² = {rSquared !== null ? rSquared.toFixed(3) : "—"} (línea gris = calibración perfecta, predicho == real)
+      <p className="mt-1 text-xs text-text-tertiary">
+        R² = {rSquared !== null ? rSquared.toFixed(3) : "—"} (línea de referencia = calibración perfecta, predicho == real)
       </p>
     </div>
   );

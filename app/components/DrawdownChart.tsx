@@ -11,7 +11,7 @@ import type { PortfolioEquityPoint } from "@/lib/queries";
 
 export function DrawdownChart({ equityCurve }: { equityCurve: PortfolioEquityPoint[] }) {
   if (equityCurve.length === 0) {
-    return <div className="text-sm text-neutral-500 italic h-40 flex items-center justify-center">Sin datos todavía.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin datos todavía.</div>;
   }
 
   let peak = equityCurve[0].balance;

@@ -8,7 +8,7 @@ import type { ConfidenceBucket } from "@/lib/queries";
 
 export function ConfidenceBucketBars({ buckets, label = "Win rate" }: { buckets: ConfidenceBucket[]; label?: string }) {
   if (buckets.length === 0) {
-    return <div className="text-sm text-neutral-500 italic h-40 flex items-center justify-center">Sin datos suficientes.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin datos suficientes.</div>;
   }
   const data = buckets.map((b) => ({ ...b, hit_rate_pct: b.hit_rate * 100 }));
 
@@ -25,9 +25,9 @@ export function ConfidenceBucketBars({ buckets, label = "Win rate" }: { buckets:
               label,
             ]}
           />
-          <Bar dataKey="hit_rate_pct" fill="#2563eb">
+          <Bar dataKey="hit_rate_pct" fill="var(--color-accent-600)">
             {data.map((d, i) => (
-              <Cell key={i} fill={d.n < 5 ? "#93c5fd" : "#2563eb"} />
+              <Cell key={i} fill={d.n < 5 ? "var(--color-accent-300)" : "var(--color-accent-600)"} />
             ))}
           </Bar>
         </BarChart>

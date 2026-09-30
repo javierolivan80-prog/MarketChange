@@ -8,7 +8,7 @@ import type { PortfolioEquityPoint } from "@/lib/queries";
 
 export function PortfolioEquityCurve({ points, startingCapital }: { points: PortfolioEquityPoint[]; startingCapital: number }) {
   if (points.length === 0) {
-    return <div className="text-sm text-neutral-500 italic">Sin curva de equity todavía.</div>;
+    return <div className="text-sm italic text-text-tertiary">Sin curva de equity todavía.</div>;
   }
 
   const width = 320;

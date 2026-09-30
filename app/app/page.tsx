@@ -9,6 +9,8 @@ import {
   getValidationReport,
 } from "@/lib/queries";
 import { Nav } from "@/components/Nav";
+import { SampleBadge } from "@/components/ui/SampleBadge";
+import { formatPct, formatNum } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -19,33 +21,45 @@ export const dynamic = "force-dynamic";
 // — aquí solo se traduce a lenguaje llano y se pone delante de todo lo
 // demás. El detalle completo sigue disponible en /funciona y /cartera para
 // quien quiera profundizar.
-
-const VERDICT_COPY: Record<string, { emoji: string; title: string; color: string }> = {
-  A: { emoji: "✅", title: "El sistema funciona bien en las pruebas", color: "border-green-400 bg-green-50 dark:bg-green-950 dark:border-green-800" },
-  B: { emoji: "⚠️", title: "Funciona, pero todavía con reservas", color: "border-amber-400 bg-amber-50 dark:bg-amber-950 dark:border-amber-800" },
-  C: { emoji: "❌", title: "Todavía no funciona de forma fiable", color: "border-red-400 bg-red-50 dark:bg-red-950 dark:border-red-800" },
+//
+// Mismo criterio de color que /funciona: A/B/C es el veredicto del propio
+// motor de validación, no P&L ni dirección — usa el mismo verde/ámbar/rojo
+// que el resto de veredictos "¿te puedes fiar de esto?", nunca emoji.
+const VERDICT_COPY: Record<string, { title: string; color: string; text: string }> = {
+  A: { title: "El sistema funciona bien en las pruebas", color: "border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-500/10", text: "text-emerald-800 dark:text-emerald-400" },
+  B: { title: "Funciona, pero todavía con reservas", color: "border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-500/10", text: "text-amber-800 dark:text-amber-400" },
+  C: { title: "Todavía no funciona de forma fiable", color: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10", text: "text-rose-800 dark:text-rose-400" },
 };
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 flex-1 min-w-[160px]">
-      <p className="text-xs text-neutral-500 mb-1">{label}</p>
-      <p className="text-2xl font-bold">{value}</p>
-      {hint && <p className="text-xs text-neutral-400 mt-1">{hint}</p>}
+    <div className="min-w-[160px] flex-1 rounded border border-border-subtle p-4">
+      <p className="mb-1 text-xs text-text-secondary">{label}</p>
+      <p className="num text-2xl font-semibold text-foreground">{value}</p>
+      {hint && <p className="mt-1 text-xs text-text-tertiary">{hint}</p>}
     </div>
+  );
+}
+
+function QuickLink({ href, title, description }: { href: string; title: string; description: string }) {
+  return (
+    <Link href={href} className="rounded border border-border-subtle p-4 hover:border-accent-600 dark:hover:border-accent-400">
+      <p className="mb-1 font-medium text-foreground">{title} →</p>
+      <p className="text-xs text-text-secondary">{description}</p>
+    </Link>
   );
 }
 
 export default async function InicioPage() {
   if (!isDatabaseConfigured()) {
     return (
-      <main className="max-w-3xl mx-auto p-8">
+      <main className="mx-auto max-w-3xl p-8">
         <Nav active="/" />
-        <h1 className="text-2xl font-bold mb-4">Money — Panel</h1>
-        <div className="border border-amber-300 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 rounded-lg p-4">
-          <p className="font-medium mb-2">DATABASE_URL no está configurada.</p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Ver <code>RUNBOOK.md</code> para provisionar una base gratuita y configurar la variable de entorno.
+        <h1 className="mb-4 text-2xl font-semibold text-foreground">MarketChange — Panel</h1>
+        <div className="rounded border border-amber-300 bg-amber-50 p-4 dark:border-amber-800/60 dark:bg-amber-500/10">
+          <p className="mb-2 font-medium text-amber-800 dark:text-amber-400">DATABASE_URL no está configurada.</p>
+          <p className="text-sm text-text-secondary">
+            Ver <code className="font-mono">RUNBOOK.md</code> para provisionar una base gratuita y configurar la variable de entorno.
           </p>
         </div>
       </main>
@@ -60,12 +74,12 @@ export default async function InicioPage() {
 
   if (!portfolioTag) {
     return (
-      <main className="max-w-3xl mx-auto p-8">
+      <main className="mx-auto max-w-3xl p-8">
         <Nav active="/" />
-        <h1 className="text-2xl font-bold mb-4">Money — Panel</h1>
-        <div className="border border-neutral-300 dark:border-neutral-700 rounded-lg p-4">
-          <p className="font-medium mb-2">Todavía no hay ningún resultado calculado.</p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <h1 className="mb-4 text-2xl font-semibold text-foreground">MarketChange — Panel</h1>
+        <div className="rounded border border-border-subtle p-4">
+          <p className="mb-2 font-medium text-foreground">Todavía no hay ningún resultado calculado.</p>
+          <p className="text-sm text-text-secondary">
             El pipeline nocturno todavía no ha corrido, o acaba de empezar a recoger datos. Vuelve en unas horas.
           </p>
         </div>
@@ -85,67 +99,67 @@ export default async function InicioPage() {
   const openPositions = paperReport ? Object.values(paperReport.versions).reduce((sum, v) => sum + v.n_open_positions, 0) : 0;
 
   return (
-    <main className="max-w-5xl mx-auto p-6">
+    <main className="mx-auto max-w-5xl p-6">
       <Nav active="/" />
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">Money — Panel</h1>
-        <p className="text-sm text-neutral-500 mt-1">Resumen de un vistazo. Todo lo de aquí tiene el detalle completo en las otras pestañas.</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">MarketChange — Panel</h1>
+        <p className="mt-1 text-sm text-text-secondary">Resumen de un vistazo. Todo lo de aquí tiene el detalle completo en las otras pestañas.</p>
       </header>
+
+      {portfolioReport && (portfolioReport.sample || portfolioReport.oos_warning) && (
+        <div className="mb-4">
+          <SampleBadge sample={portfolioReport.sample} warning={portfolioReport.oos_warning} />
+        </div>
+      )}
 
       {/* Semáforo */}
       {verdict ? (
-        <section className={`border-2 rounded-lg p-5 mb-6 ${verdict.color}`}>
-          <p className="text-3xl mb-1">{verdict.emoji}</p>
-          <p className="text-xl font-bold mb-2">{verdict.title}</p>
-          <p className="text-sm">{validationReport!.best_decision.recommendation}</p>
-          <Link href="/funciona" className="text-sm underline mt-2 inline-block">
+        <section className={`mb-6 rounded border-2 p-5 ${verdict.color}`}>
+          <p className={`mb-2 text-xl font-semibold ${verdict.text}`}>{verdict.title}</p>
+          <p className="text-sm text-foreground">{validationReport!.best_decision.recommendation}</p>
+          <Link href="/funciona" className="mt-2 inline-block text-sm text-accent-700 underline decoration-dotted hover:text-accent-800 dark:text-accent-400 dark:hover:text-accent-300">
             Ver por qué →
           </Link>
         </section>
       ) : (
-        <section className="border-2 border-neutral-300 dark:border-neutral-700 rounded-lg p-5 mb-6">
-          <p className="text-xl font-bold mb-2">🕐 Todavía acumulando datos</p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Hacen falta más días de eventos reales antes de poder decir con confianza si el sistema funciona. Esto es normal al principio —
-            no es un fallo.
+        <section className="mb-6 rounded border-2 border-border-subtle p-5">
+          <p className="mb-2 text-xl font-semibold text-foreground">Todavía acumulando datos</p>
+          <p className="text-sm text-text-secondary">
+            Hacen falta más días de eventos reales antes de poder decir con confianza si el sistema funciona. Esto es normal al
+            principio — no es un fallo.
           </p>
         </section>
       )}
 
       {/* Stats clave, en lenguaje llano */}
-      <section className="flex flex-wrap gap-4 mb-6">
+      <section className="mb-6 flex flex-wrap gap-4">
         <StatCard
           label="Aciertos históricos"
-          value={balanced?.trade_metrics.win_rate !== null && balanced?.trade_metrics.win_rate !== undefined ? `${(balanced.trade_metrics.win_rate * 100).toFixed(0)}%` : "—"}
+          value={balanced?.trade_metrics.win_rate !== null && balanced?.trade_metrics.win_rate !== undefined ? formatPct(balanced.trade_metrics.win_rate * 100, 0) : "—"}
           hint={`de ${balanced?.trade_metrics.total_trades ?? 0} operaciones simuladas`}
         />
         <StatCard
           label="Resultado acumulado"
           value={
             balanced?.equity_metrics.total_return !== null && balanced?.equity_metrics.total_return !== undefined
-              ? `${(balanced.equity_metrics.total_return * 100).toFixed(1)}%`
+              ? formatPct(balanced.equity_metrics.total_return * 100, 1)
               : "—"
           }
           hint="sobre el capital simulado, coste incluido"
         />
-        <StatCard label="Operaciones abiertas ahora" value={String(openPositions)} hint="simuladas esta semana (papel, sin dinero real)" />
-        <StatCard label="Peor caída sufrida" value={balanced?.equity_metrics.max_drawdown !== null && balanced?.equity_metrics.max_drawdown !== undefined ? `${(balanced.equity_metrics.max_drawdown * 100).toFixed(1)}%` : "—"} hint="máxima pérdida temporal en la simulación" />
+        <StatCard label="Operaciones abiertas ahora" value={formatNum(openPositions, 0)} hint="simuladas esta semana (papel, sin dinero real)" />
+        <StatCard
+          label="Peor caída sufrida"
+          value={balanced?.equity_metrics.max_drawdown !== null && balanced?.equity_metrics.max_drawdown !== undefined ? formatPct(balanced.equity_metrics.max_drawdown * 100, 1) : "—"}
+          hint="máxima pérdida temporal en la simulación"
+        />
       </section>
 
       {/* Accesos rápidos */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Link href="/senales" className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 hover:border-neutral-400 dark:hover:border-neutral-600">
-          <p className="font-medium mb-1">Ver señales →</p>
-          <p className="text-xs text-neutral-500">Cada evento detectado, con su análisis completo y por qué se opera o no.</p>
-        </Link>
-        <Link href="/cartera" className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 hover:border-neutral-400 dark:hover:border-neutral-600">
-          <p className="font-medium mb-1">Ver resultados →</p>
-          <p className="text-xs text-neutral-500">Cómo le ha ido históricamente y qué está pasando esta semana.</p>
-        </Link>
-        <Link href="/como-funciona" className="border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 hover:border-neutral-400 dark:hover:border-neutral-600">
-          <p className="font-medium mb-1">¿Cómo funciona esto? →</p>
-          <p className="text-xs text-neutral-500">Explicación paso a paso del motor, sin necesitar conocer el proyecto de antes.</p>
-        </Link>
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <QuickLink href="/senales" title="Ver señales" description="Cada evento detectado, con su análisis completo y por qué se opera o no." />
+        <QuickLink href="/cartera" title="Ver resultados" description="Cómo le ha ido históricamente y qué está pasando esta semana." />
+        <QuickLink href="/como-funciona" title="¿Cómo funciona esto?" description="Explicación paso a paso del motor, sin necesitar conocer el proyecto de antes." />
       </section>
     </main>
   );

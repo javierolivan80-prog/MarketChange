@@ -11,6 +11,9 @@ import {
 import { Nav } from "@/components/Nav";
 import { CalibrationCurve } from "@/components/CalibrationCurve";
 import { ComparisonTable, type ComparisonRow } from "@/components/ComparisonTable";
+import { SampleBadge } from "@/components/ui/SampleBadge";
+import { SignedPct } from "@/components/ui/DirectionBadge";
+import { formatPct, formatNum } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -21,18 +24,25 @@ export const dynamic = "force-dynamic";
 // está seguro?, ¿qué versión conviene más?) — tiene más sentido como tres
 // secciones de una sola pantalla que como pestañas sueltas y sin conexión
 // visible entre ellas.
+//
+// Nota de color: A/B/C es el veredicto GREENLIGHT/YELLOWLIGHT/REDLIGHT del
+// propio motor de validación (pipeline/validation/report.py) — un semáforo
+// de confianza en el sistema, no P&L ni dirección — así que, igual que el
+// recuadro de recomendación de Cartera, usa el mismo verde/ámbar/rojo que el
+// resto de veredictos de "¿te puedes fiar de esto?" en la app (nunca para UI
+// genérica).
 const VERSION_ORDER = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"] as const;
 const VERSION_LABELS: Record<string, string> = { CONSERVATIVE: "Conservador", AGGRESSIVE: "Agresivo", BALANCED: "Equilibrado" };
 
-const OPTION_COLORS: Record<string, string> = {
-  A: "border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950",
-  B: "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950",
-  C: "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950",
+const OPTION_STYLES: Record<string, string> = {
+  A: "border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-500/10",
+  B: "border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-500/10",
+  C: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10",
 };
-const OPTION_TEXT_COLORS: Record<string, string> = {
-  A: "text-green-700 dark:text-green-400",
-  B: "text-amber-700 dark:text-amber-400",
-  C: "text-red-700 dark:text-red-400",
+const OPTION_TEXT_STYLES: Record<string, string> = {
+  A: "text-emerald-800 dark:text-emerald-400",
+  B: "text-amber-800 dark:text-amber-400",
+  C: "text-rose-800 dark:text-rose-400",
 };
 
 const SCENARIO_LABELS: Record<string, string> = {
@@ -77,11 +87,11 @@ function interpretCalibration(diag: CalibrationDiagnostics): { label: string; ad
 
 function DecisionCard({ title, decision }: { title: string; decision: VersionDecision }) {
   return (
-    <div className={`border rounded-lg p-4 ${OPTION_COLORS[decision.option]}`}>
-      <p className="text-sm text-neutral-500 mb-1">{title}</p>
-      <p className={`text-lg font-bold mb-2 ${OPTION_TEXT_COLORS[decision.option]}`}>{decision.label}</p>
-      <p className="text-sm mb-2">{decision.recommendation}</p>
-      <ul className="text-xs text-neutral-600 dark:text-neutral-400 list-disc list-inside space-y-0.5">
+    <div className={`rounded border p-4 ${OPTION_STYLES[decision.option]}`}>
+      <p className="mb-1 text-sm text-text-secondary">{title}</p>
+      <p className={`mb-2 text-lg font-semibold ${OPTION_TEXT_STYLES[decision.option]}`}>{decision.label}</p>
+      <p className="mb-2 text-sm text-foreground">{decision.recommendation}</p>
+      <ul className="list-inside list-disc space-y-0.5 text-xs text-text-secondary">
         {decision.reasons.map((r, i) => (
           <li key={i}>{r}</li>
         ))}
@@ -92,17 +102,17 @@ function DecisionCard({ title, decision }: { title: string; decision: VersionDec
 
 function EventStudyRow({ eventClass, stats }: { eventClass: string; stats: EventStudyClassResult }) {
   return (
-    <tr className="border-b border-neutral-100 dark:border-neutral-900">
-      <td className="py-2 pr-4 font-mono text-xs">{eventClass.replace(/^8K_/, "")}</td>
-      <td className="py-2 pr-4 text-right">{stats.n}</td>
-      <td className="py-2 pr-4 text-right">{stats.median_return_pct !== null ? `${stats.median_return_pct.toFixed(2)}%` : "—"}</td>
-      <td className="py-2 pr-4 text-right">{stats.p_value !== null ? stats.p_value.toFixed(4) : "—"}</td>
+    <tr className="border-b border-border-subtle">
+      <td className="py-2 pr-4 font-mono text-xs text-foreground">{eventClass.replace(/^8K_/, "")}</td>
+      <td className="num py-2 pr-4 text-right text-foreground">{stats.n}</td>
+      <td className="num py-2 pr-4 text-right text-foreground">{stats.median_return_pct !== null ? formatPct(stats.median_return_pct) : "—"}</td>
+      <td className="num py-2 pr-4 text-right text-foreground">{stats.p_value !== null ? stats.p_value.toFixed(4) : "—"}</td>
       <td className="py-2 pr-4 text-center">
-        {stats.significant === true && <span className="text-green-600 dark:text-green-400">✓ sí</span>}
-        {stats.significant === false && <span className="text-red-500">✗ no</span>}
-        {stats.significant === null && <span className="text-neutral-400">? aún no se sabe</span>}
+        {stats.significant === true && <span className="text-emerald-700 dark:text-emerald-400">Sí</span>}
+        {stats.significant === false && <span className="text-rose-700 dark:text-rose-400">No</span>}
+        {stats.significant === null && <span className="text-text-tertiary">Aún no se sabe</span>}
       </td>
-      <td className="py-2 text-neutral-500">{stats.conclusion}</td>
+      <td className="py-2 text-text-secondary">{stats.conclusion}</td>
     </tr>
   );
 }
@@ -110,10 +120,10 @@ function EventStudyRow({ eventClass, stats }: { eventClass: string; stats: Event
 export default async function FuncionaPage() {
   if (!isDatabaseConfigured()) {
     return (
-      <main className="max-w-3xl mx-auto p-8">
+      <main className="mx-auto max-w-3xl p-8">
         <Nav active="/funciona" />
-        <h1 className="text-2xl font-bold mb-4">¿Funciona?</h1>
-        <p className="text-sm text-neutral-500">DATABASE_URL no está configurada.</p>
+        <h1 className="mb-4 text-2xl font-semibold text-foreground">¿Funciona?</h1>
+        <p className="text-sm text-text-secondary">DATABASE_URL no está configurada.</p>
       </main>
     );
   }
@@ -122,10 +132,10 @@ export default async function FuncionaPage() {
 
   if (!portfolioTag) {
     return (
-      <main className="max-w-3xl mx-auto p-8">
+      <main className="mx-auto max-w-3xl p-8">
         <Nav active="/funciona" />
-        <h1 className="text-2xl font-bold mb-4">¿Funciona?</h1>
-        <p className="text-sm text-neutral-500">Todavía no hay ningún backtest de cartera registrado.</p>
+        <h1 className="mb-4 text-2xl font-semibold text-foreground">¿Funciona?</h1>
+        <p className="text-sm text-text-secondary">Todavía no hay ningún backtest de cartera registrado.</p>
       </main>
     );
   }
@@ -137,19 +147,17 @@ export default async function FuncionaPage() {
 
   if (!report) {
     return (
-      <main className="max-w-3xl mx-auto p-8">
+      <main className="mx-auto max-w-3xl p-8">
         <Nav active="/funciona" />
-        <h1 className="text-2xl font-bold mb-4">¿Funciona?</h1>
-        <p className="text-sm text-neutral-500">
-          No se pudo leer el reporte para <code>{portfolioTag}</code>.
+        <h1 className="mb-4 text-2xl font-semibold text-foreground">¿Funciona?</h1>
+        <p className="text-sm text-text-secondary">
+          No se pudo leer el reporte para <code className="font-mono">{portfolioTag}</code>.
         </p>
       </main>
     );
   }
 
   const v = report.versions;
-  const fmtPct = (x: number | null) => (x === null ? "—" : `${(x * 100).toFixed(1)}%`);
-  const fmtRatio = (x: number | null) => (x === null ? "—" : x.toFixed(2));
   const tradesPerYear = (version: "CONSERVATIVE" | "AGGRESSIVE" | "BALANCED") => {
     const r = v[version];
     const nYears = r.equity_curve.length > 0 ? r.equity_curve.length / 252 : null;
@@ -157,10 +165,30 @@ export default async function FuncionaPage() {
   };
 
   const comparisonRows: ComparisonRow[] = [
-    { metric: "Resultado total", conservative: fmtPct(v.CONSERVATIVE.equity_metrics.total_return), aggressive: fmtPct(v.AGGRESSIVE.equity_metrics.total_return), balanced: fmtPct(v.BALANCED.equity_metrics.total_return) },
-    { metric: "Sharpe (retorno vs riesgo)", conservative: fmtRatio(v.CONSERVATIVE.equity_metrics.sharpe_ratio), aggressive: fmtRatio(v.AGGRESSIVE.equity_metrics.sharpe_ratio), balanced: fmtRatio(v.BALANCED.equity_metrics.sharpe_ratio) },
-    { metric: "Acierto", conservative: fmtPct(v.CONSERVATIVE.trade_metrics.win_rate), aggressive: fmtPct(v.AGGRESSIVE.trade_metrics.win_rate), balanced: fmtPct(v.BALANCED.trade_metrics.win_rate) },
-    { metric: "Peor caída", conservative: fmtPct(v.CONSERVATIVE.equity_metrics.max_drawdown), aggressive: fmtPct(v.AGGRESSIVE.equity_metrics.max_drawdown), balanced: fmtPct(v.BALANCED.equity_metrics.max_drawdown) },
+    {
+      metric: "Resultado total",
+      conservative: formatPct((v.CONSERVATIVE.equity_metrics.total_return ?? 0) * 100),
+      aggressive: formatPct((v.AGGRESSIVE.equity_metrics.total_return ?? 0) * 100),
+      balanced: formatPct((v.BALANCED.equity_metrics.total_return ?? 0) * 100),
+    },
+    {
+      metric: "Sharpe (retorno vs riesgo)",
+      conservative: formatNum(v.CONSERVATIVE.equity_metrics.sharpe_ratio),
+      aggressive: formatNum(v.AGGRESSIVE.equity_metrics.sharpe_ratio),
+      balanced: formatNum(v.BALANCED.equity_metrics.sharpe_ratio),
+    },
+    {
+      metric: "Acierto",
+      conservative: formatPct((v.CONSERVATIVE.trade_metrics.win_rate ?? 0) * 100, 1),
+      aggressive: formatPct((v.AGGRESSIVE.trade_metrics.win_rate ?? 0) * 100, 1),
+      balanced: formatPct((v.BALANCED.trade_metrics.win_rate ?? 0) * 100, 1),
+    },
+    {
+      metric: "Peor caída",
+      conservative: formatPct((v.CONSERVATIVE.equity_metrics.max_drawdown ?? 0) * 100, 1),
+      aggressive: formatPct((v.AGGRESSIVE.equity_metrics.max_drawdown ?? 0) * 100, 1),
+      balanced: formatPct((v.BALANCED.equity_metrics.max_drawdown ?? 0) * 100, 1),
+    },
     { metric: "Operaciones/año", conservative: tradesPerYear("CONSERVATIVE"), aggressive: tradesPerYear("AGGRESSIVE"), balanced: tradesPerYear("BALANCED") },
     { metric: "Recomendada para", conservative: "Evitar riesgo", aggressive: "Buscar más ganancia", balanced: "Término medio" },
   ];
@@ -168,24 +196,30 @@ export default async function FuncionaPage() {
   const eventClasses = validationReport ? Object.keys(validationReport.event_study).sort() : [];
 
   return (
-    <main className="max-w-7xl mx-auto p-6">
+    <main className="mx-auto max-w-7xl p-6">
       <Nav active="/funciona" />
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">¿Funciona?</h1>
-        <p className="text-sm text-neutral-500 mt-1">Todo lo que responde si te puedes fiar del sistema, y por qué.</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">¿Funciona?</h1>
+        <p className="mt-1 text-sm text-text-secondary">Todo lo que responde si te puedes fiar del sistema, y por qué.</p>
       </header>
+
+      {validationReport && (
+        <div className="mb-6">
+          <SampleBadge sample={validationReport.sample} warning={validationReport.oos_warning} />
+        </div>
+      )}
 
       {/* Veredicto + decisión por versión */}
       {validationReport && (
         <section className="mb-10">
-          <div className={`border-2 rounded-lg p-5 mb-4 ${OPTION_COLORS[validationReport.best_decision.option]}`}>
-            <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1">
+          <div className={`mb-4 rounded border-2 p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
+            <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">
               Veredicto global · versión recomendada: {VERSION_LABELS[validationReport.best_version]}
             </p>
-            <p className={`text-2xl font-bold mb-2 ${OPTION_TEXT_COLORS[validationReport.best_decision.option]}`}>{validationReport.best_decision.label}</p>
-            <p className="text-sm">{validationReport.best_decision.recommendation}</p>
+            <p className={`mb-2 text-2xl font-semibold ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{validationReport.best_decision.label}</p>
+            <p className="text-sm text-foreground">{validationReport.best_decision.recommendation}</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {VERSION_ORDER.filter((ver) => validationReport.decisions[ver]).map((ver) => (
               <DecisionCard key={ver} title={VERSION_LABELS[ver]} decision={validationReport.decisions[ver]} />
             ))}
@@ -196,24 +230,24 @@ export default async function FuncionaPage() {
       {/* Event study */}
       {validationReport && (
         <section className="mb-10">
-          <h2 className="text-lg font-semibold mb-1">¿El tipo de evento mueve el precio de verdad?</h2>
-          <p className="text-xs text-neutral-500 mb-3">
-            Sobre TODOS los eventos detectados, no solo los que se operaron. "Sí" significa que el movimiento no parece casualidad; "aún no
-            se sabe" significa que hacen falta más casos para estar seguros — no que no haya efecto.
+          <h2 className="mb-1 text-base font-semibold text-foreground">¿El tipo de evento mueve el precio de verdad?</h2>
+          <p className="mb-3 text-xs text-text-secondary">
+            Sobre TODOS los eventos detectados, no solo los que se operaron. "Sí" significa que el movimiento no parece casualidad; "aún
+            no se sabe" significa que hacen falta más casos para estar seguros — no que no haya efecto.
           </p>
           {eventClasses.length === 0 ? (
-            <p className="text-sm text-neutral-400 italic">Sin datos todavía.</p>
+            <p className="text-sm italic text-text-tertiary">Sin datos todavía.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
+            <div className="overflow-x-auto rounded border border-border-subtle">
+              <table className="w-full border-collapse text-left text-sm">
                 <thead>
-                  <tr className="border-b border-neutral-300 dark:border-neutral-700 text-neutral-500">
-                    <th className="py-2 pr-4 font-medium">Tipo de evento</th>
-                    <th className="py-2 pr-4 font-medium text-right">Casos</th>
-                    <th className="py-2 pr-4 font-medium text-right">Movimiento típico</th>
-                    <th className="py-2 pr-4 font-medium text-right">p-value</th>
-                    <th className="py-2 pr-4 font-medium text-center">¿Es real?</th>
-                    <th className="py-2 font-medium">Explicación</th>
+                  <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+                    <th className="py-2 pl-3 pr-4 font-medium">Tipo de evento</th>
+                    <th className="py-2 pr-4 text-right font-medium">Casos</th>
+                    <th className="py-2 pr-4 text-right font-medium">Movimiento típico</th>
+                    <th className="py-2 pr-4 text-right font-medium">p-value</th>
+                    <th className="py-2 pr-4 text-center font-medium">¿Es real?</th>
+                    <th className="py-2 pr-3 font-medium">Explicación</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -229,19 +263,19 @@ export default async function FuncionaPage() {
 
       {/* Calibración */}
       <section className="mb-10">
-        <h2 className="text-lg font-semibold mb-1">¿El sistema sabe cuándo está seguro?</h2>
-        <p className="text-xs text-neutral-500 mb-3">Cuando dice "80% de confianza", ¿acierta de verdad el 80% de las veces?</p>
-        <div className="flex flex-col md:flex-row gap-4">
+        <h2 className="mb-1 text-base font-semibold text-foreground">¿El sistema sabe cuándo está seguro?</h2>
+        <p className="mb-3 text-xs text-text-secondary">Cuando dice "80% de confianza", ¿acierta de verdad el 80% de las veces?</p>
+        <div className="flex flex-col gap-4 md:flex-row">
           {VERSION_ORDER.filter((ver) => report.versions[ver]).map((ver) => {
             const diag = report.versions[ver].confidence_calibration;
             const { label, adjustment } = interpretCalibration(diag);
             return (
-              <div key={ver} className="flex-1 min-w-[300px] border border-neutral-200 dark:border-neutral-800 rounded-lg p-4">
-                <h3 className="font-semibold mb-3">{VERSION_LABELS[ver]}</h3>
+              <div key={ver} className="min-w-[300px] flex-1 rounded border border-border-subtle bg-surface p-4">
+                <h3 className="mb-3 text-base font-semibold text-foreground">{VERSION_LABELS[ver]}</h3>
                 <CalibrationCurve buckets={diag.buckets} />
-                <p className="text-[10px] text-neutral-400 mt-1 mb-3">Línea gris = calibración perfecta · tamaño del punto = nº de casos</p>
-                <p className="text-sm font-medium mb-1">{label}</p>
-                <p className="text-xs text-neutral-500">{adjustment}</p>
+                <p className="mb-3 mt-1 text-[10px] text-text-tertiary">Línea de referencia = calibración perfecta · tamaño del punto = nº de casos</p>
+                <p className="mb-1 text-sm font-medium text-foreground">{label}</p>
+                <p className="text-xs text-text-secondary">{adjustment}</p>
               </div>
             );
           })}
@@ -251,15 +285,18 @@ export default async function FuncionaPage() {
       {/* Sensibilidad */}
       {validationReport && (
         <section className="mb-10">
-          <h2 className="text-lg font-semibold mb-1">¿Se rompe el resultado si las condiciones empeoran?</h2>
-          <p className="text-xs text-neutral-500 mb-3">Un resultado que se mantiene positivo en todos los escenarios es más de fiar que uno que solo funciona en el mejor de los casos.</p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
+          <h2 className="mb-1 text-base font-semibold text-foreground">¿Se rompe el resultado si las condiciones empeoran?</h2>
+          <p className="mb-3 text-xs text-text-secondary">
+            Un resultado que se mantiene positivo en todos los escenarios es más de fiar que uno que solo funciona en el mejor de los
+            casos.
+          </p>
+          <div className="overflow-x-auto rounded border border-border-subtle">
+            <table className="w-full border-collapse text-left text-sm">
               <thead>
-                <tr className="border-b border-neutral-300 dark:border-neutral-700 text-neutral-500">
-                  <th className="py-2 pr-4 font-medium">Escenario</th>
-                  <th className="py-2 pr-4 font-medium text-right">Conservador</th>
-                  <th className="py-2 pr-4 font-medium text-right">Agresivo</th>
+                <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+                  <th className="py-2 pl-3 pr-4 font-medium">Escenario</th>
+                  <th className="py-2 pr-4 text-right font-medium">Conservador</th>
+                  <th className="py-2 pr-3 text-right font-medium">Agresivo</th>
                 </tr>
               </thead>
               <tbody>
@@ -267,20 +304,20 @@ export default async function FuncionaPage() {
                   const cons = validationReport.sensitivity.scenarios.CONSERVATIVE?.[key];
                   const aggr = validationReport.sensitivity.scenarios.AGGRESSIVE?.[key];
                   return (
-                    <tr key={key} className="border-b border-neutral-100 dark:border-neutral-900">
-                      <td className="py-2 pr-4">{SCENARIO_LABELS[key]}</td>
+                    <tr key={key} className="border-b border-border-subtle">
+                      <td className="py-2 pl-3 pr-4 text-foreground">{SCENARIO_LABELS[key]}</td>
                       <td className="py-2 pr-4 text-right">
                         {cons?.total_return !== null && cons?.total_return !== undefined ? (
-                          <span className={cons.total_return >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{(cons.total_return * 100).toFixed(2)}%</span>
+                          <SignedPct value={cons.total_return * 100} />
                         ) : (
-                          "—"
+                          <span className="text-text-tertiary">—</span>
                         )}
                       </td>
-                      <td className="py-2 pr-4 text-right">
+                      <td className="py-2 pr-3 text-right">
                         {aggr?.total_return !== null && aggr?.total_return !== undefined ? (
-                          <span className={aggr.total_return >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{(aggr.total_return * 100).toFixed(2)}%</span>
+                          <SignedPct value={aggr.total_return * 100} />
                         ) : (
-                          "—"
+                          <span className="text-text-tertiary">—</span>
                         )}
                       </td>
                     </tr>
@@ -294,7 +331,7 @@ export default async function FuncionaPage() {
 
       {/* Comparación de versiones */}
       <section>
-        <h2 className="text-lg font-semibold mb-3">¿Qué versión conviene?</h2>
+        <h2 className="mb-3 text-base font-semibold text-foreground">¿Qué versión conviene?</h2>
         <ComparisonTable rows={comparisonRows} />
       </section>
     </main>

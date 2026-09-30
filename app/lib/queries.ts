@@ -147,9 +147,18 @@ export interface PortfolioRecommendation {
   findings: string[];
 }
 
+/** null = sin partición (todo el rango disponible, comportamiento histórico
+ * por defecto) · 'in_sample' / 'oos' = backtest acotado por fecha (ver
+ * pipeline/backtest/sample_split.py) — portfolio_report.py deja explícito
+ * cuál es para que un reporte OOS nunca se confunda con uno in-sample,
+ * ni en el JSON ni en lo que renderiza el dashboard. */
+export type SampleSplit = "in_sample" | "oos" | null;
+
 export interface PortfolioReport {
   run_batch_tag: string;
   starting_capital: number;
+  sample?: SampleSplit;
+  oos_warning?: string;
   versions: Record<StrategyVersion, PortfolioVersionReport>;
   bias_report: PortfolioBiasReport;
   recommendation: PortfolioRecommendation;
@@ -336,6 +345,8 @@ export interface VersionDecision {
 export interface ValidationReport {
   run_batch_tag: string;
   generated_at: string;
+  sample?: SampleSplit;
+  oos_warning?: string;
   event_study: EventStudy;
   sensitivity: Sensitivity;
   decisions: Record<StrategyVersion, VersionDecision>;
@@ -510,6 +521,11 @@ export interface SignalFeedRow {
   ticker: string;
   event_class: string;
   source: string;
+  source_url: string;
+  filed_at: string;
+  analyzed_at: string;
+  model_version_bull_bear: string;
+  model_version_judge: string;
   d0_close_date: string;
   novelty_score: number;
   novelty_reasoning: NoveltyReasoning | null;
@@ -576,7 +592,8 @@ export async function getSignalsFeed(filters: SignalFeedFilters): Promise<Signal
     `
     SELECT * FROM (
       SELECT
-        e.event_id, e.ticker, e.event_class, e.source, e.d0_close_date,
+        e.event_id, e.ticker, e.event_class, e.source, e.source_url, e.filed_at, e.d0_close_date,
+        ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
         ea.novelty_score, ea.novelty_reasoning, ea.bull_analyst_output AS bull_output, ea.bear_analyst_output AS bear_output,
         ea.judge_output, ea.impact_estimation, ea.n_historical_analogues, ea.ev_calculation, ea.abstention_decision,
         ea.net_conviction, ea.confidence_in_conviction AS confidence, ea.ev_balanced,
@@ -604,6 +621,11 @@ export async function getSignalsFeed(filters: SignalFeedFilters): Promise<Signal
     ticker: r.ticker,
     event_class: r.event_class,
     source: r.source,
+    source_url: r.source_url,
+    filed_at: r.filed_at instanceof Date ? r.filed_at.toISOString() : r.filed_at,
+    analyzed_at: r.analyzed_at instanceof Date ? r.analyzed_at.toISOString() : r.analyzed_at,
+    model_version_bull_bear: r.model_version_bull_bear,
+    model_version_judge: r.model_version_judge,
     d0_close_date: r.d0_close_date instanceof Date ? r.d0_close_date.toISOString().slice(0, 10) : r.d0_close_date,
     novelty_score: r.novelty_score,
     novelty_reasoning: r.novelty_reasoning,

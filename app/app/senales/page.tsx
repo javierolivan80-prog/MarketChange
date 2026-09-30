@@ -9,10 +9,10 @@ export const dynamic = "force-dynamic";
 export default async function SenalesPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   if (!isDatabaseConfigured()) {
     return (
-      <main className="max-w-3xl mx-auto p-8">
+      <main className="mx-auto max-w-3xl p-8">
         <Nav active="/senales" />
-        <h1 className="text-2xl font-bold mb-4">Señales</h1>
-        <p className="text-sm text-neutral-500">DATABASE_URL no está configurada.</p>
+        <h1 className="text-2xl font-semibold text-foreground">Señales</h1>
+        <p className="mt-2 text-sm text-text-secondary">DATABASE_URL no está configurada.</p>
       </main>
     );
   }
@@ -32,20 +32,22 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
   ]);
 
   return (
-    <main className="max-w-7xl mx-auto p-6">
+    <main className="mx-auto max-w-7xl p-6">
       <Nav active="/senales" />
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">Señales</h1>
-        <p className="text-sm text-neutral-500 mt-1">
-          Cada evento analizado, más reciente primero — abre una fila (▸) para ver el razonamiento completo: quién opina qué, cuántos
-          casos parecidos hubo antes, y por qué se opera o no. Máx. 500.
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Señales</h1>
+        <p className="mt-1 max-w-3xl text-sm text-text-secondary">
+          Cada evento analizado, más reciente primero. Abre una fila para ver el razonamiento completo — quién opina qué, cuántos casos
+          parecidos hubo antes, la condición de invalidación de cada estrategia y el filing de origen. Máx. 500 eventos.
         </p>
       </header>
 
       <SignalsFilterForm eventClasses={eventClasses} />
 
       {rows.length === 0 ? (
-        <p className="text-sm text-neutral-500 italic">Sin eventos que cumplan estos filtros.</p>
+        <p className="rounded border border-dashed border-border-subtle p-6 text-center text-sm text-text-tertiary">
+          Sin eventos que cumplan estos filtros.
+        </p>
       ) : (
         <SignalsTable rows={rows} />
       )}
