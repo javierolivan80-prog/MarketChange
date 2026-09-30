@@ -398,14 +398,18 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.paper_trading.report
 
-      - name: Avisos por Telegram (señales nuevas + alerts de paper trading)
+      - name: Avisos por Telegram (señales nuevas + salidas + alerts de paper trading)
         # Va al final a propósito: depende de que event_analysis_pipeline (señales
-        # nuevas) y paper_trading.report (alerts) ya hayan corrido y persistido.
-        # Sin TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID configurados en los secrets del
-        # repo, ambos módulos se omiten en silencio (ver pipeline/notify/telegram.py)
-        # — no hace falta condicionar el step en sí. `!cancelled()` para que un
-        # fallo en el análisis de eventos (p. ej. sin ANTHROPIC_API_KEY) no
-        # impida notificar las alerts de paper trading que sí llegaron a persistirse.
+        # nuevas) y paper_trading.report (salidas + alerts) ya hayan corrido y
+        # persistido. Sin TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID configurados en los
+        # secrets del repo, los tres módulos se omiten en silencio (ver
+        # pipeline/notify/telegram.py) — no hace falta condicionar el step en sí.
+        # `!cancelled()` para que un fallo en el análisis de eventos (p. ej. sin
+        # ANTHROPIC_API_KEY) no impida notificar lo que sí llegó a persistirse.
+        # exits_notifier: sin ejecución automática de órdenes en este proyecto
+        # (se opera a mano en el bróker de cada usuario), signals_notifier ya
+        # avisaba de CUÁNDO ENTRAR — este avisa de CUÁNDO SALIR (take-profit/
+        # stop-loss/límite de tiempo, calculado por paper_trading.simulator).
         if: ${{ !cancelled() }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -413,6 +417,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python -m pipeline.notify.signals_notifier
+          python -m pipeline.notify.exits_notifier
           python -m pipeline.notify.alerts_notifier
 
       - name: Aviso de infraestructura si este job falla (IMPROVEMENT_PLAN.md A3)

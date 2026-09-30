@@ -482,3 +482,160 @@ def test_notify_new_alerts_loguea_las_perdidas(conn, monkeypatch, caplog):
     assert sent == 0
     assert "1 alert(s)" in caplog.text
     assert "perdidas para siempre" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# exits_notifier — avisos de CUÁNDO SALIR para quien opera a mano (sin
+# ejecución automática de órdenes en este proyecto)
+# ---------------------------------------------------------------------------
+
+
+def test_exits_format_message_incluye_motivo_entrada_y_salida():
+    from pipeline.notify.exits_notifier import _format_message
+
+    row = {
+        "ticker": "ACME",
+        "version": "BALANCED",
+        "direction": "LONG",
+        "entry_date": date(2024, 3, 15),
+        "entry_price": 100.0,
+        "exit_date": date(2024, 3, 18),
+        "exit_price": 108.5,
+        "exit_reason": "TAKE_PROFIT",
+        "pnl_pct": 8.2,
+        "source_url": "https://example.com/filing",
+    }
+    text = _format_message(row)
+    assert "CERRAR ACME" in text
+    assert "Objetivo de beneficio alcanzado" in text
+    assert "100.00" in text
+    assert "108.50" in text
+    assert "+8.20%" in text
+    assert "https://example.com/filing" in text
+
+
+def test_exits_format_message_sin_pnl_muestra_guion():
+    from pipeline.notify.exits_notifier import _format_message
+
+    row = {
+        "ticker": "ACME", "version": "AGGRESSIVE", "direction": "SHORT",
+        "entry_date": date(2024, 3, 15), "entry_price": 50.0,
+        "exit_date": date(2024, 3, 20), "exit_price": 50.0,
+        "exit_reason": "TIMEOUT", "pnl_pct": None, "source_url": None,
+    }
+    text = _format_message(row)
+    assert "Límite de tiempo alcanzado" in text
+    assert "—" in text
+
+
+def _insert_paper_trade(
+    conn,
+    event_id: int,
+    *,
+    version: str = "BALANCED",
+    status: str = "CLOSED_TP",
+    exit_reason: str | None = "TAKE_PROFIT",
+    notified: bool = False,
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO paper_trades (
+                run_batch_tag, week_start, week_end, event_id, version, direction,
+                entry_date, entry_price, exit_date, exit_price, exit_reason, status,
+                pnl_pct, confidence, ev, prediction, notified_at
+            ) VALUES (
+                '2024-W11', %(ws)s, %(we)s, %(event_id)s, %(version)s, 'LONG',
+                %(entry_date)s, 100.0, %(exit_date)s, 105.0, %(exit_reason)s, %(status)s,
+                5.0, 70.0, 0.01, 0.3, %(notified_at)s
+            )
+            RETURNING trade_id
+            """,
+            {
+                "ws": date(2024, 3, 11), "we": date(2024, 3, 15),
+                "event_id": event_id, "version": version,
+                "entry_date": date(2024, 3, 12),
+                "exit_date": date(2024, 3, 14) if status != "OPEN" else None,
+                "exit_reason": exit_reason,
+                "status": status,
+                "notified_at": datetime(2024, 3, 14, tzinfo=timezone.utc) if notified else None,
+            },
+        )
+        return cur.fetchone()["trade_id"]
+
+
+@pytestmark_db
+def test_fetch_pending_exits_solo_devuelve_cerrados_sin_notificar(conn):
+    from pipeline.notify.exits_notifier import fetch_pending_exits
+
+    open_id = _insert_universe_and_event(conn, ticker="OPEN")
+    _insert_paper_trade(conn, open_id, status="OPEN", exit_reason=None)
+
+    closed_id = _insert_universe_and_event(conn, ticker="CLOSED")
+    _insert_paper_trade(conn, closed_id, status="CLOSED_SL", exit_reason="STOP_LOSS")
+
+    already_notified_id = _insert_universe_and_event(conn, ticker="YAAVISADO")
+    _insert_paper_trade(conn, already_notified_id, status="CLOSED_TP", notified=True)
+
+    pending = fetch_pending_exits(conn)
+    tickers = {row["ticker"] for row in pending}
+    assert tickers == {"CLOSED"}
+
+
+@pytestmark_db
+def test_exits_mark_notified_excluye_de_futuros_pendientes(conn):
+    from pipeline.notify.exits_notifier import fetch_pending_exits, mark_notified
+
+    event_id = _insert_universe_and_event(conn)
+    trade_id = _insert_paper_trade(conn, event_id, status="CLOSED_TP")
+
+    assert len(fetch_pending_exits(conn)) == 1
+    mark_notified(conn, [trade_id])
+    assert fetch_pending_exits(conn) == []
+
+
+@pytestmark_db
+def test_notify_pending_exits_noop_sin_config_telegram(conn, monkeypatch):
+    from pipeline.notify import exits_notifier, telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", None)
+
+    event_id = _insert_universe_and_event(conn)
+    _insert_paper_trade(conn, event_id, status="CLOSED_SL")
+
+    assert exits_notifier.notify_pending_exits(conn) == 0
+    assert len(exits_notifier.fetch_pending_exits(conn)) == 1
+
+
+@pytestmark_db
+def test_notify_pending_exits_envia_y_marca(conn, monkeypatch):
+    from pipeline.notify import exits_notifier, telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "TESTTOKEN")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(telegram, "send_message", lambda text, parse_mode="HTML": True)
+
+    event_id = _insert_universe_and_event(conn)
+    _insert_paper_trade(conn, event_id, status="CLOSED_TP")
+
+    sent = exits_notifier.notify_pending_exits(conn)
+    assert sent == 1
+    assert exits_notifier.fetch_pending_exits(conn) == []
+
+
+@pytestmark_db
+def test_notify_pending_exits_no_marca_si_falla_el_envio(conn, monkeypatch):
+    from pipeline.notify import exits_notifier, telegram
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "TESTTOKEN")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setattr(telegram, "send_message", lambda text, parse_mode="HTML": False)
+
+    event_id = _insert_universe_and_event(conn)
+    _insert_paper_trade(conn, event_id, status="CLOSED_TIMEOUT", exit_reason="TIMEOUT")
+
+    sent = exits_notifier.notify_pending_exits(conn)
+    assert sent == 0
+    # Sigue pendiente para reintentar en la próxima pasada.
+    assert len(exits_notifier.fetch_pending_exits(conn)) == 1

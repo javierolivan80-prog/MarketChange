@@ -775,3 +775,18 @@ ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS thesis_id BIGINT REFERENCE
 ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS portfolio_trades_exit_reason_check;
 ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
     CHECK (exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'MAX_HOLDING', 'TRAILING_STOP', 'DATA_GAP', 'FULFILLED', 'INVALIDATED', 'SATURATED', 'EXPIRED'));
+
+-- ============================================================================
+-- notified_at (paper_trades): marca de "ya se avisó por Telegram de que toca
+-- cerrar esta posición" (pipeline/notify/exits_notifier.py). Mismo patrón y
+-- mismo motivo que event_analyses.notified_at más arriba (NULL = pendiente,
+-- se pone a now() solo tras un envío correcto) — existe porque quien opera a
+-- mano en su propio bróker (no hay ejecución automática en este proyecto)
+-- solo sabía CUÁNDO ENTRAR (signals_notifier.py ya avisaba de eso) pero no
+-- CUÁNDO SALIR: sin esto, la única forma de enterarse de que el sistema
+-- detectó un take-profit/stop-loss/límite de tiempo era entrar al dashboard
+-- cada día. paper_trades.status ya pasa a CLOSED_TP/CLOSED_SL/CLOSED_TIMEOUT
+-- solo (paper_trading/simulator.py, cron nocturno) — este aviso no repite
+-- ningún cálculo, solo notifica la primera vez que ve esa transición.
+-- ============================================================================
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
