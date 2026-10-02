@@ -1,36 +1,36 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MarketChange — panel
 
-## Getting Started
+Panel de solo lectura sobre lo que el pipeline de Python (`../pipeline`, en
+GitHub Actions) deja en Postgres. No escribe nunca en la base de datos ni
+recalcula fórmulas financieras: renderiza lo que el pipeline ya calculó.
 
-First, run the development server:
+| Ruta | Qué responde |
+|---|---|
+| `/` | ¿Está vivo el sistema? ¿Qué señales hay? ¿Me puedo fiar? |
+| `/senales` | Cada evento analizado, con el razonamiento completo |
+| `/cartera` | Backtest histórico y simulación en papel de esta semana |
+| `/funciona` | Event study, calibración, sensibilidad y comparación de versiones |
+| `/largo-plazo` | Ranking de calidad fundamental (XBRL de la SEC) |
+| `/como-funciona` | Explicación del motor, sin datos |
+
+## Desarrollo
 
 ```bash
+cp .env.local.example .env.local   # y rellenar DATABASE_URL
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Variables de entorno
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Obligatoria | Uso |
+|---|---|---|
+| `DATABASE_URL` | Sí | Misma base que el pipeline (ver `../RUNBOOK.md`) |
+| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | No | Si ambas están definidas, el panel pide usuario y contraseña (HTTP Basic, `middleware.ts`). Sin ellas es público para cualquiera con la URL |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Convenciones
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Vocabulario visible (versiones, tipos de evento, motivos de salida): solo en `lib/labels.ts`.
+- Formato de cifras: solo en `lib/format.ts`. Un dato ausente se muestra como `—`, nunca como `0`.
+- Verde y rojo se reservan para dirección (LONG/SHORT) y P&L.
+- Estados vacíos y de error: `components/ui/PageState.tsx`, `app/error.tsx`, `app/loading.tsx`.

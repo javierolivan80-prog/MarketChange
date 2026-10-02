@@ -1,13 +1,12 @@
-// Disclaimer.tsx — aviso legal sobrio y persistente. Ni un modal que haya
-// que cerrar, ni letra ilegible al pie: una línea fija, siempre visible,
-// exactamente donde ya se mira (bajo la navegación), en el mismo tono
-// sereno que el resto de la interfaz — no es una advertencia de urgencia,
-// es una precisión de qué es este producto.
+// Disclaimer.tsx — aviso legal sobrio y persistente, en todas las páginas.
+// Antes iba ENCIMA de la navegación: en móvil ocupaba cuatro líneas de la
+// primera pantalla, antes incluso del nombre del producto. Ahora es el pie
+// de página — sigue en cada pantalla, legible, sin competir con el contenido.
 export function Disclaimer() {
   return (
-    <p className="border-b border-border-subtle bg-surface-raised px-6 py-1.5 text-center text-[11px] leading-tight text-text-tertiary">
+    <footer className="mx-auto mt-10 max-w-7xl border-t border-border-subtle px-4 py-4 text-center text-[11px] leading-snug text-text-tertiary sm:px-6">
       Contenido informativo generado por un sistema automatizado. No constituye asesoramiento de inversión ni una recomendación
       personalizada. Rendimiento pasado no garantiza resultados futuros.
-    </p>
+    </footer>
   );
 }

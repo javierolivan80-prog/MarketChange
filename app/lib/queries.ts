@@ -332,7 +332,9 @@ export interface SensitivityScenarioResult {
 
 export interface Sensitivity {
   run_batch_tag: string;
-  scenarios: Record<"CONSERVATIVE" | "AGGRESSIVE", Record<string, SensitivityScenarioResult>>;
+  // BALANCED se añadió en el pipeline después (IMPROVEMENT_PLAN.md R13): un
+  // reporte antiguo puede no traerla — de ahí Partial.
+  scenarios: Partial<Record<StrategyVersion, Record<string, SensitivityScenarioResult>>>;
 }
 
 export interface VersionDecision {
@@ -607,7 +609,14 @@ export async function getSignalsFeed(filters: SignalFeedFilters): Promise<Signal
         pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct
       FROM events e
       JOIN event_analyses ea ON ea.event_id = e.event_id
+      -- Solo la corrida de cartera más reciente: portfolio_trades guarda una
+      -- fila por (event_id, version, run_batch_tag) y el pipeline escribe un
+      -- run_batch_tag nuevo cada día sin borrar los anteriores. Sin este
+      -- filtro, cada evento operado salía repetido una vez por corrida
+      -- histórica en el feed (y en el CSV exportado), y el LIMIT se comía
+      -- esos duplicados en vez de eventos distintos.
       LEFT JOIN portfolio_trades pt ON pt.event_id = e.event_id AND pt.version = 'BALANCED'
+        AND pt.run_batch_tag = (SELECT run_batch_tag FROM portfolio_reports ORDER BY created_at DESC LIMIT 1)
     ) signal
     ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
     ORDER BY signal.d0_close_date DESC
@@ -648,4 +657,64 @@ export async function getSignalsFeed(filters: SignalFeedFilters): Promise<Signal
     exit_reason: r.exit_reason,
     pnl_pct: r.pnl_pct !== null ? parseFloat(r.pnl_pct) : null,
   }));
+}
+
+// ============================================================================
+// Inicio — lo que ha pasado recientemente, en versión ligera
+// ============================================================================
+
+export interface RecentSignal {
+  event_id: number;
+  ticker: string;
+  event_class: string;
+  d0_close_date: string;
+  direction: "LONG" | "SHORT";
+  confidence: number;
+  ev_balanced: number;
+}
+
+/** Últimas señales en las que al menos una versión decidió operar. Sin las
+ * columnas JSONB pesadas (Bull/Bear/Judge) que sí trae getSignalsFeed: Inicio
+ * solo enseña la lista y enlaza a /senales para el razonamiento. */
+export async function getRecentTradeSignals(limit = 5): Promise<RecentSignal[]> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT e.event_id, e.ticker, e.event_class, e.d0_close_date,
+           (CASE WHEN ea.net_conviction > 0 THEN 'LONG' ELSE 'SHORT' END) AS direction,
+           ea.confidence_in_conviction AS confidence, ea.ev_balanced
+    FROM events e
+    JOIN event_analyses ea ON ea.event_id = e.event_id
+    WHERE ea.trade_decision_conservative != 'NO_TRADE'
+       OR ea.trade_decision_aggressive != 'NO_TRADE'
+       OR ea.trade_decision_balanced != 'NO_TRADE'
+    ORDER BY e.d0_close_date DESC, ea.confidence_in_conviction DESC
+    LIMIT $1
+    `,
+    [limit]
+  );
+  return rows.map((r) => ({
+    event_id: r.event_id,
+    ticker: r.ticker,
+    event_class: r.event_class,
+    d0_close_date: r.d0_close_date instanceof Date ? r.d0_close_date.toISOString().slice(0, 10) : r.d0_close_date,
+    direction: r.direction,
+    confidence: parseFloat(r.confidence),
+    ev_balanced: parseFloat(r.ev_balanced),
+  }));
+}
+
+/** Cuándo se analizó el último evento y cuántos se analizaron en las últimas
+ * 24h — la señal de "esto está vivo" que un panel de datos necesita enseñar:
+ * sin ella, un pipeline caído hace días se ve igual que uno que corrió anoche. */
+export async function getPipelineFreshness(): Promise<{ last_analyzed_at: string | null; analyzed_last_24h: number }> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT max(analyzed_at) AS last, count(*) FILTER (WHERE analyzed_at > now() - interval '24 hours') AS n24 FROM event_analyses`
+  );
+  const last = rows[0]?.last;
+  return {
+    last_analyzed_at: last ? (last instanceof Date ? last.toISOString() : String(last)) : null,
+    analyzed_last_24h: Number(rows[0]?.n24 ?? 0),
+  };
 }

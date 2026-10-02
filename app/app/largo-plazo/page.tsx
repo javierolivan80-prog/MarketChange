@@ -2,8 +2,11 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { getLatestQualityScoreDate, getQualityScores, type QualityScoreRow } from "@/lib/queries";
 import { Nav } from "@/components/Nav";
 import { QualityCard } from "@/components/QualityCard";
+import { NoDataYet, NotConfigured } from "@/components/ui/PageState";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Largo plazo" };
+
 
 // largo-plazo/page.tsx — la pestaña de análisis fundamental. A diferencia del
 // resto del dashboard (que gira alrededor de eventos y del corto plazo), esto
@@ -28,39 +31,18 @@ function scoreColorClass(score: number | null): string {
 }
 
 export default async function LargoPlazoPage() {
-  if (!isDatabaseConfigured()) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <Nav active="/largo-plazo" />
-        <h1 className="mb-4 text-2xl font-semibold text-foreground">Largo plazo</h1>
-        <p className="text-sm text-text-secondary">DATABASE_URL no está configurada.</p>
-      </main>
-    );
-  }
+  if (!isDatabaseConfigured()) return <NotConfigured active="/largo-plazo" title="Largo plazo" />;
 
   const asOfDate = await getLatestQualityScoreDate();
 
-  if (!asOfDate) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <Nav active="/largo-plazo" />
-        <h1 className="mb-4 text-2xl font-semibold text-foreground">Largo plazo</h1>
-        <div className="rounded border border-border-subtle p-4">
-          <p className="mb-2 font-medium text-foreground">Todavía no se han analizado las cuentas de ninguna empresa.</p>
-          <p className="text-sm text-text-secondary">
-            El pipeline nocturno descarga las cuentas anuales de la SEC y calcula las notas. Vuelve después de la próxima ejecución.
-          </p>
-        </div>
-      </main>
-    );
-  }
+  if (!asOfDate) return <NoDataYet active="/largo-plazo" title="Largo plazo" what="Todavía no se han analizado las cuentas de ninguna empresa." />;
 
   const scores: QualityScoreRow[] = await getQualityScores(asOfDate);
   const conNota = scores.filter((s) => s.total_score !== null);
   const sinNota = scores.filter((s) => s.total_score === null);
 
   return (
-    <main className="mx-auto max-w-5xl p-6">
+    <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
       <Nav active="/largo-plazo" />
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Largo plazo</h1>
@@ -82,10 +64,10 @@ export default async function LargoPlazoPage() {
 
       {/* Cómo se lee la nota */}
       <section className="mb-6 rounded border border-border-subtle p-4">
-        <p className="mb-2 text-sm font-medium text-foreground">Los 5 criterios, en cristiano</p>
+        <p className="mb-2 text-sm font-medium text-foreground">Cómo se calcula la nota</p>
         <ul className="space-y-1 text-xs text-text-secondary">
           <li>
-            <strong className="text-foreground">Rentabilidad</strong> — ¿cuánto gana por cada euro de capital propio? (más es mejor)
+            <strong className="text-foreground">Rentabilidad</strong> — ¿cuánto gana por cada dólar de capital propio? (más es mejor)
           </li>
           <li>
             <strong className="text-foreground">Solidez financiera</strong> — ¿cuánta deuda arrastra? (menos es mejor)
@@ -98,7 +80,7 @@ export default async function LargoPlazoPage() {
             <strong className="text-foreground">Crecimiento</strong> — ¿vende más cada año?
           </li>
           <li>
-            <strong className="text-foreground">Precio</strong> — ¿cuánto se paga por cada euro de beneficio? (el PER; menos es mejor)
+            <strong className="text-foreground">Precio</strong> — ¿cuánto se paga por cada dólar de beneficio? (el PER; menos es mejor)
           </li>
         </ul>
         <p className="mt-2 text-xs text-text-tertiary">

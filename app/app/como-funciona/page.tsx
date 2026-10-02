@@ -1,5 +1,7 @@
 import { Nav } from "@/components/Nav";
 
+export const metadata = { title: "Cómo funciona" };
+
 // como-funciona/page.tsx — página nueva, sin datos: explica el motor paso a
 // paso para alguien que abre el dashboard sin haber visto el proyecto antes.
 // No sustituye a la documentación técnica (docs/ARCHITECTURE_LEAN.md) — es
@@ -22,7 +24,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 
 export default function ComoFuncionaPage() {
   return (
-    <main className="mx-auto max-w-3xl p-6">
+    <main className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
       <Nav active="/como-funciona" />
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Cómo funciona</h1>

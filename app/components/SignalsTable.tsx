@@ -12,14 +12,15 @@ import { SignalDetail } from "@/components/SignalDetail";
 import { DirectionBadge, SignedPct } from "@/components/ui/DirectionBadge";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { formatDate, formatFracAsPct } from "@/lib/format";
+import { eventClassLabel, sourceLabel } from "@/lib/labels";
 
 const columnHelper = createColumnHelper<SignalFeedRow>();
 
 const columns = [
   columnHelper.accessor("d0_close_date", { header: "Fecha", cell: (c) => <span className="num">{formatDate(c.getValue())}</span> }),
   columnHelper.accessor("ticker", { header: "Ticker", cell: (c) => <span className="font-mono font-medium">{c.getValue()}</span> }),
-  columnHelper.accessor("event_class", { header: "Evento", cell: (c) => c.getValue().replace(/^8K_/, "") }),
-  columnHelper.accessor("source", { header: "Fuente" }),
+  columnHelper.accessor("event_class", { header: "Evento", cell: (c) => eventClassLabel(c.getValue()) }),
+  columnHelper.accessor("source", { header: "Fuente", cell: (c) => sourceLabel(c.getValue()) }),
   columnHelper.accessor("novelty_score", {
     header: "Sorpresa",
     cell: (c) => (

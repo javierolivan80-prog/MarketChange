@@ -13,13 +13,8 @@ import { ReturnHistogram } from "./ReturnHistogram";
 import { DrawdownChart } from "./DrawdownChart";
 import { Callout } from "@/components/ui/Callout";
 import { SignedPct } from "@/components/ui/DirectionBadge";
-import { formatFracAsPct, formatPct, formatUsd, formatNum } from "@/lib/format";
-
-const VERSION_LABELS: Record<string, string> = {
-  CONSERVATIVE: "Conservador",
-  AGGRESSIVE: "Agresivo",
-  BALANCED: "Balanceado",
-};
+import { formatFracAsPct, formatPct, formatUsd, formatNum, formatDrawdown } from "@/lib/format";
+import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 
 export function PortfolioVersionCard({
   report,
@@ -33,7 +28,7 @@ export function PortfolioVersionCard({
 
   return (
     <div className="flex-1 min-w-[300px] rounded border border-border-subtle bg-surface p-4">
-      <h2 className="mb-3 text-base font-semibold tracking-tight text-foreground">{VERSION_LABELS[report.version] ?? report.version}</h2>
+      <h2 className="mb-3 text-base font-semibold tracking-tight text-foreground">{versionLabel(report.version)}</h2>
 
       {no_lookahead_violations.length > 0 && (
         <Callout kind="critical" className="mb-3">
@@ -47,22 +42,22 @@ export function PortfolioVersionCard({
       )}
 
       <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-        <dt className="text-text-secondary">Trades</dt>
+        <dt className="text-text-secondary">Operaciones</dt>
         <dd className="num text-right text-foreground">{tm.total_trades}</dd>
 
-        <dt className="text-text-secondary">Win rate</dt>
-        <dd className="num text-right text-foreground">{formatFracAsPct(tm.win_rate, 1)}</dd>
+        <dt className="text-text-secondary">Acierto</dt>
+        <dd className="num text-right text-foreground">{tm.win_rate !== null ? `${(tm.win_rate * 100).toFixed(1)}%` : "—"}</dd>
 
-        <dt className="text-text-secondary">Profit factor</dt>
+        <dt className="text-text-secondary">Factor de beneficio</dt>
         <dd className="num text-right text-foreground">{formatNum(tm.profit_factor)}</dd>
 
-        <dt className="text-text-secondary">Expectancy</dt>
+        <dt className="text-text-secondary">Esperanza por operación</dt>
         <dd className="num text-right text-foreground">{formatPct(tm.expectancy)}</dd>
 
         <dt className="text-text-secondary">Balance final</dt>
         <dd className="num text-right text-foreground">{formatUsd(em.final_balance, 0)}</dd>
 
-        <dt className="text-text-secondary">Retorno total</dt>
+        <dt className="text-text-secondary">Resultado total</dt>
         <dd className="num text-right text-foreground">{formatFracAsPct(em.total_return, 1)}</dd>
 
         <dt className="text-text-secondary">Sharpe</dt>
@@ -74,10 +69,10 @@ export function PortfolioVersionCard({
         <dt className="text-text-secondary">Calmar</dt>
         <dd className="num text-right text-foreground">{formatNum(em.calmar_ratio)}</dd>
 
-        <dt className="text-text-secondary">Max drawdown</dt>
-        <dd className="num text-right text-foreground">{formatFracAsPct(em.max_drawdown, 1)}</dd>
+        <dt className="text-text-secondary">Peor caída</dt>
+        <dd className="num text-right text-foreground">{formatDrawdown(em.max_drawdown)}</dd>
 
-        <dt className="text-text-secondary">Recovery factor</dt>
+        <dt className="text-text-secondary">Factor de recuperación</dt>
         <dd className="num text-right text-foreground">{formatNum(em.recovery_factor)}</dd>
 
         <dt className="text-text-secondary">Rachas (G/P)</dt>
@@ -153,9 +148,9 @@ export function PortfolioVersionCard({
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-border-subtle">
-                <th className="py-1 pr-2 font-medium text-text-secondary">Clase</th>
+                <th className="py-1 pr-2 font-medium text-text-secondary">Tipo</th>
                 <th className="py-1 pr-2 text-right font-medium text-text-secondary">N</th>
-                <th className="py-1 pr-2 text-right font-medium text-text-secondary">Win rate</th>
+                <th className="py-1 pr-2 text-right font-medium text-text-secondary">Acierto</th>
                 <th className="py-1 pr-2 text-right font-medium text-text-secondary">Retorno medio</th>
               </tr>
             </thead>
@@ -163,7 +158,7 @@ export function PortfolioVersionCard({
               {eventTypeRows.map((row) => (
                 <tr key={row.event_type} className="border-b border-border-subtle">
                   <td className="py-1 pr-2 text-foreground">
-                    {row.event_type.replace(/^8K_/, "")}
+                    {eventClassLabel(row.event_type)}
                     {row.insufficient_sample && (
                       <span
                         className="ml-1.5 rounded bg-amber-50 px-1 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
@@ -195,7 +190,7 @@ export function PortfolioVersionCard({
 
 function TradeMiniTable({ trades }: { trades: PortfolioVersionReport["top_10_winners"] }) {
   if (trades.length === 0) {
-    return <p className="italic text-text-tertiary">Sin trades.</p>;
+    return <p className="italic text-text-tertiary">Sin operaciones.</p>;
   }
   return (
     <table className="w-full border-collapse text-left">
@@ -203,14 +198,14 @@ function TradeMiniTable({ trades }: { trades: PortfolioVersionReport["top_10_win
         <tr className="border-b border-border-subtle">
           <th className="py-1 pr-2 font-medium text-text-secondary">Ticker</th>
           <th className="py-1 pr-2 font-medium text-text-secondary">Salida</th>
-          <th className="py-1 pr-2 text-right font-medium text-text-secondary">PnL</th>
+          <th className="py-1 pr-2 text-right font-medium text-text-secondary">Resultado</th>
         </tr>
       </thead>
       <tbody>
         {trades.map((t) => (
           <tr key={`${t.event_id}-${t.exit_date}`} className="border-b border-border-subtle">
             <td className="py-1 pr-2 font-mono text-foreground">{t.ticker ?? "—"}</td>
-            <td className="py-1 pr-2 text-text-secondary">{t.exit_reason}</td>
+            <td className="py-1 pr-2 text-text-secondary">{exitReasonLabel(t.exit_reason)}</td>
             <td className="py-1 pr-2 text-right">
               <SignedPct value={t.pnl_pct} />
             </td>

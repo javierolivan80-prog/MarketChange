@@ -11,13 +11,8 @@
 import type { SignalFeedRow } from "@/lib/queries";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { formatDateTime } from "@/lib/format";
+import { VERSION_LABELS, VERSION_ORDER, exitReasonLabel } from "@/lib/labels";
 
-const STRATEGIES = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"] as const;
-const STRATEGY_LABELS: Record<(typeof STRATEGIES)[number], string> = {
-  CONSERVATIVE: "Conservador",
-  BALANCED: "Balanceado",
-  AGGRESSIVE: "Agresivo",
-};
 
 function Section({ title, accent, children }: { title: string; accent?: "long" | "short"; children: React.ReactNode }) {
   const accentClass = accent === "long" ? "text-emerald-700 dark:text-emerald-400" : accent === "short" ? "text-rose-700 dark:text-rose-400" : "text-foreground";
@@ -181,12 +176,12 @@ export function SignalDetail({ row, colSpan }: { row: SignalFeedRow; colSpan: nu
         <div className="mt-4 border-t border-border-subtle pt-3">
           <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">Decisión por versión de estrategia</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {STRATEGIES.map((strategy) => {
+            {VERSION_ORDER.map((strategy) => {
               const d = abstention?.[strategy];
               return (
                 <div key={strategy} className="rounded border border-border-subtle bg-surface p-2">
                   <p className="mb-1 flex items-center justify-between font-medium text-foreground">
-                    {STRATEGY_LABELS[strategy]}
+                    {VERSION_LABELS[strategy]}
                     <DirectionBadge value={d?.trade_decision ?? "NO_TRADE"} />
                   </p>
                   {d?.reason_if_no_trade ? (
@@ -201,7 +196,7 @@ export function SignalDetail({ row, colSpan }: { row: SignalFeedRow; colSpan: nu
           {(row.entry_date || row.exit_date) && (
             <p className="num mt-2 text-text-tertiary">
               {row.entry_date && `Entrada ${row.entry_date}`}
-              {row.exit_date && ` · Salida ${row.exit_date} (${row.exit_reason})`}
+              {row.exit_date && ` · Salida ${row.exit_date} (${exitReasonLabel(row.exit_reason)})`}
               {row.pnl_pct !== null && ` · P&L ${row.pnl_pct.toFixed(2)}%`}
             </p>
           )}

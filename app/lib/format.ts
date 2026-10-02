@@ -57,3 +57,13 @@ export function formatDateTime(value: string | Date | null | undefined): string 
     timeZoneName: "short",
   }).format(d);
 }
+
+/** Drawdown: el pipeline lo guarda como magnitud positiva (portfolio_metrics.py,
+ * `abs(max_dd)`), y pasarlo por formatPct lo pintaba como "+12.0%" bajo la
+ * etiqueta "Peor caída" — una pérdida con signo de ganancia. Se muestra
+ * siempre con signo negativo. */
+export function formatDrawdown(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  if (value === 0) return `${(0).toFixed(digits)}%`;
+  return `−${(Math.abs(value) * 100).toFixed(digits)}%`;
+}

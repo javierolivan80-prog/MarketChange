@@ -8,6 +8,7 @@
 // llegó filtrado, no re-filtra en el cliente.
 import { useRouter, useSearchParams } from "next/navigation";
 import { useId, useState } from "react";
+import { eventClassLabel } from "@/lib/labels";
 
 const INPUT =
   "rounded border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600";
@@ -70,7 +71,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
           <option value="">Todos</option>
           {eventClasses.map((c) => (
             <option key={c} value={c}>
-              {c}
+              {eventClassLabel(c)}
             </option>
           ))}
         </select>

@@ -7,55 +7,36 @@ import { DailyPnLChart } from "@/components/DailyPnLChart";
 import { ConfidenceBucketBars } from "@/components/ConfidenceBucketBars";
 import { Callout } from "@/components/ui/Callout";
 import { SampleBadge } from "@/components/ui/SampleBadge";
+import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/PageState";
 import { formatPct, formatUsd } from "@/lib/format";
+import { VERSION_LABELS, VERSION_ORDER } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Cartera" };
+
 
 // cartera/page.tsx — fusiona lo que antes eran dos pestañas separadas
 // ("Backtest Analysis" y "Signals This Week"): ambas responden la misma
 // pregunta de fondo ("¿cómo le va a la cartera?"), solo que una mira el
 // histórico completo y la otra la semana en curso — tiene más sentido
 // como dos secciones de una misma pantalla que como dos pestañas sueltas.
-const VERSION_ORDER = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"] as const;
-const VERSION_LABELS: Record<string, string> = { CONSERVATIVE: "Conservador", AGGRESSIVE: "Agresivo", BALANCED: "Equilibrado" };
 
 export default async function CarteraPage() {
-  if (!isDatabaseConfigured()) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <Nav active="/cartera" />
-        <h1 className="mb-4 text-2xl font-semibold text-foreground">Cartera</h1>
-        <p className="text-sm text-text-secondary">DATABASE_URL no está configurada.</p>
-      </main>
-    );
-  }
+  if (!isDatabaseConfigured()) return <NotConfigured active="/cartera" title="Cartera" />;
 
   const [portfolioTag, paperTag] = await Promise.all([getLatestPortfolioRunBatchTag(), getLatestPaperTradingRunBatchTag()]);
 
-  if (!portfolioTag) {
-    return (
-      <main className="mx-auto max-w-3xl p-8">
-        <Nav active="/cartera" />
-        <h1 className="mb-4 text-2xl font-semibold text-foreground">Cartera</h1>
-        <div className="rounded border border-border-subtle p-4">
-          <p className="mb-2 font-medium text-foreground">Todavía no hay ningún backtest de cartera registrado.</p>
-          <p className="text-sm text-text-secondary">Espera al pipeline nocturno para generar el primero.</p>
-        </div>
-      </main>
-    );
-  }
+  if (!portfolioTag) return <NoDataYet active="/cartera" title="Cartera" what="Todavía no hay ningún backtest de cartera." />;
 
   const [report, paperReport] = await Promise.all([getPortfolioReport(portfolioTag), paperTag ? getPaperTradingReport(paperTag) : Promise.resolve(null)]);
 
   if (!report) {
     return (
-      <main className="mx-auto max-w-3xl p-8">
-        <Nav active="/cartera" />
-        <h1 className="mb-4 text-2xl font-semibold text-foreground">Cartera</h1>
-        <p className="text-sm text-text-secondary">
-          No se pudo leer el reporte para <code className="font-mono">{portfolioTag}</code>.
-        </p>
-      </main>
+      <StatePage active="/cartera" title="Cartera">
+        <StateBox title="No se pudo leer el último informe de cartera.">
+          Corrida <code className="font-mono">{portfolioTag}</code>. Revisa los logs de la última ejecución del pipeline.
+        </StateBox>
+      </StatePage>
     );
   }
 
@@ -63,7 +44,7 @@ export default async function CarteraPage() {
   const verdictIsYes = recommendation.verdict.startsWith("SÍ");
 
   return (
-    <main className="mx-auto max-w-7xl p-6">
+    <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
       <Nav active="/cartera" />
       <header className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -172,9 +153,9 @@ export default async function CarteraPage() {
                         : v.comparison_with_historical_backtest.note ?? "Sin histórico con qué comparar todavía."}
                     </p>
                     {v.comparison_with_historical_backtest.caveat && (
-                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                        ⚠ {v.comparison_with_historical_backtest.caveat}
-                      </p>
+                      <Callout kind="warning" className="mt-1">
+                        <span className="font-normal normal-case">{v.comparison_with_historical_backtest.caveat}</span>
+                      </Callout>
                     )}
                   </div>
                 );

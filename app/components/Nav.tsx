@@ -1,42 +1,59 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
-// Nav.tsx — barra de navegación. 5 pestañas en lenguaje llano (ver mapeo
-// histórico en el git log) más el nombre del producto y el selector de tema.
+// Nav.tsx — barra de navegación.
+//
+// La pestaña activa se deduce de la URL (usePathname) en vez de depender
+// solo de la prop: así error.tsx y not-found.tsx, que no saben en qué página
+// están, también marcan bien la sección. La prop `active` se mantiene por
+// compatibilidad y se usa si no hay ruta.
+//
+// Antes la cabecera usaba márgenes negativos (-mx-6) para "salirse" del
+// padding de la página — con páginas de padding 4 eso la hacía 8px más ancha
+// que la pantalla y provocaba scroll horizontal en móvil.
 const TABS = [
-  { href: "/", label: "Inicio" },
+  { href: "/", label: "Resumen" },
   { href: "/senales", label: "Señales" },
-  { href: "/largo-plazo", label: "Largo plazo" },
   { href: "/cartera", label: "Cartera" },
   { href: "/funciona", label: "¿Funciona?" },
+  { href: "/largo-plazo", label: "Largo plazo" },
   { href: "/como-funciona", label: "Cómo funciona" },
 ] as const;
 
-export function Nav({ active }: { active: string }) {
+export function Nav({ active }: { active?: string }) {
+  const pathname = usePathname();
+  const current = pathname ?? active ?? "";
+
   return (
-    <header className="-mx-6 mb-4 border-b border-border-subtle px-6">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 pt-3">
+    <header className="mb-5 border-b border-border-subtle">
+      <div className="flex items-center justify-between gap-4">
         <Link href="/" className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
           MarketChange
         </Link>
         <ThemeToggle />
       </div>
-      <nav aria-label="Secciones" className="mx-auto max-w-7xl overflow-x-auto">
+      <nav aria-label="Secciones" className="-mb-px mt-2 overflow-x-auto">
         <div className="flex gap-1">
-          {TABS.map((tab) => (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              aria-current={active === tab.href ? "page" : undefined}
-              className={`-mb-px whitespace-nowrap border-b-2 px-3 py-1.5 font-mono text-xs uppercase tracking-wide ${
-                active === tab.href
-                  ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
-                  : "border-transparent text-text-secondary hover:text-foreground"
-              }`}
-            >
-              {tab.label}
-            </Link>
-          ))}
+          {TABS.map((tab) => {
+            const isActive = tab.href === "/" ? current === "/" : current.startsWith(tab.href);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                aria-current={isActive ? "page" : undefined}
+                className={`whitespace-nowrap border-b-2 px-3 py-2 font-mono text-xs uppercase tracking-wide ${
+                  isActive
+                    ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
+                    : "border-transparent text-text-secondary hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
         </div>
       </nav>
     </header>
