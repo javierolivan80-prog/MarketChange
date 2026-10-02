@@ -42,6 +42,11 @@ _telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_BOT_TOKEN = _telegram_token.strip() if _telegram_token else None
 _telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 TELEGRAM_CHAT_ID = _telegram_chat_id.strip() if _telegram_chat_id else None
+# URL pública del panel (app/, Vercel), sin barra final. Opcional: si está
+# definida, cada aviso de Telegram enlaza al análisis completo de la señal en
+# vez de dejar al usuario solo con el filing en bruto.
+_dashboard_url = os.environ.get("DASHBOARD_URL")
+DASHBOARD_URL = _dashboard_url.strip().rstrip("/") if _dashboard_url and _dashboard_url.strip() else None
 
 # --- EDGAR ---
 # La SEC exige un User-Agent identificable con contacto real. No es opcional:

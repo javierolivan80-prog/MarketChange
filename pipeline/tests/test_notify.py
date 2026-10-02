@@ -240,9 +240,7 @@ def test_send_message_reintenta_un_429(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_format_message_only_lists_versions_that_traded():
-    from pipeline.notify.signals_notifier import _format_message
-
+def _signal_row(**overrides):
     row = {
         "ticker": "ACME",
         "event_class": "8K_2.02_EARNINGS",
@@ -256,12 +254,65 @@ def test_format_message_only_lists_versions_that_traded():
         "ev_aggressive": 0.021,
         "ev_balanced": -0.004,
     }
-    text = _format_message(row)
+    row.update(overrides)
+    return row
+
+
+def test_format_message_only_lists_versions_that_traded():
+    from pipeline.notify.signals_notifier import _format_message
+
+    text = _format_message(_signal_row())
     assert "ACME" in text
-    assert "CONSERVATIVE" not in text  # NO_TRADE no se lista
-    assert "AGGRESSIVE: LONG" in text
-    assert "BALANCED: SHORT" in text
+    assert "Resultados" in text  # clase de evento en lenguaje llano, no el código
+    assert "Conservador" not in text  # NO_TRADE no se lista
+    assert "Agresivo: LONG" in text
+    assert "Equilibrado: SHORT" in text
     assert "72%" in text
+
+
+def test_format_message_includes_winning_thesis_and_key_uncertainty():
+    from pipeline.notify.signals_notifier import _format_message
+
+    text = _format_message(
+        _signal_row(
+            net_conviction=0.4,
+            bull_analyst_output={"thesis": "Guía elevada por encima del consenso."},
+            bear_analyst_output={"counter_thesis": "No debería aparecer."},
+            judge_output={"key_uncertainty": "Margen bruto del próximo trimestre."},
+        )
+    )
+    assert "Guía elevada por encima del consenso." in text
+    assert "No debería aparecer." not in text
+    assert "Margen bruto del próximo trimestre." in text
+
+
+def test_format_message_escapes_llm_text_for_telegram_html():
+    """Un '<' o '&' sin escapar hace que Telegram rechace el mensaje entero
+    (parse_mode=HTML) — y el evento se reintentaría para siempre."""
+    from pipeline.notify.signals_notifier import _format_message
+
+    text = _format_message(
+        _signal_row(
+            ticker="A&B",
+            bear_analyst_output={"counter_thesis": "Margen <5% tras la M&A"},
+            judge_output={"key_uncertainty": "x > y"},
+        )
+    )
+    assert "<b>A&amp;B</b>" in text
+    assert "Margen &lt;5% tras la M&amp;A" in text
+    assert "x &gt; y" in text
+
+
+def test_format_message_links_dashboard_only_when_configured(monkeypatch):
+    from pipeline import config
+    from pipeline.notify.signals_notifier import _format_message
+
+    monkeypatch.setattr(config, "DASHBOARD_URL", None)
+    assert "Análisis completo" not in _format_message(_signal_row())
+
+    monkeypatch.setattr(config, "DASHBOARD_URL", "https://panel.example.com")
+    text = _format_message(_signal_row())
+    assert '<a href="https://panel.example.com/senales?ticker=ACME">Análisis completo</a>' in text
 
 
 # ---------------------------------------------------------------------------

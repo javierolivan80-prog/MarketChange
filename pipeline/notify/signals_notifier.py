@@ -17,8 +17,11 @@ telegram.send_message).
 """
 from __future__ import annotations
 
+import html
 import logging
+from urllib.parse import quote
 
+from pipeline import config
 from pipeline.notify import telegram
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,30 @@ logger = logging.getLogger(__name__)
 STRATEGIES = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"]
 
 _DIRECTION_EMOJI = {"LONG": "🟢", "SHORT": "🔴"}
+
+# Mismo vocabulario que el panel (app/lib/labels.ts): el aviso y la pantalla
+# a la que enlaza tienen que llamar igual a las mismas cosas.
+_VERSION_LABEL = {"CONSERVATIVE": "Conservador", "BALANCED": "Equilibrado", "AGGRESSIVE": "Agresivo"}
+_EVENT_CLASS_LABEL = {
+    "8K_2.02_EARNINGS": "Resultados",
+    "8K_1.01_MATERIAL_AGMT": "Acuerdo relevante / M&A",
+    "8K_4.02_RESTATEMENT": "Reformulación de cuentas",
+    "8K_5.02_MGMT_CHANGE": "Cambio en la dirección",
+    "8K_1.03_BANKRUPTCY": "Concurso / quiebra",
+    "8K_4.01_AUDITOR_CHANGE": "Cambio de auditor",
+    "8K_8.01_OTHER": "Otros hechos relevantes",
+    "FDA_APPROVAL": "Aprobación FDA",
+    "FDA_CRL": "Rechazo FDA (CRL)",
+}
+
+# Tope por campo de texto libre del LLM: el aviso tiene que leerse de un
+# vistazo en el móvil; el razonamiento completo está en el panel.
+_MAX_REASON_CHARS = 280
+
+
+def _clip(text: str, limit: int = _MAX_REASON_CHARS) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def fetch_pending_signals(conn) -> list[dict]:
@@ -51,7 +78,8 @@ def fetch_pending_signals(conn) -> list[dict]:
             SELECT ea.event_id, e.ticker, e.event_class, e.source_url, e.filed_at,
                    ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
                    ea.confidence_in_conviction, ea.net_conviction,
-                   ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced
+                   ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
+                   ea.bull_analyst_output, ea.bear_analyst_output, ea.judge_output
             FROM event_analyses ea
             JOIN events e ON e.event_id = ea.event_id
             WHERE ea.notified_at IS NULL
@@ -65,7 +93,19 @@ def fetch_pending_signals(conn) -> list[dict]:
 
 
 def _format_message(row: dict) -> str:
-    lines = [f"<b>{row['ticker']}</b> — {row['event_class']}"]
+    """Aviso de una señal nueva. Todo texto interpolado se escapa con
+    html.escape: el mensaje va con parse_mode="HTML" y un '<' o '&' sin
+    escapar (frecuente en texto redactado por el LLM, p. ej. "margen <5%" o
+    "M&A") hace que la Bot API rechace el mensaje ENTERO — y como el evento
+    no se marca notified_at, se reintentaría en cada pasada sin llegar nunca.
+
+    Además de la decisión por versión, el aviso incluye el porqué (la tesis
+    del lado que ganó el debate) y qué lo invalidaría (key_uncertainty del
+    Judge): sin eso el usuario recibe un ticker y un número y tiene que abrir
+    el filing en bruto para saber si le interesa."""
+    e = html.escape
+    event_label = _EVENT_CLASS_LABEL.get(row["event_class"], row["event_class"])
+    lines = [f"<b>{e(row['ticker'])}</b> · {e(event_label)}"]
     ev_by_version = {
         "CONSERVATIVE": row["ev_conservative"],
         "AGGRESSIVE": row["ev_aggressive"],
@@ -82,9 +122,23 @@ def _format_message(row: dict) -> str:
             continue
         emoji = _DIRECTION_EMOJI.get(decision, "")
         ev_pct = float(ev_by_version[version]) * 100
-        lines.append(f"{emoji} {version}: {decision} · EV={ev_pct:+.2f}%")
-    lines.append(f"Confianza: {float(row['confidence_in_conviction']):.0f}% · net_conviction={float(row['net_conviction']):+.2f}")
-    lines.append(f"<a href=\"{row['source_url']}\">Filing</a>")
+        lines.append(f"{emoji} {_VERSION_LABEL[version]}: {decision} · EV {ev_pct:+.2f}%")
+    lines.append(f"Confianza: {float(row['confidence_in_conviction']):.0f}%")
+
+    net = float(row["net_conviction"])
+    winning_side = row.get("bull_analyst_output") if net > 0 else row.get("bear_analyst_output")
+    thesis = (winning_side or {}).get("thesis" if net > 0 else "counter_thesis")
+    if thesis:
+        lines.append(f"\n<b>Por qué:</b> {e(_clip(thesis))}")
+    uncertainty = (row.get("judge_output") or {}).get("key_uncertainty")
+    if uncertainty:
+        lines.append(f"<b>Qué lo cambiaría:</b> {e(_clip(uncertainty))}")
+
+    links = [f'<a href="{e(row["source_url"], quote=True)}">Filing</a>']
+    if config.DASHBOARD_URL:
+        url = f"{config.DASHBOARD_URL}/senales?ticker={quote(str(row['ticker']))}"
+        links.append(f'<a href="{e(url, quote=True)}">Análisis completo</a>')
+    lines.append("\n" + " · ".join(links))
     return "\n".join(lines)
 
 

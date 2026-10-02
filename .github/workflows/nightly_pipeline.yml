@@ -415,6 +415,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Opcional (variable del repo, no secreto): URL del panel en Vercel
+          # para que cada aviso enlace a su análisis completo.
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
         run: |
           python -m pipeline.notify.signals_notifier
           python -m pipeline.notify.exits_notifier
