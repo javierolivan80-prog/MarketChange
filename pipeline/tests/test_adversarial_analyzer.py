@@ -502,11 +502,20 @@ def test_all_system_prompts_declare_filing_as_data_not_instructions():
 
 
 def _api_error(status: int):
+    """Excepción del SDK sin construir una respuesta HTTP real: el cliente HTTP
+    que trae el SDK cambia de una versión a otra (httpx/httpx2), y estos tests
+    solo necesitan el tipo y el status_code."""
     import anthropic
-    import httpx
 
-    request = httpx.Request("GET", "https://api.anthropic.com/v1/messages/batches/x")
-    return anthropic.APIStatusError("boom", response=httpx.Response(status, request=request), body=None)
+    exc = anthropic.APIStatusError.__new__(anthropic.APIStatusError)
+    exc.status_code = status
+    return exc
+
+
+def _connection_error():
+    import anthropic
+
+    return anthropic.APIConnectionError.__new__(anthropic.APIConnectionError)
 
 
 class _ClienteQueFalla(_FakeBatchesClient):
@@ -523,13 +532,11 @@ class _ClienteQueFalla(_FakeBatchesClient):
 
 
 def test_run_batch_and_collect_tolera_fallos_transitorios_al_consultar(monkeypatch):
-    import anthropic
-    import httpx
     from pipeline.analyze import adversarial_analyzer as aa
 
     monkeypatch.setattr(aa.time, "sleep", lambda _: None)
     fake = _ClienteQueFalla([
-        anthropic.APIConnectionError(request=httpx.Request("GET", "https://api.anthropic.com")),
+        _connection_error(),
         _api_error(503),
         _api_error(429),
     ])
