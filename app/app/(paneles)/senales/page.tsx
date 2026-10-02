@@ -41,7 +41,7 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Señales</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           Cada evento analizado, el más reciente primero. Despliega una fila para ver el debate a favor y en contra, los casos
-          parecidos del pasado y por qué cada estrategia opera o no. La columna Señal es la decisión de la versión recomendada
+          parecidos del pasado y por qué cada estrategia opera o no. La columna Señal es la decisión de la estrategia recomendada
           ({VERSION_LABELS[version].toLowerCase()}). Hasta 500 eventos.
         </p>
       </header>

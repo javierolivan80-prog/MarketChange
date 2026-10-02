@@ -7,6 +7,7 @@
 // nota simplemente vuelve a salir, sin romper nada.
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/Button";
 
 const KEY = "welcome-dismissed-v1";
 
@@ -44,9 +45,9 @@ export function WelcomeNote() {
         <Link href="/como-funciona" className="text-accent-700 hover:underline dark:text-accent-400">
           Cómo funciona →
         </Link>
-        <button type="button" onClick={dismiss} className="text-text-secondary hover:text-foreground">
+        <Button variant="ghost" onClick={dismiss}>
           Entendido, no volver a mostrar
-        </button>
+        </Button>
       </div>
     </aside>
   );

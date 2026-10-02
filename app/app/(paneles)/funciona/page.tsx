@@ -293,7 +293,7 @@ export default async function FuncionaPage() {
 
       {/* Comparación de versiones */}
       <section>
-        <h2 className="mb-3 text-base font-semibold text-foreground">¿Qué versión conviene?</h2>
+        <h2 className="mb-3 text-base font-semibold text-foreground">¿Qué estrategia conviene?</h2>
         <ComparisonTable rows={comparisonRows} />
       </section>
     </main>

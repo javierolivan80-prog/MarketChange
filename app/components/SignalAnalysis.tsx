@@ -54,7 +54,7 @@ export function SignalAnalysis({ detail, recommended }: { detail: SignalDetailDa
     <div className="text-sm">
       {/* Decisión recomendada primero: es la respuesta; lo demás es el porqué */}
       <div className="mb-4 border border-border-strong bg-surface p-3">
-        <p className="mb-1 text-xs uppercase tracking-wide text-text-tertiary">Decisión de la versión recomendada ({VERSION_LABELS[recommended].toLowerCase()})</p>
+        <p className="mb-1 text-xs uppercase tracking-wide text-text-tertiary">Decisión de la estrategia recomendada ({VERSION_LABELS[recommended].toLowerCase()})</p>
         <div className="flex flex-wrap items-center gap-2">
           <DirectionBadge value={recDecision} />
           <span className="text-foreground">
@@ -68,9 +68,13 @@ export function SignalAnalysis({ detail, recommended }: { detail: SignalDetailDa
         {judge?.key_uncertainty && <p className="mt-1.5 text-text-secondary">Qué lo cambiaría: {judge.key_uncertainty}</p>}
       </div>
 
-      {detail.technical && <TechnicalPlanCard plan={detail.technical} />}
+      {detail.technical && (
+        <div id="plan" className="scroll-mt-4">
+          <TechnicalPlanCard plan={detail.technical} />
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div id="analisis" className="grid scroll-mt-4 grid-cols-1 gap-3 lg:grid-cols-2">
         <Section title="A favor (Bull)" accent="long">
           {bull ? (
             <>
@@ -180,8 +184,8 @@ export function SignalAnalysis({ detail, recommended }: { detail: SignalDetailDa
         </Section>
       </div>
 
-      <div className="mt-4 border-t border-border-subtle pt-3">
-        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">Las tres versiones</h3>
+      <div id="versiones" className="mt-4 scroll-mt-4 border-t border-border-subtle pt-3">
+        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">Las tres estrategias</h3>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {VERSION_ORDER.map((strategy) => {
             const d = abstention?.[strategy];

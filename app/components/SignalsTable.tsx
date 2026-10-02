@@ -9,6 +9,7 @@ import { Fragment, useEffect, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, getPaginationRowModel, getSortedRowModel, useReactTable, type SortingState } from "@tanstack/react-table";
 import type { SignalDetailData, SignalFeedRow, StrategyVersion } from "@/lib/queries";
 import { SignalAnalysis } from "@/components/SignalAnalysis";
+import { Button } from "@/components/ui/Button";
 import { DirectionBadge, SignedPct } from "@/components/ui/DirectionBadge";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { formatDate, formatFracAsPct } from "@/lib/format";
@@ -43,9 +44,9 @@ const columns = [
     header: "Señal",
     cell: (c) => <DirectionBadge value={c.getValue()} />,
   }),
-  columnHelper.accessor("confidence", { header: "Confianza", cell: (c) => <span className="num">{c.getValue().toFixed(0)}%</span> }),
+  columnHelper.accessor("confidence", { header: "Confianza del análisis", cell: (c) => <span className="num">{c.getValue().toFixed(0)}%</span> }),
   columnHelper.accessor("tech_confidence", {
-    header: "Técnico",
+    header: "Confianza técnica",
     cell: (c) => {
       const v = c.getValue();
       if (v === null) return <span className="text-text-tertiary">—</span>;
@@ -151,23 +152,15 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
       </div>
 
       <div className="mt-3 flex items-center gap-2 text-sm">
-        <button
-          onClick={() => table.previousPage()}
-          disabled={!table.getCanPreviousPage()}
-          className="min-h-11 border border-border-strong px-3 disabled:opacity-40 sm:min-h-0 sm:py-1"
-        >
+        <Button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} className="min-h-11 sm:min-h-9">
           ← Anterior
-        </button>
+        </Button>
         <span className="num text-text-secondary">
           Página {table.getState().pagination.pageIndex + 1} de {table.getPageCount() || 1}
         </span>
-        <button
-          onClick={() => table.nextPage()}
-          disabled={!table.getCanNextPage()}
-          className="min-h-11 border border-border-strong px-3 disabled:opacity-40 sm:min-h-0 sm:py-1"
-        >
+        <Button onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} className="min-h-11 sm:min-h-9">
           Siguiente →
-        </button>
+        </Button>
       </div>
     </div>
   );

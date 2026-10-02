@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/Button";
 
 // ThemeToggle.tsx — selector manual claro/oscuro persistente (localStorage),
 // en vez de depender solo de prefers-color-scheme: en un puesto de trabajo,
@@ -31,12 +32,8 @@ export function ThemeToggle() {
   }
 
   return (
-    <button
-      onClick={toggle}
-      aria-label={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-      className="border border-border-subtle px-2 py-1.5 text-xs text-text-secondary hover:border-border-strong hover:text-foreground"
-    >
+    <Button variant="ghost" onClick={toggle} aria-label={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"} className="text-xs">
       {isDark ? "Modo claro" : "Modo oscuro"}
-    </button>
+    </Button>
   );
 }

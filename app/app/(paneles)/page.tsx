@@ -4,6 +4,7 @@ import { getAbstentionSummary, getHomeSummary, getPipelineFreshness, getRecentTr
 import type { AbstentionCategory } from "@/lib/queries";
 import { Nav } from "@/components/Nav";
 import { WelcomeNote } from "@/components/WelcomeNote";
+import { SectionHeader } from "@/components/ui/SectionHeader";
 import { SampleBadge } from "@/components/ui/SampleBadge";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { NotConfigured } from "@/components/ui/PageState";
@@ -89,12 +90,12 @@ export default async function InicioPage() {
 
       {/* Últimas señales — lo accionable va primero */}
       <section className="mb-6">
-        <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="text-base font-semibold text-foreground">Últimas señales operables</h2>
-          <Link href="/senales" className="text-sm text-accent-700 hover:underline dark:text-accent-400">
-            Ver todas →
-          </Link>
-        </div>
+        <SectionHeader
+          id="senales-operables"
+          title="Señales operables"
+          description="Las más recientes en las que la estrategia recomendada decidió operar, con su plan técnico."
+          action={{ href: "/senales", label: "Ver todas" }}
+        />
         {recent.length === 0 ? (
           <p className="border border-dashed border-border-subtle p-4 text-sm text-text-secondary">
             Ningún evento ha superado todavía los filtros para operar. La mayoría de eventos se descartan a propósito: el sistema solo
@@ -109,11 +110,15 @@ export default async function InicioPage() {
                 <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
                   <th scope="col" className="py-2 pl-3 pr-3 font-medium">Símbolo</th>
                   <th scope="col" className="py-2 pr-3 font-medium">Catalizador</th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">Confianza</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">Confianza técnica</th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">Entrada</th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">Stop</th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">Objetivo</th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">R/B</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">
+                    <abbr title="Riesgo/beneficio: lo que se puede ganar hasta el objetivo por cada unidad que se arriesga hasta el stop" className="no-underline">
+                      Riesgo/benef.
+                    </abbr>
+                  </th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">Horizonte</th>
                 </tr>
               </thead>
@@ -143,7 +148,7 @@ export default async function InicioPage() {
                     <td className="num py-2 pr-3 text-right text-foreground">{s.stop !== null ? s.stop.toFixed(2) : "—"}</td>
                     <td className="num py-2 pr-3 text-right text-foreground">{s.target !== null ? s.target.toFixed(2) : "—"}</td>
                     <td className="num py-2 pr-3 text-right text-foreground">{s.risk_reward !== null ? `1:${s.risk_reward.toFixed(1)}` : "—"}</td>
-                    <td className="num py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} ses.` : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} sesiones` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -160,7 +165,10 @@ export default async function InicioPage() {
       {/* Lo que NO se ha operado y por qué — tan informativo como lo que sí */}
       {abstention.analyzed > 0 && (
         <section className="mb-6">
-          <h2 className="mb-2 text-base font-semibold text-foreground">Últimos {abstention.days} días</h2>
+          <SectionHeader
+            title={`Últimos ${abstention.days} días`}
+            description="Tan importante como lo que se opera: cuántos eventos se descartaron y por qué."
+          />
           <p className="num mb-2 text-sm text-text-secondary">
             {abstention.analyzed} eventos analizados · {abstention.traded} superaron los filtros · {abstention.analyzed - abstention.traded}{" "}
             descartados
@@ -179,55 +187,58 @@ export default async function InicioPage() {
         </section>
       )}
 
-      {summary.portfolio && (summary.portfolio.sample || summary.portfolio.oos_warning) && (
-        <div className="mb-3">
-          <SampleBadge sample={summary.portfolio.sample} warning={summary.portfolio.oos_warning ?? undefined} />
-        </div>
-      )}
-
-      {/* Semáforo */}
-      {verdict ? (
-        <section className={`mb-5 border p-4 ${verdict.color}`}>
-          <p className={`mb-1.5 text-lg font-semibold ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
-          <p className="text-sm text-foreground">{RELIABILITY[summary.validation!.best_decision.option].summary}</p>
-          <Link href="/funciona" className="mt-1.5 inline-block text-sm text-accent-700 hover:underline dark:text-accent-400">
-            Ver por qué →
-          </Link>
-        </section>
-      ) : (
-        <section className="mb-5 border border-border-subtle p-4">
-          <p className="mb-1.5 text-lg font-semibold text-foreground">Evaluación de fiabilidad en curso</p>
-          <p className="text-sm text-text-secondary">
-            La calificación aparece cuando hay suficientes eventos para medirla con rigor.
-          </p>
-        </section>
-      )}
-
-      {shown && shown.trade_metrics && shown.equity_metrics && (
-        <section>
-          <p className="mb-2 text-xs text-text-tertiary">
-            Rentabilidad histórica de la estrategia {versionLabel(shownVersion).toLowerCase()}, aplicada a todos los eventos pasados.
-          </p>
-          <div className="flex flex-wrap gap-y-4">
-            <Stat
-              label="Acierto"
-              value={shown.trade_metrics.win_rate !== null ? `${(shown.trade_metrics.win_rate * 100).toFixed(0)}%` : "—"}
-              hint={`en ${shown.trade_metrics.total_trades} operaciones`}
-            />
-            <Stat
-              label="Resultado acumulado"
-              value={shown.equity_metrics.total_return !== null ? formatPct(shown.equity_metrics.total_return * 100, 1) : "—"}
-              hint="costes incluidos"
-            />
-            <Stat
-              label="Peor caída"
-              value={formatDrawdown(shown.equity_metrics.max_drawdown)}
-              hint="pérdida temporal máxima"
-            />
-            <Stat label="Posiciones abiertas" value={openPositions !== null ? formatNum(openPositions, 0) : "—"} hint="señales en seguimiento" />
+      {/* Calificación, periodo y cifras que la respaldan, juntos: antes eran
+          tres bloques sueltos (aviso de periodo, recuadro de color y cifras
+          debajo, sin título) y no se veía que las cifras justificaban la nota. */}
+      <section aria-labelledby="fiabilidad" className="mb-2">
+        <SectionHeader
+          id="fiabilidad"
+          title="¿Me puedo fiar?"
+          description="Calificación del motor de validación y las cifras históricas en que se apoya."
+          action={{ href: "/funciona", label: "Ver por qué" }}
+        />
+        <div className={`border ${verdict ? verdict.color : "border-border-subtle"}`}>
+          <div className="p-4">
+            {verdict ? (
+              <>
+                <p className={`mb-1 text-lg font-semibold ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
+                <p className="text-sm text-foreground">{RELIABILITY[summary.validation!.best_decision.option].summary}</p>
+              </>
+            ) : (
+              <>
+                <p className="mb-1 text-lg font-semibold text-foreground">Evaluación de fiabilidad en curso</p>
+                <p className="text-sm text-text-secondary">La calificación aparece cuando hay suficientes eventos para medirla con rigor.</p>
+              </>
+            )}
           </div>
-        </section>
-      )}
+          {shown && shown.trade_metrics && shown.equity_metrics && (
+            <div className="border-t border-border-subtle bg-surface p-4">
+              <p className="mb-3 text-xs text-text-tertiary">
+                Rentabilidad histórica de la estrategia {versionLabel(shownVersion).toLowerCase()}, aplicada a todos los eventos pasados.
+              </p>
+              <div className="flex flex-wrap gap-y-4">
+                <Stat
+                  label="Acierto"
+                  value={shown.trade_metrics.win_rate !== null ? `${(shown.trade_metrics.win_rate * 100).toFixed(0)}%` : "—"}
+                  hint={`en ${shown.trade_metrics.total_trades} operaciones`}
+                />
+                <Stat
+                  label="Resultado acumulado"
+                  value={shown.equity_metrics.total_return !== null ? formatPct(shown.equity_metrics.total_return * 100, 1) : "—"}
+                  hint="costes incluidos"
+                />
+                <Stat label="Peor caída" value={formatDrawdown(shown.equity_metrics.max_drawdown)} hint="pérdida temporal máxima" />
+                <Stat label="Posiciones abiertas" value={openPositions !== null ? formatNum(openPositions, 0) : "—"} hint="señales en seguimiento" />
+              </div>
+            </div>
+          )}
+          {summary.portfolio && (summary.portfolio.sample || summary.portfolio.oos_warning) && (
+            <div className="border-t border-border-subtle">
+              <SampleBadge sample={summary.portfolio.sample} inset />
+            </div>
+          )}
+        </div>
+      </section>
     </main>
   );
 }

@@ -7,6 +7,7 @@ import { DailyPnLChart } from "@/components/DailyPnLChart";
 import { ConfidenceBucketBars } from "@/components/ConfidenceBucketBars";
 import { Callout } from "@/components/ui/Callout";
 import { SampleBadge } from "@/components/ui/SampleBadge";
+import { SectionHeader } from "@/components/ui/SectionHeader";
 import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/PageState";
 import Link from "next/link";
 import { formatDate, formatShare } from "@/lib/format";
@@ -59,9 +60,7 @@ export default async function CarteraPage() {
 
       {/* Sección 1: histórico */}
       <section className="mb-10">
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-base font-semibold text-foreground">Rentabilidad histórica</h2>
-        </div>
+        <SectionHeader title="Rentabilidad histórica" description="Cada estrategia aplicada a todos los eventos pasados, con costes." />
 
         <SampleBadge sample={report.sample} warning={report.oos_warning} />
         <div className="mb-4" />
@@ -98,7 +97,11 @@ export default async function CarteraPage() {
 
       {/* Sección 2: esta semana */}
       <section>
-        <h2 className="mb-3 text-base font-semibold text-foreground">Seguimiento de esta semana</h2>
+        <SectionHeader
+          title="Seguimiento de esta semana"
+          description="Las señales de la semana medidas con precios reales de mercado desde que se emitieron."
+          action={{ href: "/historial", label: "Historial completo" }}
+        />
         {!paperReport ? (
           <p className="text-sm text-text-tertiary">Todavía no hay señales en seguimiento esta semana.</p>
         ) : (

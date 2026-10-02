@@ -1,8 +1,8 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isDatabaseConfigured } from "@/lib/db";
 import { getRecommendedVersion, getSignalDetail } from "@/lib/data";
 import { Nav } from "@/components/Nav";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { SignalAnalysis } from "@/components/SignalAnalysis";
 import { NotConfigured } from "@/components/ui/PageState";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
@@ -32,9 +32,7 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
   return (
     <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
       <Nav active="/senales" />
-      <Link href="/senales" className="mb-3 inline-block text-sm text-text-secondary hover:text-foreground">
-        ← Todas las señales
-      </Link>
+      <Breadcrumbs items={[{ label: "Resumen", href: "/" }, { label: "Señales", href: "/senales" }, { label: detail.ticker }]} />
       <header className="mb-5">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{detail.ticker}</h1>
@@ -45,6 +43,26 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
           {eventClassLabel(detail.event_class)} · {sourceLabel(detail.source)} · <span className="num">{formatDate(detail.d0_close_date)}</span>
         </p>
       </header>
+      {/* Índice de la ficha: es larga, y sin él no se sabía qué venía después
+          del primer bloque ni dónde estaba cada parte. */}
+      <nav aria-label="En esta página" className="mb-4 flex flex-wrap gap-x-4 gap-y-1 border-b border-border-subtle pb-2 text-sm">
+        {detail.technical && (
+          <a href="#plan" className="text-text-secondary hover:text-foreground">
+            Plan técnico
+          </a>
+        )}
+        <a href="#analisis" className="text-text-secondary hover:text-foreground">
+          Análisis del evento
+        </a>
+        <a href="#versiones" className="text-text-secondary hover:text-foreground">
+          Las tres estrategias
+        </a>
+        {detail.source_url && (
+          <a href={detail.source_url} target="_blank" rel="noopener noreferrer" className="text-text-secondary hover:text-foreground">
+            Filing original ↗
+          </a>
+        )}
+      </nav>
       <SignalAnalysis detail={detail} recommended={recommended} />
     </main>
   );
