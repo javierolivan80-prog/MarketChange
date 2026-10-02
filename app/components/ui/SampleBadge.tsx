@@ -25,10 +25,12 @@ const COPY: Record<"oos" | "in_sample" | "full", { label: string; text: string; 
 };
 
 // `warning` se acepta por compatibilidad con los llamadores, pero no se pinta (ver arriba).
-export function SampleBadge({ sample }: { sample: SampleSplit | undefined; warning?: string }) {
+// inset: dentro de otro bloque con borde (Inicio), sin borde propio para no
+// dibujar un recuadro dentro del recuadro.
+export function SampleBadge({ sample, inset = false }: { sample: SampleSplit | undefined; warning?: string; inset?: boolean }) {
   const c = COPY[sample === "oos" ? "oos" : sample === "in_sample" ? "in_sample" : "full"];
   return (
-    <div className={`border px-3 py-2 text-xs ${c.tone}`}>
+    <div className={`px-3 py-2 text-xs ${c.tone} ${inset ? "border-0" : "border"}`}>
       <span className="mr-1 font-semibold">{c.label}.</span>
       {c.text}
     </div>

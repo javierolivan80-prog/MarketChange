@@ -7,7 +7,8 @@
 // filtrados; SignalsTable (Tanstack Table) solo ordena/pagina lo que ya
 // llegó filtrado, no re-filtra en el cliente.
 import { useRouter, useSearchParams } from "next/navigation";
-import { useId, useState } from "react";
+import { useId, useState, useTransition } from "react";
+import { Button } from "@/components/ui/Button";
 import { eventClassLabel } from "@/lib/labels";
 
 const INPUT =
@@ -23,6 +24,26 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
   const [dateFrom, setDateFrom] = useState(searchParams.get("dateFrom") ?? "");
   const [dateTo, setDateTo] = useState(searchParams.get("dateTo") ?? "");
   const [minConfidence, setMinConfidence] = useState(searchParams.get("minConfidence") ?? "");
+  // Filtrar recarga la página en el servidor: sin estado pendiente, el botón
+  // no respondía durante esa espera y parecía que no había pasado nada.
+  const [pending, startTransition] = useTransition();
+
+  const SIGNAL_LABELS: Record<string, string> = { LONG: "Long", SHORT: "Short", NO_TRADE: "Sin operar" };
+  const active: { key: string; label: string }[] = [
+    { key: "ticker", label: `Ticker: ${searchParams.get("ticker") ?? ""}` },
+    { key: "eventClass", label: `Evento: ${eventClassLabel(searchParams.get("eventClass") ?? "")}` },
+    { key: "signal", label: `Señal: ${SIGNAL_LABELS[searchParams.get("signal") ?? ""] ?? ""}` },
+    { key: "dateFrom", label: `Desde ${searchParams.get("dateFrom") ?? ""}` },
+    { key: "dateTo", label: `Hasta ${searchParams.get("dateTo") ?? ""}` },
+    { key: "minConfidence", label: `Confianza ≥ ${searchParams.get("minConfidence") ?? ""}%` },
+  ].filter((f) => searchParams.get(f.key));
+
+  function removeFilter(key: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(key);
+    ({ ticker: setTicker, eventClass: setEventClass, signal: setSignal, dateFrom: setDateFrom, dateTo: setDateTo, minConfidence: setMinConfidence } as Record<string, (v: string) => void>)[key]?.("");
+    startTransition(() => router.push(`/senales${params.size ? `?${params.toString()}` : ""}`));
+  }
 
   const ids = {
     ticker: useId(),
@@ -42,7 +63,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
     if (minConfidence) params.set("minConfidence", minConfidence);
-    router.push(`/senales?${params.toString()}`);
+    startTransition(() => router.push(`/senales?${params.toString()}`));
   }
 
   function clear() {
@@ -52,7 +73,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
     setDateFrom("");
     setDateTo("");
     setMinConfidence("");
-    router.push("/senales");
+    startTransition(() => router.push("/senales"));
   }
 
   return (
@@ -114,13 +135,30 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         />
       </div>
       <div className="flex gap-2">
-        <button type="submit" className="bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700">
-          Filtrar
-        </button>
-        <button type="button" onClick={clear} className="px-2 py-1.5 text-sm text-text-secondary hover:text-foreground">
+        <Button type="submit" variant="primary" disabled={pending}>
+          {pending ? "Filtrando…" : "Filtrar"}
+        </Button>
+        <Button variant="ghost" onClick={clear} disabled={pending}>
           Limpiar
-        </button>
+        </Button>
       </div>
+      {active.length > 0 && (
+        <div className="flex w-full flex-wrap items-center gap-2 border-t border-border-subtle pt-3" aria-label="Filtros activos">
+          <span className="text-xs text-text-secondary">Filtros activos:</span>
+          {active.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => removeFilter(f.key)}
+              aria-label={`Quitar filtro ${f.label}`}
+              className="inline-flex items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors hover:border-accent-500 hover:bg-surface"
+            >
+              {f.label}
+              <span aria-hidden="true" className="text-text-tertiary">×</span>
+            </button>
+          ))}
+        </div>
+      )}
     </form>
   );
 }

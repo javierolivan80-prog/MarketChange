@@ -14,6 +14,7 @@
 // no en cada visita a /cartera (antes eran el grueso de su JS inicial, para
 // una acción que la mayoría de visitas nunca hace).
 import { useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 import type { PortfolioReport, StrategyVersion } from "@/lib/queries";
 
@@ -147,13 +148,9 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
   }
 
   return (
-    <button
-      onClick={handleExport}
-      disabled={busy}
-      className="border border-border-strong px-3 py-1.5 text-sm text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
-    >
+    <Button onClick={handleExport} disabled={busy} aria-live="polite">
       {busy ? "Generando…" : "Exportar informe (PDF)"}
-    </button>
+    </Button>
   );
 }
 

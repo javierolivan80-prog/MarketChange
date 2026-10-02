@@ -109,3 +109,12 @@ body {
    `rounded` (antes lo usaban y una regla global `.rounded { border-radius: 0 }`
    lo anulaba — una clase que dice una cosa y hace otra). rounded-full se
    mantiene donde un círculo es intencional. */
+
+/* Saltos del índice de la ficha (#plan, #analisis…) con desplazamiento suave,
+   para que se entienda que es la misma página y no una navegación nueva.
+   Desactivado si el usuario pide menos movimiento. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}

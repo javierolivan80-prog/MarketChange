@@ -6,6 +6,7 @@
 // ofrece reintentar sin perder la navegación.
 import { useEffect } from "react";
 import { Nav } from "@/components/Nav";
+import { Button } from "@/components/ui/Button";
 
 export default function ErrorPage({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
@@ -20,13 +21,9 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
         <p className="mb-3">
           Lo más habitual es que la base de datos esté arrancando o no responda. Suele resolverse en unos segundos.
         </p>
-        <button
-          type="button"
-          onClick={reset}
-          className="bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700"
-        >
+        <Button variant="primary" onClick={reset}>
           Reintentar
-        </button>
+        </Button>
         {error.digest && <p className="mt-3 font-mono text-xs text-text-tertiary">Referencia: {error.digest}</p>}
       </div>
     </main>
