@@ -1,0 +1,49 @@
+# pipeline_ci.yml — tests del pipeline de Python en cada push y PR que lo toque.
+#
+# El job `test` de nightly_pipeline.yml solo corre con el cron o a mano (ese
+# workflow no tiene disparador push: añadírselo lanzaría también la ingesta y
+# el análisis con la API de Anthropic). Así que un PR que rompiera un test se
+# enteraba en la siguiente pasada programada, ya fusionado. Este workflow
+# corre la misma suite, contra el mismo Postgres 16 de servicio, antes del
+# merge.
+name: Pipeline CI
+
+on:
+  push:
+    paths:
+      - "pipeline/**"
+      - ".github/workflows/pipeline_ci.yml"
+  pull_request:
+    paths:
+      - "pipeline/**"
+      - ".github/workflows/pipeline_ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: money_poc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+      - name: Suite completa (incluye T1 placebo y T2 réplica)
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/money_poc_test
+        run: python -m pytest pipeline/tests/ -q
