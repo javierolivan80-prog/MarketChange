@@ -53,6 +53,10 @@ on:
         description: "Backfill histórico — fecha fin (YYYY-MM-DD). Si se omite, hasta ayer"
         required: false
         default: ""
+      diagnose_only:
+        description: "Solo diagnóstico de la base de datos (lectura, no cambia nada ni gasta IA)"
+        required: false
+        default: "false"
 
 # Nunca dos corridas a la vez. Un backfill manual de horas se solapaba con las
 # pasadas programadas: dos procesos escribiendo las mismas tablas y, peor, dos
@@ -64,11 +68,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Radiografía de solo lectura (pipeline/ops_diagnose.py): con
+  # diagnose_only=true corre SOLO esto y el resto de jobs se salta.
+  diagnose:
+    if: github.event.inputs.diagnose_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+      - name: Diagnóstico (solo lectura)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ops_diagnose
+
   # Job separado para correr los tests contra un Postgres efímero de servicio
   # antes de cada corrida — nunca se ingiere sobre un esquema no verificado.
   # (Este workflow no corre en push: los tests de cada push/PR los lanza
   # pipeline_ci.yml, sin arrastrar la ingesta ni el gasto de API.)
   test:
+    if: github.event.inputs.diagnose_only != 'true'
     runs-on: ubuntu-latest
     # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + A4): ningún job de este
     # workflow tenía timeout-minutes, así que un cuelgue real (Postgres de
@@ -472,7 +496,7 @@ jobs:
     # DENTRO de ingest_and_analyze, que sí corre en el orden correcto (después
     # de que la ingesta de EDGAR haya poblado universe). Este job corre en
     # paralelo, así que en un arranque en frío descargaría un universo vacío.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.backfill_start == ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.backfill_start == '' && github.event.inputs.diagnose_only != 'true'
     runs-on: ubuntu-latest
     # Mismo motivo que ingest_and_analyze (IMPROVEMENT_PLAN.md R6 + A4): un
     # backfill manual de precios de todo el universo es justo el caso más
