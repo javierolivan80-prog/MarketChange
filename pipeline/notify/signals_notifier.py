@@ -104,7 +104,7 @@ def fetch_pending_signals(conn) -> list[dict]:
                    ea.bull_analyst_output, ea.bear_analyst_output, ea.judge_output,
                    ta.entry_price, ta.stop_price, ta.target_price, ta.target2_price, ta.risk_reward,
                    ta.confidence AS tech_confidence, ta.passes_filters, ta.position_size_pct, ta.timeframe_days,
-                   ta.details->>'reason_if_rejected' AS tech_reason
+                   ta.details->>'reason_if_rejected' AS tech_reason, ta.details->'warnings' AS tech_warnings
             FROM event_analyses ea
             JOIN events e ON e.event_id = ea.event_id
             LEFT JOIN technical_analyses ta ON ta.event_id = ea.event_id
@@ -138,10 +138,12 @@ def _plan_lines(row: dict) -> list[str]:
         extra.append(f"Riesgo/beneficio 1:{float(row['risk_reward']):.1f}")
     if row.get("timeframe_days") is not None:
         extra.append(f"~{int(row['timeframe_days'])} sesiones")
-    if row.get("position_size_pct") is not None and row.get("passes_filters"):
+    if row.get("position_size_pct") is not None and row.get("passes_filters"):  # sin tamaño si no se recomienda
         extra.append(f"tamaño máx. {float(row['position_size_pct']):g}% del capital")
     if extra:
         lines.append(" · ".join(extra))
+    for warning in (row.get("tech_warnings") or [])[:2]:
+        lines.append(f"⚠️ {html.escape(str(warning))}")
     return lines
 
 
