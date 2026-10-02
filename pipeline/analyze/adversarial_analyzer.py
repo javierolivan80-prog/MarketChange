@@ -290,6 +290,21 @@ def build_judge_batch(events: list[EventContext], bull_bear_results: dict[str, d
     return requests_
 
 
+BATCH_POLL_MAX_CONSECUTIVE_FAILURES = 5
+
+
+def _is_transient_api_error(exc: Exception) -> bool:
+    """Red caída, timeout, 429 o 5xx: merece la pena volver a preguntar.
+    Mismo criterio que edgar_http._es_permanente y telegram.py."""
+    import anthropic
+
+    if isinstance(exc, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+        return True
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code == 429 or exc.status_code >= 500
+    return False
+
+
 def run_batch_and_collect(client, requests_) -> tuple[dict[str, dict], str | None]:
     """Envía un batch, espera a que termine, y devuelve ({custom_id: parsed_json}, batch_id).
     Errores de validación o servidor se registran y se omiten (no abortan el
@@ -308,8 +323,34 @@ def run_batch_and_collect(client, requests_) -> tuple[dict[str, dict], str | Non
     # de GitHub Actions hasta el timeout-minutes del job (ver config.py:
     # BATCH_MAX_WAIT_SECONDS), quemando horas de CI sin ningún aviso.
     start = time.monotonic()
+    batch_id = batch.id
+    consecutive_failures = 0
     while True:
-        batch = client.messages.batches.retrieve(batch.id)
+        # IMPROVEMENT_PLAN.md M1 (la mitad que faltaba): un fallo de red al
+        # CONSULTAR el estado no significa que el batch haya fallado — sigue
+        # procesándose (y ya está pagado) en el servidor. Antes, la excepción
+        # se propagaba y la corrida perdía el seguimiento de ese batch. El SDK
+        # ya reintenta cada llamada (max_retries); si aun así falla, aquí se
+        # tolera hasta BATCH_POLL_MAX_CONSECUTIVE_FAILURES seguidos, dentro de
+        # la misma cota de tiempo total. Un error permanente (4xx que no sea
+        # 429: credenciales, batch inexistente) se propaga sin reintentar.
+        try:
+            batch = client.messages.batches.retrieve(batch_id)
+            consecutive_failures = 0
+        except Exception as exc:  # noqa: BLE001 — se filtra con _is_transient_api_error
+            if not _is_transient_api_error(exc):
+                raise
+            consecutive_failures += 1
+            if consecutive_failures > BATCH_POLL_MAX_CONSECUTIVE_FAILURES:
+                raise
+            logger.warning(
+                "Batch %s: fallo transitorio consultando el estado (%d/%d seguidos): %s",
+                batch_id, consecutive_failures, BATCH_POLL_MAX_CONSECUTIVE_FAILURES, exc,
+            )
+            if time.monotonic() - start > config.BATCH_MAX_WAIT_SECONDS:
+                raise
+            time.sleep(30)
+            continue
         if batch.processing_status == "ended":
             break
         elapsed = time.monotonic() - start
