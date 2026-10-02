@@ -87,7 +87,20 @@ export default function ComoFuncionaPage() {
           </p>
         </Step>
 
-        <Step n={7} title="Seguimiento de resultados">
+        <Step n={7} title="Confirmación técnica y plan">
+          <p>
+            Que el evento sea bueno no basta: el gráfico tiene que acompañar. Para cada señal se revisan tendencia (medias de 20, 50 y
+            200 sesiones, ADX), impulso (RSI, MACD, Stoch RSI), volatilidad (Bollinger, ATR) y volumen (OBV, VWAP, volumen del día frente
+            a su media), y se buscan los niveles donde el precio suele frenar: máximos y mínimos recientes, pivots y Fibonacci.
+          </p>
+          <p>
+            Con eso se fija un plan: entrada, stop justo detrás de un soporte real, objetivo en la siguiente resistencia, tamaño máximo
+            según la volatilidad y una puntuación de 0 a 100. Si el riesgo/beneficio no llega a 1:2, o si el stop no se apoya en ningún
+            nivel, la señal se marca como no apta aunque el evento sea bueno.
+          </p>
+        </Step>
+
+        <Step n={8} title="Seguimiento de resultados">
           <p>
             Cada señal se mide con reglas realistas (comisiones, entrada al día siguiente, stop-loss, objetivo de beneficio) de dos
             formas: aplicada a todos los eventos pasados (<strong>Cartera</strong>) y, desde que se publica, con los precios reales de
@@ -95,7 +108,7 @@ export default function ComoFuncionaPage() {
           </p>
         </Step>
 
-        <Step n={8} title="¿Realmente funciona esto?">
+        <Step n={9} title="¿Realmente funciona esto?">
           <p>
             Por último, se audita el propio sistema: ¿el tipo de evento mueve el precio de forma estadísticamente real, o podría ser
             ruido? ¿El sistema sabe cuándo confiar en sí mismo (si dice “80% seguro”, acierta de verdad el 80% de las veces)? ¿El

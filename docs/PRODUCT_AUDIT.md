@@ -458,3 +458,36 @@ infraestructura, datos reales o decisiones de negocio.
 | Watchlist de un usuario (confianza mínima, tickers, tipos de evento) | ✅ variables del repo `ALERT_*` | `config.py`, `RUNBOOK.md` §4 |
 | 404 real para señales inexistentes | ✅ `loading.tsx` en el grupo `(paneles)` | `app/app/(paneles)/` |
 | Cifras desfasadas del RUNBOOK | ✅ | `RUNBOOK.md` |
+
+## Anexo 4 — capa técnica y plan de operación
+
+`pipeline/analyze/technical_analysis.py`, nueva etapa tras el análisis de
+eventos. Para cada señal operable, solo con precios hasta su D0:
+
+- **Indicadores:** RSI (y divergencias en diario), MACD con histograma, EMA
+  20/50/200, ADX con +DI/−DI, Bollinger (expansión), Stoch RSI (salida de
+  extremos), ATR, OBV, Acumulación/Distribución, VWAP de 20 sesiones y
+  volumen frente a su media de 20.
+- **Niveles:** máximos y mínimos de 20 y 60 sesiones, pivots clásicos,
+  Fibonacci (38,2/50/61,8 y extensiones), EMA 50/200, bandas y VWAP. Solo los
+  estructurales sirven de objetivo; todos cuentan para la confluencia.
+- **Puntuación 0-100:** catalizador confirmado +40, ≥3 indicadores +30,
+  confluencia +20, volumen >120% +10.
+- **Comprobaciones previas:** catalizador oficial (un CRL de la FDA solo con
+  8-K previo; nunca un rumor), ≥2 indicadores, riesgo/beneficio ≥ 1:2 y stop
+  sobre un nivel real.
+- **Plan:** entrada (cierre de D0), stop, objetivo parcial y final, tamaño
+  máximo (3%, 2% si la confianza < 70, reducido si el ATR supera su mediana),
+  horizonte estimado y reglas de salida (escalado, parcial, trailing de 2,5
+  ATR).
+
+Se ve en Inicio (tabla Símbolo · Catalizador · Confianza · Entrada · Stop ·
+Objetivo · R/B · Horizonte), en cada señal, en la tabla de Señales, en el CSV
+y en el aviso de Telegram. `ALERT_REQUIRE_TECHNICAL=true` hace que solo se
+avisen las señales que pasan los filtros.
+
+**Limitaciones declaradas** (guardadas en cada plan): solo precios diarios
+(sin 4H/1H), sin volatilidad implícita ni opciones, sin sentimiento social,
+flujo institucional ni order flow. **Pendiente:** medir en el backtest si el
+filtro técnico mejora los resultados antes de activarlo como filtro de avisos
+por defecto.

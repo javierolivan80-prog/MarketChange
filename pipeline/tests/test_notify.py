@@ -836,3 +836,68 @@ def test_fetch_pending_signals_aplica_watchlist(conn, monkeypatch):
     monkeypatch.setattr(config, "ALERT_EVENT_CLASSES", ())
     monkeypatch.setattr(config, "ALERT_MIN_CONFIDENCE", 80.0)  # _insert_event_analysis usa confianza 75
     assert fetch_pending_signals(conn) == []
+
+
+# ---------------------------------------------------------------------------
+# signals_notifier — plan técnico en el aviso
+# ---------------------------------------------------------------------------
+
+
+def test_format_message_incluye_el_plan_tecnico():
+    from pipeline.notify.signals_notifier import _format_message
+
+    text = _format_message(
+        _signal_row(
+            entry_price=100.0, stop_price=96.5, target_price=108.0, target2_price=112.0, risk_reward=2.29,
+            tech_confidence=80, passes_filters=True, position_size_pct=2.5, timeframe_days=8, tech_reason=None,
+        )
+    )
+    assert "Plan técnico</b> · confianza 80/100 · pasa los filtros de riesgo" in text
+    assert "Entrada ~100.00 · Stop 96.50 · Objetivo 108.00 (final 112.00)" in text
+    assert "Riesgo/beneficio 1:2.3 · ~8 sesiones · tamaño máx. 2.5% del capital" in text
+
+
+def test_format_message_no_da_tamano_si_el_plan_no_pasa():
+    from pipeline.notify.signals_notifier import _format_message
+
+    text = _format_message(
+        _signal_row(
+            entry_price=100.0, stop_price=96.5, target_price=101.0, target2_price=None, risk_reward=0.29,
+            tech_confidence=40, passes_filters=False, position_size_pct=2.0, timeframe_days=3,
+            tech_reason="Riesgo/beneficio 1:0.29 < 1:2.",
+        )
+    )
+    assert "no pasa los filtros: Riesgo/beneficio 1:0.29 &lt; 1:2." in text
+    assert "tamaño" not in text
+
+
+def test_format_message_sin_plan_tecnico_no_rompe():
+    from pipeline.notify.signals_notifier import _format_message
+
+    assert "Plan técnico" not in _format_message(_signal_row())
+
+
+@pytestmark_db
+def test_fetch_pending_signals_puede_exigir_plan_tecnico_valido(conn, monkeypatch):
+    from pipeline import config
+    from pipeline.notify.signals_notifier import fetch_pending_signals
+
+    ok = _insert_universe_and_event(conn, ticker="TOK")
+    _insert_event_analysis(conn, ok)
+    ko = _insert_universe_and_event(conn, ticker="TKO")
+    _insert_event_analysis(conn, ko)
+    sin_plan = _insert_universe_and_event(conn, ticker="TNP")
+    _insert_event_analysis(conn, sin_plan)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE technical_analyses")
+        for eid, passes in ((ok, True), (ko, False)):
+            cur.execute(
+                "INSERT INTO technical_analyses (event_id, direction, confidence, passes_filters, details) VALUES (%s, 'LONG', 70, %s, '{}')",
+                (eid, passes),
+            )
+    conn.commit()
+
+    monkeypatch.setattr(config, "ALERT_REQUIRE_TECHNICAL", False)
+    assert {r["ticker"] for r in fetch_pending_signals(conn)} == {"TOK", "TKO", "TNP"}
+    monkeypatch.setattr(config, "ALERT_REQUIRE_TECHNICAL", True)
+    assert {r["ticker"] for r in fetch_pending_signals(conn)} == {"TOK"}

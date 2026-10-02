@@ -44,6 +44,19 @@ const columns = [
     cell: (c) => <DirectionBadge value={c.getValue()} />,
   }),
   columnHelper.accessor("confidence", { header: "Confianza", cell: (c) => <span className="num">{c.getValue().toFixed(0)}%</span> }),
+  columnHelper.accessor("tech_confidence", {
+    header: "Técnico",
+    cell: (c) => {
+      const v = c.getValue();
+      if (v === null) return <span className="text-text-tertiary">—</span>;
+      const passes = c.row.original.tech_passes;
+      return (
+        <span className={`num ${passes ? "text-emerald-700 dark:text-emerald-400" : "text-text-secondary"}`} title={passes ? "Pasa los filtros de riesgo" : "No pasa los filtros de riesgo"}>
+          {v}/100{passes ? " ✓" : ""}
+        </span>
+      );
+    },
+  }),
   columnHelper.accessor("ev_balanced", { header: "Valor esperado", cell: (c) => <span className="num">{formatFracAsPct(c.getValue())}</span> }),
   columnHelper.accessor("pnl_pct", {
     header: "Resultado (si se operó)",

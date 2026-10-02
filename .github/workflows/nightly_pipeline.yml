@@ -338,6 +338,17 @@ jobs:
           ANALYSIS_MAX_EVENTS_PER_RUN: ${{ vars.ANALYSIS_MAX_EVENTS_PER_RUN }}
         run: python -m pipeline.analyze.event_analysis_pipeline
 
+      - name: Plan técnico por señal (analyze/technical_analysis.py)
+        # Confirmación técnica (RSI, MACD, medias, ADX, Bollinger, ATR, OBV,
+        # VWAP, volumen, niveles) y plan entry/stop/objetivo/riesgo-beneficio
+        # para cada señal operable que aún no lo tenga. Sin IA ni red: solo
+        # precios ya guardados hasta el D0 de cada evento. Corre aunque el
+        # análisis con IA haya fallado (procesa lo que ya haya analizado).
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.analyze.technical_analysis
+
       # Estos tres pasos NO usan la IA: trabajan sobre lo que ya hay en la base
       # de datos. Con '!cancelled()' se ejecutan aunque el análisis de eventos
       # haya fallado (por ejemplo por falta de ANTHROPIC_API_KEY), en vez de
@@ -425,6 +436,7 @@ jobs:
           ALERT_MIN_CONFIDENCE: ${{ vars.ALERT_MIN_CONFIDENCE }}
           ALERT_TICKERS: ${{ vars.ALERT_TICKERS }}
           ALERT_EVENT_CLASSES: ${{ vars.ALERT_EVENT_CLASSES }}
+          ALERT_REQUIRE_TECHNICAL: ${{ vars.ALERT_REQUIRE_TECHNICAL }}
         run: |
           python -m pipeline.notify.signals_notifier
           python -m pipeline.notify.exits_notifier

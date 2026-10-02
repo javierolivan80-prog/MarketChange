@@ -107,6 +107,12 @@ def _env_list(name: str) -> tuple[str, ...]:
 # Listas separadas por comas, p. ej. ALERT_TICKERS="AAPL,MSFT",
 # ALERT_EVENT_CLASSES="8K_2.02_EARNINGS,FDA_CRL".
 ALERT_TICKERS = tuple(t.upper() for t in _env_list("ALERT_TICKERS"))
+# Avisar solo de señales cuyo plan técnico pasa las comprobaciones previas
+# (catalizador confirmado, >= 2 indicadores alineados, riesgo/beneficio >= 1:2,
+# stop sobre soporte real — analyze/technical_analysis.py). Desactivado por
+# defecto: esa capa todavía no se ha validado con datos reales en el backtest,
+# así que de entrada informa en cada aviso pero no decide cuáles se envían.
+ALERT_REQUIRE_TECHNICAL = (os.environ.get("ALERT_REQUIRE_TECHNICAL") or "").strip().lower() in ("1", "true", "yes", "si", "sí")
 ALERT_EVENT_CLASSES = _env_list("ALERT_EVENT_CLASSES")
 
 # --- Cola del análisis con IA (Bull/Bear/Judge) ---
