@@ -850,8 +850,10 @@ def test_format_message_incluye_el_plan_tecnico():
         _signal_row(
             entry_price=100.0, stop_price=96.5, target_price=108.0, target2_price=112.0, risk_reward=2.29,
             tech_confidence=80, passes_filters=True, position_size_pct=2.5, timeframe_days=8, tech_reason=None,
+            tech_warnings=["VIX en 31: volatilidad de mercado elevada, tamaño reducido un 25%."],
         )
     )
+    assert "⚠️ VIX en 31" in text
     assert "Plan técnico</b> · confianza 80/100 · pasa los filtros de riesgo" in text
     assert "Entrada ~100.00 · Stop 96.50 · Objetivo 108.00 (final 112.00)" in text
     assert "Riesgo/beneficio 1:2.3 · ~8 sesiones · tamaño máx. 2.5% del capital" in text

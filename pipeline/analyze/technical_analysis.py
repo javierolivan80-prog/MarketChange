@@ -60,12 +60,20 @@ REDUCED_POSITION_PCT = 2.0  # tope si la confianza técnica no llega a HIGH_CONF
 MIN_POSITION_PCT = 0.5
 HIGH_CONFIDENCE = 70
 TRAILING_STOP_ATR = 2.5
+CROSS_LOOKBACK = 20  # un cruce de medias cuenta si ocurrió en las últimas 20 sesiones
+SQUEEZE_PERCENTILE = 0.2  # bandas en el 20% más estrecho de 120 sesiones = contracción
+VOLUME_PROFILE_SESSIONS = 60
+VOLUME_PROFILE_BINS = 24
+VALUE_AREA_SHARE = 0.7
+VIX_ELEVATED = 25.0  # por encima, tamaño x0,75
+VIX_STRESS = 35.0  # por encima, tamaño x0,5
 
 LIMITATIONS = [
     "Solo precios diarios: sin niveles ni divergencias en 4H/1H.",
-    "Sin volatilidad implícita ni posicionamiento en opciones.",
-    "Sin sentimiento en redes, flujo institucional ni order flow.",
-    "VWAP de 20 sesiones sobre precio típico diario, no intradía.",
+    "Sin volatilidad implícita del subyacente ni posicionamiento en opciones (el VIX sí se usa).",
+    "Sin sentimiento en redes, flujo institucional, operaciones de insiders ni order flow.",
+    "Sin calendario de anuncios: todas las señales son posteriores al evento (entrada en D+1).",
+    "VWAP de 20 sesiones y volume profile sobre precio típico diario, no intradía.",
 ]
 
 
@@ -164,6 +172,47 @@ def rsi_divergence(close: pd.Series, rsi_series: pd.Series, lookback: int = 30) 
     return None
 
 
+def _cross_days_ago(fast: pd.Series, slow: pd.Series, up: bool, lookback: int = CROSS_LOOKBACK) -> int | None:
+    """Sesiones desde el último cruce de `fast` sobre `slow` (up=True: cruce
+    dorado, al alza; False: cruce de la muerte), si ocurrió en las últimas
+    `lookback`. None si no hubo cruce en ese plazo o faltan datos."""
+    diff = (fast - slow).dropna().tail(lookback + 1)
+    if len(diff) < 2:
+        return None
+    sign = np.sign(diff.to_numpy())
+    for i in range(len(sign) - 1, 0, -1):
+        if (up and sign[i - 1] <= 0 < sign[i]) or (not up and sign[i - 1] >= 0 > sign[i]):
+            return len(sign) - 1 - i
+    return None
+
+
+def volume_profile(df: pd.DataFrame, sessions: int = VOLUME_PROFILE_SESSIONS, bins: int = VOLUME_PROFILE_BINS) -> dict | None:
+    """Reparto del volumen por precio en las últimas `sessions` sesiones (precio
+    típico diario, sin D0). Devuelve el punto de control (precio con más
+    volumen) y el área de valor (el 70% del volumen alrededor del POC)."""
+    window = df.iloc[:-1].tail(sessions)
+    if len(window) < sessions // 2 or window["volume"].sum() <= 0:
+        return None
+    typical = ((window["high"] + window["low"] + window["close"]) / 3).to_numpy()
+    lo, hi = typical.min(), typical.max()
+    if hi <= lo:
+        return None
+    hist, edges = np.histogram(typical, bins=bins, range=(lo, hi), weights=window["volume"].to_numpy())
+    centers = (edges[:-1] + edges[1:]) / 2
+    poc = int(hist.argmax())
+    included, total, left, right = hist[poc], hist.sum(), poc, poc
+    while included < VALUE_AREA_SHARE * total and (left > 0 or right < bins - 1):
+        next_left = hist[left - 1] if left > 0 else -1
+        next_right = hist[right + 1] if right < bins - 1 else -1
+        if next_right >= next_left:
+            right += 1
+            included += hist[right]
+        else:
+            left -= 1
+            included += hist[left]
+    return {"poc": float(centers[poc]), "value_area_low": float(edges[left]), "value_area_high": float(edges[right + 1])}
+
+
 def _num(value) -> float | None:
     if value is None:
         return None
@@ -183,6 +232,10 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     vwap20 = (typical * volume).rolling(20).sum() / volume.rolling(20).sum().replace(0, np.nan)
     avg_vol20 = volume.shift(1).rolling(20).mean()  # media SIN el propio D0
     atr_pct = atr_s / close
+    sma50 = close.rolling(50).mean()
+    sma200 = close.rolling(200).mean()
+    width = 4 * std / mid
+    ema20 = ema(close, 20)
 
     return {
         "close": _num(close.iloc[-1]),
@@ -204,7 +257,19 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "bb_upper": _num((mid + 2 * std).iloc[-1]),
         "bb_lower": _num((mid - 2 * std).iloc[-1]),
         "bb_width": _num((4 * std / mid).iloc[-1]),
-        "bb_width_median_120": _num((4 * std / mid).tail(120).median()),
+        "bb_width_median_120": _num(width.tail(120).median()),
+        # Contracción (squeeze): ancho de bandas en el 20% más estrecho de las
+        # últimas 120 sesiones en algún momento de las últimas 10.
+        "bb_squeeze_recent": bool((width.tail(10) <= width.tail(120).quantile(SQUEEZE_PERCENTILE)).any()) if width.notna().sum() >= 120 else None,
+        "sma50": _num(sma50.iloc[-1]),
+        "sma200": _num(sma200.iloc[-1]) if len(close) >= 200 else None,
+        "golden_cross_days_ago": _cross_days_ago(sma50, sma200, up=True),
+        "death_cross_days_ago": _cross_days_ago(sma50, sma200, up=False),
+        "atr_band_upper": _num((ema20 + 2 * atr_s).iloc[-1]),
+        "atr_band_lower": _num((ema20 - 2 * atr_s).iloc[-1]),
+        # Ruptura del rango de 20 sesiones (sin contar D0) en el cierre de D0.
+        "breakout_up": bool(close.iloc[-1] > df["high"].shift(1).rolling(20).max().iloc[-1]) if len(df) > 21 else None,
+        "breakout_down": bool(close.iloc[-1] < df["low"].shift(1).rolling(20).min().iloc[-1]) if len(df) > 21 else None,
         "stoch_rsi": _num(stoch_rsi(close).iloc[-1]),
         "stoch_rsi_min_5": _num(stoch_rsi(close).tail(5).min()),
         "stoch_rsi_max_5": _num(stoch_rsi(close).tail(5).max()),
@@ -257,6 +322,13 @@ def aligned_indicators(ind: dict, direction: str) -> list[str]:
             out.append("Stoch RSI")
         if not long and ind["stoch_rsi_max_5"] > 0.8 > ind["stoch_rsi"] > 0.2:
             out.append("Stoch RSI")
+    if ind.get("golden_cross_days_ago") is not None and long:
+        out.append("Cruce dorado (SMA 50/200)")
+    if ind.get("death_cross_days_ago") is not None and not long:
+        out.append("Cruce de la muerte (SMA 50/200)")
+    breakout = ind.get("breakout_up") if long else ind.get("breakout_down")
+    if breakout and ind["volume_ratio"] is not None and ind["volume_ratio"] > VOLUME_CONFIRMATION_RATIO:
+        out.append("Ruptura con volumen")
     if ind["bb_mid"] is not None and ind["bb_width"] is not None and ind["bb_width_median_120"] is not None:
         # Bandas abriéndose (volatilidad en expansión) con el precio del lado
         # de la media que corresponde a la dirección.
@@ -282,7 +354,10 @@ def key_levels(df: pd.DataFrame, ind: dict) -> list[dict]:
     como objetivo daría riesgo/beneficio < 1 en prácticamente todas las
     señales. Los menores sí cuentan para la confluencia del stop."""
     levels: list[dict] = []
-    minor_kinds = {"Pivot", "Pivot S1", "Pivot R1", "EMA 50", "Bollinger superior", "Bollinger inferior", "VWAP 20"}
+    minor_kinds = {
+        "Pivot", "Pivot S1", "Pivot R1", "EMA 50", "Bollinger superior", "Bollinger inferior", "VWAP 20",
+        "Banda ATR superior", "Banda ATR inferior",
+    }
 
     def add(price, kind):
         p = _num(price)
@@ -316,6 +391,14 @@ def key_levels(df: pd.DataFrame, ind: dict) -> list[dict]:
     add(ind.get("bb_upper"), "Bollinger superior")
     add(ind.get("bb_lower"), "Bollinger inferior")
     add(ind.get("vwap20"), "VWAP 20")
+    add(ind.get("atr_band_upper"), "Banda ATR superior")
+    add(ind.get("atr_band_lower"), "Banda ATR inferior")
+    add(ind.get("sma200"), "SMA 200")
+    profile = volume_profile(df)
+    if profile:
+        add(profile["poc"], "Volume profile: POC")
+        add(profile["value_area_low"], "Volume profile: área de valor baja")
+        add(profile["value_area_high"], "Volume profile: área de valor alta")
     return levels
 
 
@@ -347,6 +430,8 @@ class TradePlan:
     target_basis: list = field(default_factory=list)
     indicators: dict = field(default_factory=dict)
     exit_rules: list = field(default_factory=list)
+    context: dict = field(default_factory=dict)
+    warnings: list = field(default_factory=list)
     reason_if_rejected: str | None = None
     limitations: list = field(default_factory=lambda: list(LIMITATIONS))
 
@@ -354,9 +439,22 @@ class TradePlan:
         return asdict(self)
 
 
-def build_trade_plan(df: pd.DataFrame, direction: str, catalyst_confirmed: bool) -> TradePlan:
-    """df: OHLCV diario AJUSTADO, ordenado, con D0 como última fila."""
+def build_trade_plan(
+    df: pd.DataFrame,
+    direction: str,
+    catalyst_confirmed: bool,
+    vix: float | None = None,
+    expected_move_pct: float | None = None,
+) -> TradePlan:
+    """df: OHLCV diario AJUSTADO, ordenado, con D0 como última fila.
+
+    vix: cierre del VIX en D0 (event_enrichment.vix_d0). Por encima de 25 el
+    tamaño se reduce un 25%, por encima de 35 a la mitad.
+    expected_move_pct: movimiento típico de los eventos parecidos del pasado
+    (historical_analogues, ya con shrinkage). Si el objetivo pide más que eso,
+    se avisa: es un objetivo codicioso para este tipo de evento."""
     plan = TradePlan(direction=direction)
+    plan.context = {"vix": _num(vix) if vix is not None else None, "expected_move_pct": _num(expected_move_pct) if expected_move_pct is not None else None}
     if len(df) < MIN_BARS:
         plan.reason_if_rejected = f"Histórico insuficiente ({len(df)} sesiones; hacen falta {MIN_BARS})."
         plan.checks = {"catalyst_confirmed": catalyst_confirmed, "enough_history": False}
@@ -456,7 +554,23 @@ def build_trade_plan(df: pd.DataFrame, direction: str, catalyst_confirmed: bool)
     vol_factor = 1.0
     if ind["atr_pct"] and ind["atr_pct_median_120"] and ind["atr_pct"] > ind["atr_pct_median_120"]:
         vol_factor = ind["atr_pct_median_120"] / ind["atr_pct"]
-    plan.position_size_pct = round(max(MIN_POSITION_PCT, cap * vol_factor), 1)
+    vix_factor = 1.0
+    if vix is not None and vix > VIX_STRESS:
+        vix_factor = 0.5
+        plan.warnings.append(f"VIX en {vix:.0f}: mercado en tensión, tamaño a la mitad.")
+    elif vix is not None and vix > VIX_ELEVATED:
+        vix_factor = 0.75
+        plan.warnings.append(f"VIX en {vix:.0f}: volatilidad de mercado elevada, tamaño reducido un 25%.")
+    plan.position_size_pct = round(max(MIN_POSITION_PCT, cap * vol_factor * vix_factor), 1)
+
+    if expected_move_pct and entry:
+        target_move_pct = abs(plan.target - entry) / entry * 100
+        plan.context["target_move_pct"] = round(target_move_pct, 2)
+        if target_move_pct > abs(expected_move_pct):
+            plan.warnings.append(
+                f"El objetivo pide un {target_move_pct:.1f}%, más que el movimiento típico de eventos parecidos "
+                f"(±{abs(expected_move_pct):.1f}%): conviene tomar beneficios antes."
+            )
 
     # Horizonte: lo que tardaría en recorrer la distancia al objetivo a ~0,5
     # ATR por sesión (ritmo medio de una tendencia), entre 3 y 20 sesiones.
@@ -578,10 +692,40 @@ def store_plan(conn, event_id: int, plan: TradePlan) -> None:
     conn.commit()
 
 
+def _event_context(conn, event_id: int) -> tuple[float | None, float | None]:
+    """VIX de D0 (event_enrichment) y movimiento típico de eventos parecidos
+    (event_analyses.impact_estimation), ambos ya calculados point-in-time por
+    las etapas anteriores."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ee.vix_d0, ea.impact_estimation
+            FROM event_analyses ea
+            LEFT JOIN event_enrichment ee ON ee.event_id = ea.event_id
+            WHERE ea.event_id = %s
+            """,
+            (event_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None, None
+    vix = float(row["vix_d0"]) if row["vix_d0"] is not None else None
+    impact = row["impact_estimation"] or {}
+    raw = impact.get("expected_magnitude_pct")
+    if raw is None:
+        # as_json() guarda la magnitud como texto ("±4.20% según histórico de N…").
+        import re as _re
+
+        match = _re.search(r"([\d.]+)%", str(impact.get("expected_magnitude") or ""))
+        raw = float(match.group(1)) if match else None
+    return vix, (float(raw) if raw is not None else None)
+
+
 def analyze_event(conn, event: dict) -> TradePlan:
     direction = "LONG" if float(event["net_conviction"]) > 0 else "SHORT"
     prices = load_prices(conn, event["ticker"], event["d0_close_date"])
-    plan = build_trade_plan(prices, direction, is_catalyst_confirmed(conn, event))
+    vix, expected_move = _event_context(conn, event["event_id"])
+    plan = build_trade_plan(prices, direction, is_catalyst_confirmed(conn, event), vix=vix, expected_move_pct=expected_move)
     store_plan(conn, event["event_id"], plan)
     return plan
 

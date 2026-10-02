@@ -574,7 +574,9 @@ export interface TechnicalPlan {
     exit_rules?: string[];
     limitations?: string[];
     reason_if_rejected?: string | null;
-    indicators?: Record<string, number | string | null>;
+    indicators?: Record<string, number | string | boolean | null>;
+    warnings?: string[];
+    context?: { vix?: number | null; expected_move_pct?: number | null; target_move_pct?: number | null };
   };
 }
 

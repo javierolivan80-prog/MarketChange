@@ -297,3 +297,91 @@ def test_niveles_reales_marcan_mayores_y_menores():
     levels = {lv["kind"]: lv["major"] for lv in ta.key_levels(df, ta.compute_indicators(df))}
     assert levels["Máximo 60 sesiones"] is True and levels["Fibonacci 61.8%"] is True
     assert levels["VWAP 20"] is False and levels["Pivot R1"] is False
+
+
+# ---------------------------------------------------------------------------
+# Volume profile, cruces, contracción, rupturas, VIX y magnitud esperada
+# ---------------------------------------------------------------------------
+
+
+def test_volume_profile_pone_el_poc_donde_se_concentra_el_volumen():
+    closes = np.concatenate([np.full(30, 100.0), np.full(30, 120.0), [121.0]])
+    vol = np.concatenate([np.full(30, 5_000_000.0), np.full(30, 500_000.0), [1.0]])
+    df = _ohlcv(closes)
+    df["volume"] = vol
+    vp = ta.volume_profile(df)
+    assert abs(vp["poc"] - 100.0) < 2
+    assert vp["value_area_low"] <= vp["poc"] <= vp["value_area_high"]
+
+
+def test_cruce_dorado_y_de_la_muerte():
+    fast = pd.Series([1, 1, 1, 3, 3], dtype=float)
+    slow = pd.Series([2, 2, 2, 2, 2], dtype=float)
+    assert ta._cross_days_ago(fast, slow, up=True) == 1
+    assert ta._cross_days_ago(fast, slow, up=False) is None
+    assert ta._cross_days_ago(slow, fast, up=False) == 1
+
+
+def test_cruce_dorado_cuenta_como_indicador_alineado_en_largos():
+    ind = ta.compute_indicators(_ohlcv(_trend(260, step=0.3)))
+    ind.update({"golden_cross_days_ago": 5, "death_cross_days_ago": None})
+    assert "Cruce dorado (SMA 50/200)" in ta.aligned_indicators(ind, "LONG")
+    assert "Cruce dorado (SMA 50/200)" not in ta.aligned_indicators(ind, "SHORT")
+
+
+def test_ruptura_solo_cuenta_con_volumen():
+    ind = ta.compute_indicators(_ohlcv(_trend(260, step=0.3)))
+    ind.update({"breakout_up": True, "volume_ratio": 1.0})
+    assert "Ruptura con volumen" not in ta.aligned_indicators(ind, "LONG")
+    ind["volume_ratio"] = 1.5
+    assert "Ruptura con volumen" in ta.aligned_indicators(ind, "LONG")
+
+
+def test_contraccion_de_bollinger_detectada():
+    calm = 100 + np.random.default_rng(5).normal(0, 3, 200)
+    squeeze = np.full(60, 100.0) + np.random.default_rng(6).normal(0, 0.05, 60)
+    ind = ta.compute_indicators(_ohlcv(np.concatenate([calm, squeeze])))
+    assert ind["bb_squeeze_recent"] is True
+
+
+def test_niveles_incluyen_volume_profile_bandas_atr_y_sma200():
+    df = _ohlcv(_trend(260, step=0.3))
+    kinds = {lv["kind"]: lv["major"] for lv in ta.key_levels(df, ta.compute_indicators(df))}
+    assert kinds["Volume profile: POC"] is True
+    assert kinds["SMA 200"] is True
+    assert kinds["Banda ATR superior"] is False
+
+
+def test_vix_alto_reduce_el_tamano(monkeypatch):
+    df = _ohlcv(_trend(260, step=0.3))
+    base, _, _ = _plan_with_levels(monkeypatch, df, "LONG", [("Mínimo 20 sesiones", -1.0), ("Máximo 20 sesiones", 4.0)])
+    ind = ta.compute_indicators(df)
+    levels = [{"price": ind["close"] - ind["atr"], "kind": "Mínimo 20 sesiones"}, {"price": ind["close"] + 4 * ind["atr"], "kind": "Máximo 20 sesiones"}]
+    monkeypatch.setattr(ta, "key_levels", lambda _df, _ind: levels)
+    stressed = ta.build_trade_plan(df, "LONG", True, vix=40.0)
+    assert stressed.position_size_pct == pytest.approx(max(ta.MIN_POSITION_PCT, base.position_size_pct * 0.5), abs=0.11)
+    assert any("VIX" in w for w in stressed.warnings)
+    assert stressed.context["vix"] == 40.0
+
+
+def test_avisa_si_el_objetivo_supera_el_movimiento_tipico(monkeypatch):
+    df = _ohlcv(_trend(260, step=0.3))
+    ind = ta.compute_indicators(df)
+    levels = [{"price": ind["close"] - ind["atr"], "kind": "Mínimo 20 sesiones"}, {"price": ind["close"] * 1.10, "kind": "Máximo 60 sesiones"}]
+    monkeypatch.setattr(ta, "key_levels", lambda _df, _ind: levels)
+    greedy = ta.build_trade_plan(df, "LONG", True, expected_move_pct=4.0)
+    assert any("movimiento típico" in w for w in greedy.warnings)
+    modest = ta.build_trade_plan(df, "LONG", True, expected_move_pct=15.0)
+    assert not any("movimiento típico" in w for w in modest.warnings)
+
+
+@pytestmark_db
+def test_contexto_del_evento_lee_vix_y_magnitud(conn):
+    d0 = date(2026, 3, 13)
+    eid = _event(conn, "CTX", d0)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET impact_estimation = %s WHERE event_id = %s",
+                    ('{"expected_magnitude": "±4.20% según histórico de 12 eventos análogos"}', eid))
+        cur.execute("INSERT INTO event_enrichment (event_id, vix_d0) VALUES (%s, 31.5)", (eid,))
+    conn.commit()
+    assert ta._event_context(conn, eid) == (31.5, 4.2)

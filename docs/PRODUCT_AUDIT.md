@@ -486,6 +486,14 @@ Objetivo · R/B · Horizonte), en cada señal, en la tabla de Señales, en el CS
 y en el aviso de Telegram. `ALERT_REQUIRE_TECHNICAL=true` hace que solo se
 avisen las señales que pasan los filtros.
 
+Ampliación: **volume profile** de 60 sesiones (POC y área de valor como
+niveles), **bandas ATR** (EMA 20 ± 2 ATR), **SMA 50/200** con cruce dorado o
+de la muerte en las últimas 20 sesiones, **contracción de Bollinger**,
+**ruptura del rango de 20 sesiones confirmada por volumen**, **VIX de D0**
+(tamaño ×0,75 por encima de 25, ×0,5 por encima de 35) y **magnitud
+esperada** de los eventos parecidos: si el objetivo pide más que el movimiento
+típico, el plan lo avisa ("no codicioso").
+
 **Limitaciones declaradas** (guardadas en cada plan): solo precios diarios
 (sin 4H/1H), sin volatilidad implícita ni opciones, sin sentimiento social,
 flujo institucional ni order flow. **Pendiente:** medir en el backtest si el

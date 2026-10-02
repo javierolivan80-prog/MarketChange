@@ -49,6 +49,13 @@ export function TechnicalPlanCard({ plan }: { plan: TechnicalPlan }) {
         </p>
       </div>
       {!plan.passes_filters && d.reason_if_rejected && <p className="mb-3 text-sm text-text-secondary">{d.reason_if_rejected}</p>}
+      {d.warnings && d.warnings.length > 0 && (
+        <ul className="mb-3 space-y-0.5 text-sm text-amber-700 dark:text-amber-400">
+          {d.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
 
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         <Metric label="Entrada" value={price(plan.entry)} hint="cierre del día del evento" />
@@ -97,6 +104,12 @@ export function TechnicalPlanCard({ plan }: { plan: TechnicalPlan }) {
             <p>
               <span className="font-medium text-foreground">Stop {long ? "bajo" : "sobre"}: </span>
               {d.stop_basis.join(", ")}
+            </p>
+          )}
+          {(d.context?.vix != null || d.context?.expected_move_pct != null) && (
+            <p className="num">
+              {d.context?.vix != null && <>VIX el día del evento: {d.context.vix.toFixed(1)}. </>}
+              {d.context?.expected_move_pct != null && <>Movimiento típico en eventos parecidos: ±{Math.abs(d.context.expected_move_pct).toFixed(1)}%.</>}
             </p>
           )}
           {d.target_basis && d.target_basis.length > 0 && (
