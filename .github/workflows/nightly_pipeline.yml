@@ -71,8 +71,12 @@ on:
 # procesos mandando los MISMOS eventos pendientes a la IA — pagando cada uno
 # dos veces. La corrida nueva espera a que acabe la anterior (no la cancela:
 # cancelar a mitad de un batch de la IA tira un trabajo ya pagado).
+# La carga de histórico y el diagnóstico van en su propio grupo: no llaman a
+# la IA (nada que pagar dos veces) y todas sus escrituras son upserts
+# idempotentes. Con el grupo común, una pasada programada que llegara mientras
+# esperan los cancelaría (GitHub solo guarda UNA corrida pendiente por grupo).
 concurrency:
-  group: nightly-pipeline
+  group: ${{ (github.event.inputs.history_from != '' || github.event.inputs.diagnose_only == 'true') && 'history-backfill' || 'nightly-pipeline' }}
   cancel-in-progress: false
 
 jobs:
