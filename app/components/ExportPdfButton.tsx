@@ -37,26 +37,16 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
     let y = 15;
 
     doc.setFontSize(16);
-    doc.text("MarketChange — Informe de backtest", 14, y);
+    doc.text("MarketChange — Informe de resultados", 14, y);
     y += 7;
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text(`Corrida: ${report.run_batch_tag} · Capital inicial: $${report.starting_capital.toLocaleString("en-US")}`, 14, y);
-    y += 5;
-    doc.text(`Generado: ${new Date().toISOString().slice(0, 19).replace("T", " ")}`, 14, y);
+    doc.text(`Generado el ${new Date().toLocaleDateString("es-ES")} · Rentabilidades pasadas no garantizan resultados futuros.`, 14, y);
     y += 8;
 
+    // El veredicto interno de go/no-go del motor (report.recommendation) no
+    // va en el informe para usuarios: es una nota operativa, no un resultado.
     doc.setTextColor(0);
-    doc.setFontSize(12);
-    doc.text(`Recomendación: ${report.recommendation.verdict}`, 14, y);
-    y += 6;
-    doc.setFontSize(9);
-    for (const finding of report.recommendation.findings) {
-      const lines = doc.splitTextToSize(`• ${finding}`, 180);
-      doc.text(lines, 14, y);
-      y += lines.length * 4;
-    }
-    y += 4;
 
     autoTable(doc, {
       startY: y,
@@ -83,20 +73,22 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
         y = 15;
       }
       doc.setFontSize(11);
-      doc.text(`${versionLabel(version)} — curva de capital (puntos clave)`, 14, y);
+      doc.text(`${versionLabel(version)} — evolución de la rentabilidad`, 14, y);
       y += 2;
       const curve = v.equity_curve;
       const balances = curve.map((p) => p.balance);
       const peak = balances.length > 0 ? Math.max(...balances) : null;
       const trough = balances.length > 0 ? Math.min(...balances) : null;
+      const start = balances[0] ?? null;
       autoTable(doc, {
         startY: y + 2,
-        head: [["Balance inicial", "Balance final", "Pico", "Valle"]],
+        // En % sobre el punto de partida, no en dólares: el capital del
+        // backtest es una base de cálculo, no dinero de nadie.
+        head: [["Rentabilidad final", "Máximo alcanzado", "Mínimo alcanzado"]],
         body: [[
-          fmtDollars(balances[0] ?? null),
-          fmtDollars(v.equity_metrics.final_balance),
-          fmtDollars(peak),
-          fmtDollars(trough),
+          fmtPct(v.equity_metrics.total_return),
+          start && peak !== null ? fmtPct(peak / start - 1) : "—",
+          start && trough !== null ? fmtPct(trough / start - 1) : "—",
         ]],
         styles: { fontSize: 8 },
         headStyles: { fillColor: [30, 41, 59] },
@@ -151,7 +143,7 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
       }
     }
 
-    doc.save(`money-poc-backtest-${report.run_batch_tag}.pdf`);
+    doc.save(`marketchange-resultados-${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   return (
@@ -170,7 +162,4 @@ function fmtPct(v: number | null): string {
 }
 function fmtNum(v: number | null): string {
   return v === null ? "—" : v.toFixed(2);
-}
-function fmtDollars(v: number | null): string {
-  return v === null ? "—" : `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }

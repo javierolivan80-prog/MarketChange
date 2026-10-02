@@ -60,3 +60,24 @@ export function sourceLabel(source: string | null | undefined): string {
   if (!source) return "—";
   return SOURCE_LABELS[source] ?? source;
 }
+
+// Veredicto del motor de validación (pipeline/validation/decision.py, opción
+// A/B/C) contado al usuario como una calificación de fiabilidad. El motor
+// trae además una "recommendation" pensada para el operador del sistema
+// ("Paper trade 3 meses más antes de live", "Invierte capital mínimo…"): eso
+// no se enseña a los usuarios — leído por un consumidor sería una
+// recomendación de inversión, y está en jerga interna.
+export const RELIABILITY: Record<"A" | "B" | "C", { title: string; summary: string }> = {
+  A: {
+    title: "Fiabilidad alta",
+    summary: "Los resultados se sostienen en todas las comprobaciones: significación estadística, calibración y escenarios adversos.",
+  },
+  B: {
+    title: "Fiabilidad media",
+    summary: "Los resultados son prometedores, pero alguna comprobación todavía no es concluyente. Conviene seguirlos con cautela.",
+  },
+  C: {
+    title: "Fiabilidad baja",
+    summary: "Con los datos disponibles los resultados todavía no son concluyentes. Tómalos como orientativos.",
+  },
+};

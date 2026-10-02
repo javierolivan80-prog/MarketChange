@@ -26,13 +26,13 @@ export function StateBox({ title, children }: { title: string; children?: React.
   );
 }
 
-/** Falta la variable de entorno: es un problema de despliegue, no del usuario. */
+/** Falta DATABASE_URL: es un problema de despliegue, no del usuario — por eso
+ * el mensaje no le habla de variables de entorno (ver RUNBOOK.md §4). */
 export function NotConfigured({ active, title }: { active: string; title: string }) {
   return (
     <StatePage active={active} title={title}>
-      <StateBox title="El panel no está conectado a la base de datos.">
-        Falta la variable de entorno <code className="font-mono">DATABASE_URL</code>. Ver <code className="font-mono">RUNBOOK.md</code> para
-        configurarla.
+      <StateBox title="El servicio no está disponible en este momento.">
+        Estamos trabajando en ello. Vuelve a intentarlo en unos minutos.
       </StateBox>
     </StatePage>
   );
@@ -43,7 +43,7 @@ export function NoDataYet({ active, title, what }: { active: string; title: stri
   return (
     <StatePage active={active} title={title}>
       <StateBox title={what}>
-        Se genera en la pasada nocturna del pipeline. Si acabas de ponerlo en marcha es normal: vuelve después de la próxima ejecución.
+        Los datos se actualizan varias veces al día. Vuelve a consultarlo más tarde.
       </StateBox>
     </StatePage>
   );

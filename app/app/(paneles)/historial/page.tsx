@@ -37,8 +37,8 @@ export default async function HistorialPage() {
       <header className="mb-5">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Historial</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
-          Cada señal emitida por la versión {versionLabel(version).toLowerCase()}, con la hora a la que se calculó y lo que pasó después en
-          la simulación en papel con precios reales. No es el backtest: son resultados posteriores a cada decisión.
+          Cada señal emitida por la estrategia {versionLabel(version).toLowerCase()}, con la hora a la que se publicó y lo que hizo después
+          la acción, medido con precios reales de mercado. Son resultados posteriores a cada señal, no una reconstrucción del pasado.
         </p>
       </header>
 
@@ -98,7 +98,7 @@ export default async function HistorialPage() {
                 <td className="num py-2 pr-4 text-xs text-text-tertiary" title={r.notified_at ? `Avisada: ${formatDateTime(r.notified_at)}` : undefined}>
                   {formatDateTime(r.analyzed_at)}
                 </td>
-                <td className="py-2 pr-4 text-text-secondary">{r.status ? (STATUS_LABELS[r.status] ?? r.status) : "Sin simular"}</td>
+                <td className="py-2 pr-4 text-text-secondary">{r.status ? (STATUS_LABELS[r.status] ?? r.status) : "Pendiente"}</td>
                 <td className="py-2 pr-3 text-right">
                   <SignedPct value={r.pnl_pct} />
                 </td>

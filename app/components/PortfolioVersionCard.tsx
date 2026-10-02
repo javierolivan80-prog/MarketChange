@@ -13,7 +13,7 @@ import { ReturnHistogram } from "./ReturnHistogram";
 import { DrawdownChart } from "./DrawdownChart";
 import { Callout } from "@/components/ui/Callout";
 import { SignedPct } from "@/components/ui/DirectionBadge";
-import { formatFracAsPct, formatPct, formatShare, formatUsd, formatNum, formatDrawdown } from "@/lib/format";
+import { formatFracAsPct, formatPct, formatShare, formatNum, formatDrawdown } from "@/lib/format";
 import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 
 export function PortfolioVersionCard({
@@ -57,7 +57,7 @@ export function PortfolioVersionCard({
           <p className="num text-xl font-semibold text-foreground">{formatDrawdown(em.max_drawdown)}</p>
         </div>
       </div>
-      <p className="num mb-3 text-xs text-text-tertiary">{tm.total_trades} operaciones simuladas</p>
+      <p className="num mb-3 text-xs text-text-tertiary">{tm.total_trades} operaciones en el histórico</p>
 
       <details className="mb-3 text-xs">
         <summary className="mb-2 cursor-pointer text-text-secondary">Todas las métricas</summary>
@@ -70,9 +70,6 @@ export function PortfolioVersionCard({
 
           <dt className="text-text-secondary">Esperanza por operación</dt>
           <dd className="num text-right text-foreground">{formatPct(tm.expectancy)}</dd>
-
-          <dt className="text-text-secondary">Balance final</dt>
-          <dd className="num text-right text-foreground">{formatUsd(em.final_balance, 0)}</dd>
 
           <dt className="text-text-secondary">Sharpe</dt>
           <dd className="num text-right text-foreground">{formatNum(em.sharpe_ratio)}</dd>
@@ -103,10 +100,8 @@ export function PortfolioVersionCard({
 
       {asymmetry.n_trades > 0 && (
         <p className="num mb-3 text-xs text-text-tertiary">
-          Asimetría (umbral ±{asymmetry.threshold_pct}%): {formatShare(asymmetry.pct_reaching_positive_threshold, 0)} alcanzan +umbral vs{" "}
-          {formatShare(asymmetry.pct_reaching_negative_threshold, 0)} -umbral
-          {asymmetry.asymmetric_favoring_gains !== null &&
-            (asymmetry.asymmetric_favoring_gains ? " (favorece ganancias)" : " (favorece pérdidas)")}
+          {formatShare(asymmetry.pct_reaching_positive_threshold, 0)} de las operaciones llegó a ganar un {asymmetry.threshold_pct}% y{" "}
+          {formatShare(asymmetry.pct_reaching_negative_threshold, 0)} llegó a perderlo.
         </p>
       )}
 

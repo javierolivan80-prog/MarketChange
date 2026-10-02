@@ -55,7 +55,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
                 <span className="num font-mono text-xs text-text-secondary">{c.score !== null ? `${c.score.toFixed(0)}/100` : "sin datos"}</span>
               </div>
               <div className="mb-1 h-1.5 bg-surface-sunken">
-                <div className={`h-1.5  ${barColorClass(c.score)}`} style={{ width: `${c.score ?? 0}%` }} />
+                <div className={`h-1.5 ${barColorClass(c.score)}`} style={{ width: `${c.score ?? 0}%` }} />
               </div>
               <p className="text-xs text-text-secondary">{c.explanation}</p>
             </div>

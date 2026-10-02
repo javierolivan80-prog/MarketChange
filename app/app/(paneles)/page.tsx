@@ -8,7 +8,7 @@ import { SampleBadge } from "@/components/ui/SampleBadge";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { NotConfigured } from "@/components/ui/PageState";
 import { formatPct, formatNum, formatDate, formatDateTime, formatFracAsPct, formatDrawdown } from "@/lib/format";
-import { eventClassLabel, versionLabel } from "@/lib/labels";
+import { RELIABILITY, eventClassLabel, versionLabel } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +20,10 @@ export const dynamic = "force-dynamic";
 //
 // Mismo criterio de color que /funciona: A/B/C es el veredicto del propio
 // motor de validación, no P&L ni dirección.
-const VERDICT_COPY: Record<string, { title: string; color: string; text: string }> = {
-  A: { title: "El sistema funciona bien en las pruebas", color: "border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-500/10", text: "text-emerald-800 dark:text-emerald-400" },
-  B: { title: "Funciona, pero todavía con reservas", color: "border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-500/10", text: "text-amber-800 dark:text-amber-400" },
-  C: { title: "Todavía no funciona de forma fiable", color: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10", text: "text-rose-800 dark:text-rose-400" },
+const VERDICT_COPY: Record<string, { color: string; text: string }> = {
+  A: { color: "border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-500/10", text: "text-emerald-800 dark:text-emerald-400" },
+  B: { color: "border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-500/10", text: "text-amber-800 dark:text-amber-400" },
+  C: { color: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10", text: "text-rose-800 dark:text-rose-400" },
 };
 
 const ABSTENTION_LABELS: Record<AbstentionCategory, string> = {
@@ -80,8 +80,8 @@ export default async function InicioPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Resumen</h1>
         <p className={`num text-xs ${isStale ? "text-amber-700 dark:text-amber-400" : "text-text-tertiary"}`}>
           {lastAnalyzed
-            ? `Último análisis: ${formatDateTime(freshness.last_analyzed_at)} · ${freshness.analyzed_last_24h} eventos en 24 h${isStale ? " · el pipeline no ha corrido recientemente" : ""}`
-            : "El pipeline todavía no ha analizado ningún evento"}
+            ? `Actualizado: ${formatDateTime(freshness.last_analyzed_at)} · ${freshness.analyzed_last_24h} eventos analizados en 24 h${isStale ? " · la actualización lleva retraso" : ""}`
+            : "Todavía no hay eventos analizados"}
         </p>
       </header>
 
@@ -152,18 +152,18 @@ export default async function InicioPage() {
 
       {/* Semáforo */}
       {verdict ? (
-        <section className={`mb-5  border p-4 ${verdict.color}`}>
-          <p className={`mb-1.5 text-lg font-semibold ${verdict.text}`}>{verdict.title}</p>
-          <p className="text-sm text-foreground">{summary.validation!.best_decision.recommendation}</p>
+        <section className={`mb-5 border p-4 ${verdict.color}`}>
+          <p className={`mb-1.5 text-lg font-semibold ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
+          <p className="text-sm text-foreground">{RELIABILITY[summary.validation!.best_decision.option].summary}</p>
           <Link href="/funciona" className="mt-1.5 inline-block text-sm text-accent-700 hover:underline dark:text-accent-400">
             Ver por qué →
           </Link>
         </section>
       ) : (
         <section className="mb-5 border border-border-subtle p-4">
-          <p className="mb-1.5 text-lg font-semibold text-foreground">Todavía acumulando datos</p>
+          <p className="mb-1.5 text-lg font-semibold text-foreground">Evaluación de fiabilidad en curso</p>
           <p className="text-sm text-text-secondary">
-            Hacen falta más eventos reales antes de poder decir con confianza si el sistema funciona. Al principio es normal.
+            La calificación aparece cuando hay suficientes eventos para medirla con rigor.
           </p>
         </section>
       )}
@@ -171,13 +171,13 @@ export default async function InicioPage() {
       {shown && shown.trade_metrics && shown.equity_metrics && (
         <section>
           <p className="mb-2 text-xs text-text-tertiary">
-            Backtest de la versión {versionLabel(shownVersion).toLowerCase()} — simulado, sin dinero real.
+            Rentabilidad histórica de la estrategia {versionLabel(shownVersion).toLowerCase()}, aplicada a todos los eventos pasados.
           </p>
           <div className="flex flex-wrap gap-y-4">
             <Stat
               label="Acierto"
               value={shown.trade_metrics.win_rate !== null ? `${(shown.trade_metrics.win_rate * 100).toFixed(0)}%` : "—"}
-              hint={`de ${shown.trade_metrics.total_trades} operaciones`}
+              hint={`en ${shown.trade_metrics.total_trades} operaciones`}
             />
             <Stat
               label="Resultado acumulado"
@@ -189,7 +189,7 @@ export default async function InicioPage() {
               value={formatDrawdown(shown.equity_metrics.max_drawdown)}
               hint="pérdida temporal máxima"
             />
-            <Stat label="Abiertas en papel" value={openPositions !== null ? formatNum(openPositions, 0) : "—"} hint="simulación de esta semana" />
+            <Stat label="Posiciones abiertas" value={openPositions !== null ? formatNum(openPositions, 0) : "—"} hint="señales en seguimiento" />
           </div>
         </section>
       )}
