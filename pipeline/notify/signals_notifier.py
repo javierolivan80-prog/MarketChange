@@ -71,6 +71,25 @@ def fetch_pending_signals(conn) -> list[dict]:
     actual: no se añade una guarda contra un NULL que el propio esquema ya
     hace imposible (ver la disciplina general del proyecto de no validar lo
     que no puede pasar)."""
+    # Filtros de aviso (config.ALERT_*): un evento que no los pasa no se
+    # marca como notificado — se queda pendiente, así que si se amplía el
+    # filtro, los que vuelvan a entrar dentro de ALERT_MAX_AGE_DAYS se avisan
+    # en la siguiente pasada.
+    filters = []
+    params: list = []
+    if config.ALERT_MAX_AGE_DAYS:
+        filters.append("e.d0_close_date >= current_date - %s")
+        params.append(config.ALERT_MAX_AGE_DAYS)
+    if config.ALERT_MIN_CONFIDENCE:
+        filters.append("ea.confidence_in_conviction >= %s")
+        params.append(config.ALERT_MIN_CONFIDENCE)
+    if config.ALERT_TICKERS:
+        filters.append("upper(e.ticker) = ANY(%s)")
+        params.append(list(config.ALERT_TICKERS))
+    if config.ALERT_EVENT_CLASSES:
+        filters.append("e.event_class = ANY(%s)")
+        params.append(list(config.ALERT_EVENT_CLASSES))
+    extra = "".join(f"\n              AND {f}" for f in filters)
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -84,9 +103,10 @@ def fetch_pending_signals(conn) -> list[dict]:
             WHERE ea.notified_at IS NULL
               AND (ea.trade_decision_conservative != 'NO_TRADE'
                    OR ea.trade_decision_aggressive != 'NO_TRADE'
-                   OR ea.trade_decision_balanced != 'NO_TRADE')
+                   OR ea.trade_decision_balanced != 'NO_TRADE'){extra}
             ORDER BY ea.analyzed_at
-            """
+            """.format(extra=extra),
+            params,
         )
         return cur.fetchall()
 

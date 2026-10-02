@@ -22,7 +22,9 @@ Actions es toda la orquestación que hace falta.
 
 **Qué SÍ se validó en esta sesión, y cómo** (para que sepas qué confianza dar
 a cada pieza):
-- Los **288 tests** de `pipeline/tests/` pasan (39 Fase 1 + 73 Fase 2 + 36
+- *(Cifras de la sesión original. A 2026-10-02 la suite tiene 775 tests de
+  Python y 18 del panel, y corren en cada push/PR con `pipeline_ci.yml` y
+  `app_ci.yml`.)* Los **288 tests** de `pipeline/tests/` pasaban (39 Fase 1 + 73 Fase 2 + 36
   Fase 3 + 81 backtest de cartera + 30 paper trading + 2 regresión Fase 5 +
   27 Fase 6/validación estadística), incluyendo decenas contra un
   **Postgres 16 real** levantado en este sandbox (no un mock) — schema,
@@ -673,6 +675,19 @@ En GitHub: **Settings → Secrets and variables → Actions → Variables** →
 `DASHBOARD_URL` = la URL del panel en Vercel, sin barra final. Con ella, cada
 aviso de Telegram enlaza a la página de su señal, y el resumen semanal (que
 sale en la pasada del sábado) enlaza al historial.
+
+Filtros opcionales de los avisos, también como variables del repo (vacías =
+sin filtro):
+
+| Variable | Ejemplo | Efecto |
+|---|---|---|
+| `ALERT_MAX_AGE_DAYS` | `7` (por defecto) | Solo avisa de eventos con D0 en los últimos N días; evita la avalancha de avisos de un backfill histórico. `0` = sin tope |
+| `ALERT_MIN_CONFIDENCE` | `65` | Confianza mínima del Judge para avisar |
+| `ALERT_TICKERS` | `AAPL,MSFT` | Solo esos tickers |
+| `ALERT_EVENT_CLASSES` | `8K_2.02_EARNINGS,FDA_CRL` | Solo esos tipos de evento |
+
+Un evento filtrado no se marca como avisado: si se amplía el filtro, los que
+sigan dentro de la ventana de antigüedad se avisan en la siguiente pasada.
 
 Para desarrollo local: `cp app/.env.local.example app/.env.local`, edita la
 URL, y `cd app && npm install && npm run dev`. Comprobaciones del panel (las

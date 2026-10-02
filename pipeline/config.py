@@ -87,6 +87,28 @@ def _env_int(name: str, default: int | None) -> int | None:
     return int(raw) if raw else default
 
 
+# --- Filtros de los avisos de señal por Telegram (notify/signals_notifier.py) ---
+# Una "watchlist" de un solo usuario sin cuentas: variables del workflow, no
+# código. Vacías = sin filtro (salvo la antigüedad, que tiene valor por defecto).
+#
+# ALERT_MAX_AGE_DAYS: solo se avisa de eventos cuyo D0 es de los últimos N
+# días. Sin este tope, un backfill histórico (que analiza eventos de hace
+# años) mandaba un aviso de "entra" por cada evento antiguo que pasara los
+# filtros — señales inservibles, porque la entrada es en D+1. 0 = sin tope.
+ALERT_MAX_AGE_DAYS = _env_int("ALERT_MAX_AGE_DAYS", 7) or None
+ALERT_MIN_CONFIDENCE = _env_float("ALERT_MIN_CONFIDENCE", 0.0)
+
+
+def _env_list(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(name) or ""
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+# Listas separadas por comas, p. ej. ALERT_TICKERS="AAPL,MSFT",
+# ALERT_EVENT_CLASSES="8K_2.02_EARNINGS,FDA_CRL".
+ALERT_TICKERS = tuple(t.upper() for t in _env_list("ALERT_TICKERS"))
+ALERT_EVENT_CLASSES = _env_list("ALERT_EVENT_CLASSES")
+
 # --- Cola del análisis con IA (Bull/Bear/Judge) ---
 # Qué empresas pasan por la IA. Por defecto, el universo invertible entero
 # (>= MIN_MARKET_CAP_USD). Para centrarse en empresas grandes, subirlo desde

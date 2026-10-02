@@ -10,7 +10,7 @@ from __future__ import annotations
 import io
 import json
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -355,7 +355,10 @@ def conn():
     c.close()
 
 
-def _insert_universe_and_event(conn, ticker: str = "ACME") -> int:
+def _insert_universe_and_event(conn, ticker: str = "ACME", d0: date | None = None, event_class: str = "8K_2.02_EARNINGS") -> int:
+    # D0 reciente por defecto: signals_notifier solo avisa de eventos de los
+    # últimos config.ALERT_MAX_AGE_DAYS días.
+    d0 = d0 or (date.today() - timedelta(days=1))
     # cik derivado del ticker (no hardcodeado): varios tests insertan más de
     # un ticker en la misma conexión y universe.cik es PRIMARY KEY.
     cik = f"CIK{abs(hash(ticker)) % 10_000_000:07d}"
@@ -371,11 +374,11 @@ def _insert_universe_and_event(conn, ticker: str = "ACME") -> int:
             INSERT INTO events (cik, ticker, source, event_class, item_codes, accession_number,
                                  source_url, filed_at, d0_close_date, classification_method,
                                  classification_confidence, raw_text_hash)
-            VALUES (%s, %s, 'EDGAR', '8K_2.02_EARNINGS', ARRAY['2.02'], %s,
+            VALUES (%s, %s, 'EDGAR', %s, ARRAY['2.02'], %s,
                     'https://example.com/filing', %s, %s, 'RULE', 1.0, %s)
             RETURNING event_id
             """,
-            (cik, ticker, accession, datetime(2024, 3, 15, 9, 0, tzinfo=timezone.utc), date(2024, 3, 15), f"hash-{ticker}"),
+            (cik, ticker, event_class, accession, datetime(d0.year, d0.month, d0.day, 9, 0, tzinfo=timezone.utc), d0, f"hash-{ticker}"),
         )
         event_id = cur.fetchone()["event_id"]
     conn.commit()
@@ -788,3 +791,45 @@ def test_weekly_digest_collects_recent_analyses(conn):
     assert data["analyzed"] == 2
     assert data["traded"] == 1
     assert data["discarded"] == [("El mercado ya lo sabía", 1)]
+
+
+# ---------------------------------------------------------------------------
+# signals_notifier — filtros de aviso (config.ALERT_*)
+# ---------------------------------------------------------------------------
+
+
+@pytestmark_db
+def test_fetch_pending_signals_ignora_eventos_antiguos_de_un_backfill(conn, monkeypatch):
+    """Sin tope de antigüedad, un backfill histórico mandaba un aviso de
+    "entra" por cada evento de hace años que pasara los filtros."""
+    from pipeline import config
+    from pipeline.notify.signals_notifier import fetch_pending_signals
+
+    monkeypatch.setattr(config, "ALERT_MAX_AGE_DAYS", 7)
+    old_id = _insert_universe_and_event(conn, ticker="VIEJO", d0=date.today() - timedelta(days=400))
+    _insert_event_analysis(conn, old_id, trade_balanced="LONG")
+    new_id = _insert_universe_and_event(conn, ticker="NUEVO")
+    _insert_event_analysis(conn, new_id, trade_balanced="LONG")
+
+    assert {r["ticker"] for r in fetch_pending_signals(conn)} == {"NUEVO"}
+    monkeypatch.setattr(config, "ALERT_MAX_AGE_DAYS", None)
+    assert {r["ticker"] for r in fetch_pending_signals(conn)} == {"NUEVO", "VIEJO"}
+
+
+@pytestmark_db
+def test_fetch_pending_signals_aplica_watchlist(conn, monkeypatch):
+    from pipeline import config
+    from pipeline.notify.signals_notifier import fetch_pending_signals
+
+    for ticker, cls in [("AAA", "8K_2.02_EARNINGS"), ("BBB", "FDA_CRL"), ("CCC", "8K_2.02_EARNINGS")]:
+        eid = _insert_universe_and_event(conn, ticker=ticker, event_class=cls)
+        _insert_event_analysis(conn, eid, trade_balanced="LONG")
+
+    monkeypatch.setattr(config, "ALERT_TICKERS", ("AAA", "BBB"))
+    assert {r["ticker"] for r in fetch_pending_signals(conn)} == {"AAA", "BBB"}
+    monkeypatch.setattr(config, "ALERT_EVENT_CLASSES", ("FDA_CRL",))
+    assert {r["ticker"] for r in fetch_pending_signals(conn)} == {"BBB"}
+    monkeypatch.setattr(config, "ALERT_TICKERS", ())
+    monkeypatch.setattr(config, "ALERT_EVENT_CLASSES", ())
+    monkeypatch.setattr(config, "ALERT_MIN_CONFIDENCE", 80.0)  # _insert_event_analysis usa confianza 75
+    assert fetch_pending_signals(conn) == []
