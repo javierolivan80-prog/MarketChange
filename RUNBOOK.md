@@ -650,13 +650,36 @@ cd app
 vercel  # sigue el flujo interactivo, o usa la integración de GitHub de Vercel
 ```
 
-En Vercel: **Project Settings → Environment Variables** → añade `DATABASE_URL`
-con la misma cadena que usa el pipeline. El dashboard es de **solo lectura** —
-nunca escribe en la base de datos, así que no necesita `ANTHROPIC_API_KEY` ni
-`EDGAR_USER_AGENT`.
+En Vercel: **Project Settings → Environment Variables**:
+
+| Variable | Valor |
+|---|---|
+| `DATABASE_URL` | URL con el rol **de solo lectura** `dashboard_ro` (ver abajo), no la del pipeline |
+| `DASHBOARD_USER` / `DASHBOARD_PASSWORD` | Usuario y contraseña del panel (HTTP Basic, `app/middleware.ts`). Sin ellas el panel es público para cualquiera con la URL |
+
+El dashboard nunca escribe en la base de datos, así que no necesita
+`ANTHROPIC_API_KEY` ni `EDGAR_USER_AGENT` — y no debe tener permisos de
+escritura. Crea el rol una vez, con la URL de administración del pipeline:
+
+```bash
+psql "$DATABASE_URL" -v ro_password="'una-contraseña-larga'" -f pipeline/db/dashboard_readonly_role.sql
+```
+
+y usa en Vercel la misma URL cambiando usuario y contraseña por
+`dashboard_ro` y esa contraseña. El script es idempotente: vuelve a
+ejecutarlo si añades tablas nuevas.
+
+En GitHub: **Settings → Secrets and variables → Actions → Variables** →
+`DASHBOARD_URL` = la URL del panel en Vercel, sin barra final. Con ella, cada
+aviso de Telegram enlaza a la página de su señal, y el resumen semanal (que
+sale en la pasada del sábado) enlaza al historial.
 
 Para desarrollo local: `cp app/.env.local.example app/.env.local`, edita la
-URL, y `cd app && npm install && npm run dev`.
+URL, y `cd app && npm install && npm run dev`. Comprobaciones del panel (las
+mismas que corre `.github/workflows/app_ci.yml`): `npm run lint`,
+`npm run typecheck`, `npm test` (con `TEST_DATABASE_URL` apuntando a una base
+de pruebas desechable, las consultas se prueban contra Postgres) y
+`npm run build`.
 
 ## 5. Orden de ejecución de los 7 días (resumen — detalle en ARCHITECTURE_LEAN.md §9)
 
