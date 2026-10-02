@@ -421,6 +421,9 @@ jobs:
         run: |
           python -m pipeline.notify.signals_notifier
           python -m pipeline.notify.exits_notifier
+          # Solo envía en la pasada del sábado (UTC) y una vez por semana ISO
+          # — ver pipeline/notify/weekly_digest.py.
+          python -m pipeline.notify.weekly_digest
           python -m pipeline.notify.alerts_notifier
 
       - name: Aviso de infraestructura si este job falla (IMPROVEMENT_PLAN.md A3)

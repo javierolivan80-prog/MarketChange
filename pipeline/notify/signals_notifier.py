@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import html
 import logging
-from urllib.parse import quote
 
 from pipeline import config
 from pipeline.notify import telegram
@@ -136,7 +135,7 @@ def _format_message(row: dict) -> str:
 
     links = [f'<a href="{e(row["source_url"], quote=True)}">Filing</a>']
     if config.DASHBOARD_URL:
-        url = f"{config.DASHBOARD_URL}/senales?ticker={quote(str(row['ticker']))}"
+        url = f"{config.DASHBOARD_URL}/senales/{int(row['event_id'])}"
         links.append(f'<a href="{e(url, quote=True)}">Análisis completo</a>')
     lines.append("\n" + " · ".join(links))
     return "\n".join(lines)

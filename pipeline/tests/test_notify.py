@@ -242,6 +242,7 @@ def test_send_message_reintenta_un_429(monkeypatch):
 
 def _signal_row(**overrides):
     row = {
+        "event_id": 42,
         "ticker": "ACME",
         "event_class": "8K_2.02_EARNINGS",
         "source_url": "https://example.com/filing",
@@ -312,7 +313,7 @@ def test_format_message_links_dashboard_only_when_configured(monkeypatch):
 
     monkeypatch.setattr(config, "DASHBOARD_URL", "https://panel.example.com")
     text = _format_message(_signal_row())
-    assert '<a href="https://panel.example.com/senales?ticker=ACME">Análisis completo</a>' in text
+    assert '<a href="https://panel.example.com/senales/42">Análisis completo</a>' in text
 
 
 # ---------------------------------------------------------------------------
@@ -690,3 +691,100 @@ def test_notify_pending_exits_no_marca_si_falla_el_envio(conn, monkeypatch):
     assert sent == 0
     # Sigue pendiente para reintentar en la próxima pasada.
     assert len(exits_notifier.fetch_pending_exits(conn)) == 1
+
+
+# ---------------------------------------------------------------------------
+# weekly_digest — resumen semanal
+# ---------------------------------------------------------------------------
+
+
+def test_weekly_digest_categorizes_abstention_reasons_like_the_dashboard():
+    from pipeline.notify.weekly_digest import _categorize
+
+    assert _categorize("novelty_score=10 < 20 (evento completamente descontado por el mercado)") == "El mercado ya lo sabía"
+    assert _categorize("|ev|=0.10% < umbral balanced") == "Valor esperado insuficiente tras costes"
+    assert _categorize("ADV≈$10,000 < $1,000,000 (ilíquido, proxy de volumen)") == "Acción poco líquida"
+    assert _categorize("sin datos de volumen suficientes para estimar ADV (proxy de liquidez no disponible)") == "Acción poco líquida"
+    assert _categorize(None) == "Otros motivos"
+
+
+def test_weekly_digest_format_escapes_and_links(monkeypatch):
+    from pipeline import config
+    from pipeline.notify.weekly_digest import format_digest
+
+    monkeypatch.setattr(config, "DASHBOARD_URL", "https://panel.example.com")
+    text = format_digest(
+        {
+            "version": "BALANCED",
+            "days": 7,
+            "analyzed": 12,
+            "traded": 2,
+            "discarded": [("El mercado ya lo sabía", 6), ("Valor esperado insuficiente tras costes", 4)],
+            "closed": [("A&B", 3.2), ("ACME", -1.0)],
+            "open": 1,
+        }
+    )
+    assert "12 eventos analizados · 2 superaron los filtros" in text
+    assert "6 · El mercado ya lo sabía" in text
+    assert "A&amp;B +3.20%" in text
+    assert "2 · 1 con ganancia · media +1.10%" in text
+    assert '<a href="https://panel.example.com/historial">' in text
+
+
+def test_weekly_digest_warns_when_nothing_was_analyzed(monkeypatch):
+    from pipeline import config
+    from pipeline.notify.weekly_digest import format_digest
+
+    monkeypatch.setattr(config, "DASHBOARD_URL", None)
+    text = format_digest({"version": "AGGRESSIVE", "days": 7, "analyzed": 0, "traded": 0, "discarded": [], "closed": [], "open": 0})
+    assert "revisa el pipeline" in text
+    assert "href" not in text
+
+
+@pytestmark_db
+def test_weekly_digest_sends_once_per_week_on_saturday_and_retries_failures(conn, monkeypatch):
+    from pipeline.notify import telegram, weekly_digest
+
+    monkeypatch.setattr(telegram.config, "TELEGRAM_BOT_TOKEN", "T")
+    monkeypatch.setattr(telegram.config, "TELEGRAM_CHAT_ID", "1")
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE validation_reports")
+    conn.commit()
+    sent: list[str] = []
+    outcome = {"ok": False}
+    monkeypatch.setattr(telegram, "send_message", lambda text: sent.append(text) or outcome["ok"])
+
+    friday = datetime(2026, 10, 2, 6, 0, tzinfo=timezone.utc)
+    saturday = datetime(2026, 10, 3, 6, 0, tzinfo=timezone.utc)
+    assert weekly_digest.send_weekly_digest(conn, friday) is False
+    assert sent == []
+
+    # Falla el envío: no se marca, se reintenta en la siguiente pasada.
+    assert weekly_digest.send_weekly_digest(conn, saturday) is False
+    assert len(sent) == 1
+    outcome["ok"] = True
+    assert weekly_digest.send_weekly_digest(conn, saturday) is True
+    assert weekly_digest.send_weekly_digest(conn, saturday) is False
+    assert len(sent) == 2
+
+
+@pytestmark_db
+def test_weekly_digest_collects_recent_analyses(conn):
+    from pipeline.notify.weekly_digest import collect_week
+
+    traded = _insert_universe_and_event(conn, ticker="WTRADE")
+    _insert_event_analysis(conn, traded, trade_balanced="LONG")
+    skipped = _insert_universe_and_event(conn, ticker="WSKIP")
+    _insert_event_analysis(conn, skipped, trade_balanced="NO_TRADE")
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE event_analyses SET abstention_decision = '{"BALANCED": {"reason_if_no_trade": "novelty_score=5 < 20"}}'
+               WHERE event_id = %s""",
+            (skipped,),
+        )
+    conn.commit()
+
+    data = collect_week(conn, "BALANCED")
+    assert data["analyzed"] == 2
+    assert data["traded"] == 1
+    assert data["discarded"] == [("El mercado ya lo sabía", 1)]
