@@ -76,7 +76,7 @@ on:
 # idempotentes. Con el grupo común, una pasada programada que llegara mientras
 # esperan los cancelaría (GitHub solo guarda UNA corrida pendiente por grupo).
 concurrency:
-  group: ${{ (github.event.inputs.history_from != '' || github.event.inputs.diagnose_only == 'true') && 'history-backfill' || 'nightly-pipeline' }}
+  group: ${{ github.event.inputs.diagnose_only == 'true' && format('diagnose-{0}', github.run_id) || (github.event.inputs.history_from != '' && 'history-backfill' || 'nightly-pipeline') }}
   cancel-in-progress: false
 
 jobs:

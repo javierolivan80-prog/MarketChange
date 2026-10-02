@@ -15,6 +15,12 @@ from __future__ import annotations
 from pipeline.db.connection import get_connection
 
 QUERIES: list[tuple[str, str]] = [
+    ("Tamaño de la base de datos", """
+        SELECT pg_size_pretty(pg_database_size(current_database())) AS total"""),
+    ("Tablas más grandes", """
+        SELECT relname AS tabla, pg_size_pretty(pg_total_relation_size(relid)) AS tamano,
+               n_live_tup AS filas_aprox
+        FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 8"""),
     ("Eventos por mes (últimos 18)", """
         SELECT to_char(d0_close_date, 'YYYY-MM') AS mes, source, count(*) AS n
         FROM events GROUP BY 1, 2 ORDER BY 1 DESC, 2 LIMIT 40"""),
