@@ -7,7 +7,7 @@ import { WelcomeNote } from "@/components/WelcomeNote";
 import { SampleBadge } from "@/components/ui/SampleBadge";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { NotConfigured } from "@/components/ui/PageState";
-import { formatPct, formatNum, formatDate, formatDateTime, formatFracAsPct, formatDrawdown } from "@/lib/format";
+import { formatPct, formatNum, formatDate, formatDateTime, formatDrawdown } from "@/lib/format";
 import { RELIABILITY, eventClassLabel, versionLabel } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ export default async function InicioPage() {
   const version = await getRecommendedVersion();
   const [summary, recent, freshness, abstention] = await Promise.all([
     getHomeSummary(version),
-    getRecentTradeSignals(version, 5),
+    getRecentTradeSignals(version, 8),
     getPipelineFreshness(),
     getAbstentionSummary(version, 7),
   ]);
@@ -101,24 +101,59 @@ export default async function InicioPage() {
             señala los que tienen un valor esperado positivo después de costes.
           </p>
         ) : (
-          <ul className="divide-y divide-border-subtle border border-border-subtle">
-            {recent.map((s) => (
-              <li key={s.event_id}>
-                <Link
-                  href={`/senales/${s.event_id}`}
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-0.5 px-3 py-2 text-sm hover:bg-surface-raised sm:grid-cols-[6rem_5rem_auto_1fr_auto]"
-                >
-                  <span className="num text-text-tertiary">{formatDate(s.d0_close_date)}</span>
-                  <span className="font-mono font-medium text-foreground">{s.ticker}</span>
-                  <DirectionBadge value={s.direction} className="justify-self-end sm:justify-self-start" />
-                  <span className="col-span-2 truncate text-text-secondary sm:col-span-1">{eventClassLabel(s.event_class)}</span>
-                  <span className="num justify-self-end text-xs text-text-tertiary">
-                    {s.confidence.toFixed(0)}% · EV {formatFracAsPct(s.ev_balanced)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <>
+          <div className="overflow-x-auto border border-border-subtle">
+            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+              <caption className="sr-only">Señales operables más recientes con su plan técnico</caption>
+              <thead>
+                <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+                  <th scope="col" className="py-2 pl-3 pr-3 font-medium">Símbolo</th>
+                  <th scope="col" className="py-2 pr-3 font-medium">Catalizador</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">Confianza</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">Entrada</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">Stop</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">Objetivo</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">R/B</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">Horizonte</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((s) => (
+                  <tr key={s.event_id} className="border-b border-border-subtle hover:bg-surface-raised">
+                    <td className="py-2 pl-3 pr-3">
+                      <Link href={`/senales/${s.event_id}`} className="inline-flex items-center gap-2 hover:underline">
+                        <span className="font-mono font-medium text-foreground">{s.ticker}</span>
+                        <DirectionBadge value={s.direction} />
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-3 text-text-secondary">
+                      {eventClassLabel(s.event_class)}
+                      <span className="num ml-1 text-xs text-text-tertiary">{formatDate(s.d0_close_date)}</span>
+                    </td>
+                    <td className="num py-2 pr-3 text-right">
+                      {s.tech_confidence !== null ? (
+                        <span className={s.tech_passes ? "text-emerald-700 dark:text-emerald-400" : "text-text-secondary"}>
+                          {s.tech_confidence}/100{s.tech_passes ? " ✓" : ""}
+                        </span>
+                      ) : (
+                        <span className="text-text-tertiary">—</span>
+                      )}
+                    </td>
+                    <td className="num py-2 pr-3 text-right text-foreground">{s.entry !== null ? s.entry.toFixed(2) : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-foreground">{s.stop !== null ? s.stop.toFixed(2) : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-foreground">{s.target !== null ? s.target.toFixed(2) : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-foreground">{s.risk_reward !== null ? `1:${s.risk_reward.toFixed(1)}` : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} ses.` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1.5 text-xs text-text-tertiary">
+            Confianza técnica 0-100; ✓ = pasa los filtros de riesgo (catalizador confirmado, indicadores alineados, riesgo/beneficio de
+            1:2 o mejor y stop sobre un nivel real). Entrada de referencia: cierre del día del evento.
+          </p>
+          </>
         )}
       </section>
 

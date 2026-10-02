@@ -10,7 +10,7 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
   function handleExport() {
     downloadCsv(
       `marketchange-senales-${new Date().toISOString().slice(0, 10)}.csv`,
-      ["Fecha", "Ticker", "Evento", "Fuente", "Sorpresa", "Señal", "Confianza (%)", "EV esperado (%)", "Entrada", "Salida", "Motivo salida", "P&L (%)"],
+      ["Fecha", "Ticker", "Evento", "Fuente", "Sorpresa", "Señal", "Confianza (%)", "EV esperado (%)", "Confianza técnica", "Pasa filtros técnicos", "Entrada", "Salida", "Motivo salida", "P&L (%)"],
       rows.map((r) => [
         r.d0_close_date,
         r.ticker,
@@ -20,6 +20,8 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
         r.signal,
         r.confidence.toFixed(1),
         (r.ev_balanced * 100).toFixed(2),
+        r.tech_confidence,
+        r.tech_passes === null ? null : r.tech_passes ? "Sí" : "No",
         r.entry_date,
         r.exit_date,
         r.exit_reason,

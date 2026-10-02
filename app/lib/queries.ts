@@ -548,6 +548,38 @@ export interface SignalFeedRow {
   exit_date: string | null;
   exit_reason: string | null;
   pnl_pct: number | null;
+  /** Confianza técnica 0-100 y si pasa los filtros de riesgo; null si la señal no tiene plan. */
+  tech_confidence: number | null;
+  tech_passes: boolean | null;
+}
+
+/** Plan técnico de una señal (pipeline/analyze/technical_analysis.py). */
+export interface TechnicalPlan {
+  direction: "LONG" | "SHORT";
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  target2: number | null;
+  risk_reward: number | null;
+  confidence: number;
+  passes_filters: boolean;
+  position_size_pct: number | null;
+  timeframe_days: number | null;
+  details: {
+    components?: { catalyst: number; indicators: number; confluence: number; volume: number };
+    checks?: Partial<Record<"catalyst_confirmed" | "indicators_aligned" | "risk_reward_ok" | "stop_on_support" | "enough_history", boolean>>;
+    aligned?: string[];
+    stop_basis?: string[];
+    target_basis?: string[];
+    exit_rules?: string[];
+    limitations?: string[];
+    reason_if_rejected?: string | null;
+    indicators?: Record<string, number | string | null>;
+  };
+}
+
+function toNum(v: unknown): number | null {
+  return v === null || v === undefined ? null : parseFloat(String(v));
 }
 
 export interface SignalDetailData extends SignalFeedRow {
@@ -565,6 +597,7 @@ export interface SignalDetailData extends SignalFeedRow {
   ev_calculation: EvCalculation | null;
   abstention_decision: AbstentionDecision | null;
   company_name: string | null;
+  technical: TechnicalPlan | null;
 }
 
 export async function getEventClasses(): Promise<string[]> {
@@ -600,10 +633,12 @@ function signalSelect(version: StrategyVersion, extraColumns: string): string {
         ea.novelty_score, ea.net_conviction, ea.confidence_in_conviction AS confidence, ea.ev_balanced,
         ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
         ${VERSION_COLUMN[version]} AS value,
-        pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct
+        pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct,
+        ta.confidence AS tech_confidence, ta.passes_filters AS tech_passes
         ${extraColumns}
       FROM events e
       JOIN event_analyses ea ON ea.event_id = e.event_id
+      LEFT JOIN technical_analyses ta ON ta.event_id = e.event_id
       LEFT JOIN portfolio_trades pt ON pt.event_id = e.event_id AND pt.version = $1
         AND pt.run_batch_tag = (SELECT run_batch_tag FROM portfolio_reports ORDER BY created_at DESC LIMIT 1)`;
 }
@@ -629,6 +664,8 @@ function mapFeedRow(r: any, version: StrategyVersion): SignalFeedRow {
     exit_date: toDateStr(r.exit_date),
     exit_reason: r.exit_reason,
     pnl_pct: r.pnl_pct !== null && r.pnl_pct !== undefined ? parseFloat(r.pnl_pct) : null,
+    tech_confidence: r.tech_confidence ?? null,
+    tech_passes: r.tech_passes ?? null,
   };
 }
 
@@ -687,7 +724,8 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
       `, e.source_url, e.filed_at, ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
          ea.novelty_reasoning, ea.bull_analyst_output AS bull_output, ea.bear_analyst_output AS bear_output,
          ea.judge_output, ea.impact_estimation, ea.n_historical_analogues, ea.ev_calculation, ea.abstention_decision,
-         u.company_name`
+         u.company_name, ta.direction AS tech_direction, ta.entry_price, ta.stop_price, ta.target_price, ta.target2_price,
+         ta.risk_reward, ta.position_size_pct, ta.timeframe_days, ta.details AS tech_details`
     )}
       LEFT JOIN universe u ON u.cik = e.cik
       WHERE e.event_id = $2`,
@@ -711,6 +749,22 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
     ev_calculation: r.ev_calculation,
     abstention_decision: r.abstention_decision,
     company_name: r.company_name ?? null,
+    technical:
+      r.tech_confidence === null || r.tech_confidence === undefined
+        ? null
+        : {
+            direction: r.tech_direction,
+            entry: toNum(r.entry_price),
+            stop: toNum(r.stop_price),
+            target: toNum(r.target_price),
+            target2: toNum(r.target2_price),
+            risk_reward: toNum(r.risk_reward),
+            confidence: Number(r.tech_confidence),
+            passes_filters: Boolean(r.tech_passes),
+            position_size_pct: toNum(r.position_size_pct),
+            timeframe_days: r.timeframe_days ?? null,
+            details: r.tech_details ?? {},
+          },
   };
 }
 
@@ -788,6 +842,14 @@ export interface RecentSignal {
   direction: "LONG" | "SHORT";
   confidence: number;
   ev_balanced: number;
+  // Plan técnico (null si todavía no se ha calculado para esta señal).
+  tech_confidence: number | null;
+  tech_passes: boolean | null;
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  risk_reward: number | null;
+  timeframe_days: number | null;
 }
 
 /** Últimas señales en las que la versión mostrada decidió operar. */
@@ -797,11 +859,14 @@ export async function getRecentTradeSignals(version: StrategyVersion, limit = 5)
     `
     SELECT e.event_id, e.ticker, e.event_class, e.d0_close_date,
            ${VERSION_COLUMN[version]} AS direction,
-           ea.confidence_in_conviction AS confidence, ea.ev_balanced
+           ea.confidence_in_conviction AS confidence, ea.ev_balanced,
+           ta.confidence AS tech_confidence, ta.passes_filters AS tech_passes, ta.entry_price, ta.stop_price,
+           ta.target_price, ta.risk_reward, ta.timeframe_days
     FROM events e
     JOIN event_analyses ea ON ea.event_id = e.event_id
+    LEFT JOIN technical_analyses ta ON ta.event_id = e.event_id
     WHERE ${VERSION_COLUMN[version]} != 'NO_TRADE'
-    ORDER BY e.d0_close_date DESC, ea.confidence_in_conviction DESC
+    ORDER BY e.d0_close_date DESC, ta.passes_filters DESC NULLS LAST, ta.confidence DESC NULLS LAST, ea.confidence_in_conviction DESC
     LIMIT $1
     `,
     [limit]
@@ -814,6 +879,13 @@ export async function getRecentTradeSignals(version: StrategyVersion, limit = 5)
     direction: r.direction,
     confidence: parseFloat(r.confidence),
     ev_balanced: parseFloat(r.ev_balanced),
+    tech_confidence: r.tech_confidence ?? null,
+    tech_passes: r.tech_passes ?? null,
+    entry: toNum(r.entry_price),
+    stop: toNum(r.stop_price),
+    target: toNum(r.target_price),
+    risk_reward: toNum(r.risk_reward),
+    timeframe_days: r.timeframe_days ?? null,
   }));
 }
 

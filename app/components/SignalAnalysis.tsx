@@ -11,6 +11,7 @@
 // falsa certeza que el resto del pipeline evita.
 import type { SignalDetailData, StrategyVersion } from "@/lib/queries";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
+import { TechnicalPlanCard } from "@/components/TechnicalPlanCard";
 import { formatDateTime } from "@/lib/format";
 import { VERSION_LABELS, VERSION_ORDER, exitReasonLabel } from "@/lib/labels";
 
@@ -66,6 +67,8 @@ export function SignalAnalysis({ detail, recommended }: { detail: SignalDetailDa
         </div>
         {judge?.key_uncertainty && <p className="mt-1.5 text-text-secondary">Qué lo cambiaría: {judge.key_uncertainty}</p>}
       </div>
+
+      {detail.technical && <TechnicalPlanCard plan={detail.technical} />}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Section title="A favor (Bull)" accent="long">

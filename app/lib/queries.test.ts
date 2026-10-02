@@ -210,6 +210,35 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal((await getHomeSummary("BALANCED")).portfolio?.trade_metrics, null);
   });
 
+  test("plan técnico en feed, detalle y señales recientes", async () => {
+    const id = await seedEvent({ ticker: "TEC", d0: "2026-01-01", decisions: ["NO_TRADE", "LONG", "LONG"] });
+    const sinPlan = await seedEvent({ ticker: "SIN", d0: "2026-01-02", decisions: ["NO_TRADE", "LONG", "LONG"] });
+    await getPool().query(
+      `INSERT INTO technical_analyses (event_id, direction, entry_price, stop_price, target_price, target2_price, risk_reward,
+         confidence, passes_filters, position_size_pct, timeframe_days, details)
+       VALUES ($1, 'LONG', 100, 96.5, 108, 112, 2.29, 80, TRUE, 2.5, 8, $2)`,
+      [id, JSON.stringify({ aligned: ["RSI", "MACD", "OBV"], checks: { risk_reward_ok: true } })]
+    );
+
+    const feed = await getSignalsFeed({});
+    assert.equal(feed.find((r) => r.event_id === id)?.tech_confidence, 80);
+    assert.equal(feed.find((r) => r.event_id === id)?.tech_passes, true);
+    assert.equal(feed.find((r) => r.event_id === sinPlan)?.tech_confidence, null);
+
+    const detail = await getSignalDetail(id);
+    assert.equal(detail?.technical?.stop, 96.5);
+    assert.equal(detail?.technical?.risk_reward, 2.29);
+    assert.deepEqual(detail?.technical?.details.aligned, ["RSI", "MACD", "OBV"]);
+    assert.equal((await getSignalDetail(sinPlan))?.technical, null);
+
+    const recent = await getRecentTradeSignals("BALANCED");
+    const tec = recent.find((r) => r.ticker === "TEC");
+    assert.equal(tec?.entry, 100);
+    assert.equal(tec?.target, 108);
+    assert.equal(tec?.timeframe_days, 8);
+    assert.equal(recent.find((r) => r.ticker === "SIN")?.entry, null);
+  });
+
   test("últimas señales operables de la versión mostrada", async () => {
     await seedEvent({ ticker: "R1", d0: "2026-01-01", decisions: ["NO_TRADE", "LONG", "LONG"] });
     await seedEvent({ ticker: "R2", d0: "2026-01-02", decisions: ["NO_TRADE", "NO_TRADE", "SHORT"] });
