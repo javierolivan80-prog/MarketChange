@@ -3,8 +3,10 @@ import "./globals.css";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 
 export const metadata: Metadata = {
-  title: "MarketChange — Panel",
-  description: "Señales event-driven: análisis Bull/Bear/Judge, event study por clase, backtest y memoria de tesis.",
+  title: { default: "MarketChange", template: "%s · MarketChange" },
+  description: "Señales sobre filings de la SEC y decisiones de la FDA: qué ha pasado, si el mercado ya lo sabía y si merece la pena operarlo.",
+  // Panel privado de un sistema en validación: no tiene sentido que lo indexen.
+  robots: { index: false, follow: false },
 };
 
 // Script sin-flash: fija la clase .dark en <html> ANTES del primer pintado,
@@ -35,8 +37,8 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="antialiased font-sans">
-        <Disclaimer />
         {children}
+        <Disclaimer />
       </body>
     </html>
   );

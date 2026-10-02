@@ -24,7 +24,7 @@ export function DrawdownChart({ equityCurve }: { equityCurve: PortfolioEquityPoi
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="seq" type="number" domain={["dataMin", "dataMax"]} tick={{ fontSize: 10 }} tickFormatter={(seq: number) => dateBySeq.get(seq) ?? ""} minTickGap={40} />
           <YAxis tick={{ fontSize: 10 }} unit="%" width={40} />

@@ -57,3 +57,21 @@ export function formatDateTime(value: string | Date | null | undefined): string 
     timeZoneName: "short",
   }).format(d);
 }
+
+/** Porcentaje que es una magnitud, no un resultado (proporción de datos con
+ * huecos, sesgo de supervivencia…): sin signo. formatPct le ponía "+", que en
+ * "+4.0% posible sesgo" se lee como algo positivo. Valor ya en puntos (4.0 = 4%). */
+export function formatShare(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${value.toFixed(digits)}%`;
+}
+
+/** Drawdown: el pipeline lo guarda como magnitud positiva (portfolio_metrics.py,
+ * `abs(max_dd)`), y pasarlo por formatPct lo pintaba como "+12.0%" bajo la
+ * etiqueta "Peor caída" — una pérdida con signo de ganancia. Se muestra
+ * siempre con signo negativo. */
+export function formatDrawdown(value: number | null | undefined, digits = 1): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  if (value === 0) return `${(0).toFixed(digits)}%`;
+  return `−${(Math.abs(value) * 100).toFixed(digits)}%`;
+}

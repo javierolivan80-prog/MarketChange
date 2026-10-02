@@ -37,3 +37,11 @@ export function getPool(): Pool {
 export function isDatabaseConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL);
 }
+
+/** Cierra el pool (tests y scripts; el servidor no lo necesita). */
+export async function closePool(): Promise<void> {
+  if (pool) {
+    await pool.end();
+    pool = null;
+  }
+}

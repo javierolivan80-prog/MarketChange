@@ -24,7 +24,7 @@ export function DailyPnLChart({ trades }: { trades: PaperClosedTrade[] }) {
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="date" tick={{ fontSize: 10 }} />
           <YAxis tick={{ fontSize: 10 }} unit="%" width={40} />

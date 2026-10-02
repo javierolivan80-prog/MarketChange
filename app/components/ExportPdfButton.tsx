@@ -9,19 +9,35 @@
 // curvas se representan como su TABLA de puntos clave (balance inicial,
 // final, pico, valle) en vez de un gráfico — sigue siendo "equity curves"
 // en el sentido de datos, no rendering. Documentado aquí, no fingido.
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+//
+// jsPDF + autotable pesan ~150 kB: se cargan con import() al pulsar el botón,
+// no en cada visita a /cartera (antes eran el grueso de su JS inicial, para
+// una acción que la mayoría de visitas nunca hace).
+import { useState } from "react";
+import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 import type { PortfolioReport, StrategyVersion } from "@/lib/queries";
 
 const VERSIONS: StrategyVersion[] = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"];
 
 export function ExportPdfButton({ report }: { report: PortfolioReport }) {
-  function handleExport() {
+  const [busy, setBusy] = useState(false);
+
+  async function handleExport() {
+    setBusy(true);
+    try {
+      await buildPdf();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buildPdf() {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
     const doc = new jsPDF();
     let y = 15;
 
     doc.setFontSize(16);
-    doc.text("Money POC — Backtest Report", 14, y);
+    doc.text("MarketChange — Informe de backtest", 14, y);
     y += 7;
     doc.setFontSize(10);
     doc.setTextColor(100);
@@ -44,14 +60,14 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
 
     autoTable(doc, {
       startY: y,
-      head: [["Métrica", "Conservative", "Balanced", "Aggressive"]],
+      head: [["Métrica", ...VERSIONS.map(versionLabel)]],
       body: [
-        ["Trades", ...VERSIONS.map((v) => String(report.versions[v].trade_metrics.total_trades))],
-        ["Win rate", ...VERSIONS.map((v) => fmtPct(report.versions[v].trade_metrics.win_rate))],
-        ["Total return", ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.total_return))],
+        ["Operaciones", ...VERSIONS.map((v) => String(report.versions[v].trade_metrics.total_trades))],
+        ["Acierto", ...VERSIONS.map((v) => fmtPct(report.versions[v].trade_metrics.win_rate))],
+        ["Resultado total", ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.total_return))],
         ["Sharpe", ...VERSIONS.map((v) => fmtNum(report.versions[v].equity_metrics.sharpe_ratio))],
-        ["Max drawdown", ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.max_drawdown))],
-        ["Calibración (Fase 3)", ...VERSIONS.map((v) => fmtNum(report.versions[v].calibration.calibration_score))],
+        ["Peor caída", ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.max_drawdown))],
+        ["Calibración", ...VERSIONS.map((v) => fmtNum(report.versions[v].calibration.calibration_score))],
         ["Calibración (correl.)", ...VERSIONS.map((v) => fmtNum(report.versions[v].confidence_calibration.correlation))],
       ],
       styles: { fontSize: 8 },
@@ -67,7 +83,7 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
         y = 15;
       }
       doc.setFontSize(11);
-      doc.text(`${version} — curva de equity (puntos clave)`, 14, y);
+      doc.text(`${versionLabel(version)} — curva de capital (puntos clave)`, 14, y);
       y += 2;
       const curve = v.equity_curve;
       const balances = curve.map((p) => p.balance);
@@ -89,24 +105,24 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
       y = (doc as any).lastAutoTable.finalY + 4;
 
       doc.setFontSize(9);
-      doc.text(`Top 5 ganadores (${version})`, 14, y);
+      doc.text(`Top 5 ganadores (${versionLabel(version)})`, 14, y);
       y += 2;
       autoTable(doc, {
         startY: y + 2,
-        head: [["Ticker", "Clase", "Salida", "PnL %"]],
-        body: v.top_10_winners.slice(0, 5).map((t) => [t.ticker ?? "—", (t.event_class ?? "").replace(/^8K_/, ""), t.exit_reason, `${t.pnl_pct.toFixed(2)}%`]),
+        head: [["Ticker", "Tipo", "Salida", "Resultado %"]],
+        body: v.top_10_winners.slice(0, 5).map((t) => [t.ticker ?? "—", eventClassLabel(t.event_class), exitReasonLabel(t.exit_reason), `${t.pnl_pct.toFixed(2)}%`]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [22, 101, 52] },
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       y = (doc as any).lastAutoTable.finalY + 4;
 
-      doc.text(`Top 5 perdedores (${version})`, 14, y);
+      doc.text(`Top 5 perdedores (${versionLabel(version)})`, 14, y);
       y += 2;
       autoTable(doc, {
         startY: y + 2,
-        head: [["Ticker", "Clase", "Salida", "PnL %"]],
-        body: v.top_10_losers.slice(0, 5).map((t) => [t.ticker ?? "—", (t.event_class ?? "").replace(/^8K_/, ""), t.exit_reason, `${t.pnl_pct.toFixed(2)}%`]),
+        head: [["Ticker", "Tipo", "Salida", "Resultado %"]],
+        body: v.top_10_losers.slice(0, 5).map((t) => [t.ticker ?? "—", eventClassLabel(t.event_class), exitReasonLabel(t.exit_reason), `${t.pnl_pct.toFixed(2)}%`]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [153, 27, 27] },
       });
@@ -115,13 +131,13 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
 
       const eventTypeRows = Object.values(v.metrics_by_event_type);
       if (eventTypeRows.length > 0) {
-        doc.text(`Event study por clase (${version})`, 14, y);
+        doc.text(`Resultado por tipo de evento (${versionLabel(version)})`, 14, y);
         y += 2;
         autoTable(doc, {
           startY: y + 2,
-          head: [["Clase", "N", "Win rate", "Retorno medio", "n<20"]],
+          head: [["Tipo", "N", "Acierto", "Retorno medio", "n<20"]],
           body: eventTypeRows.map((r) => [
-            r.event_type.replace(/^8K_/, ""),
+            eventClassLabel(r.event_type),
             String(r.n_trades),
             fmtPct(r.win_rate),
             `${r.avg_return.toFixed(2)}%`,
@@ -141,9 +157,10 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
   return (
     <button
       onClick={handleExport}
-      className="rounded border border-border-strong px-3 py-1.5 font-mono text-sm uppercase tracking-wide text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
+      disabled={busy}
+      className="border border-border-strong px-3 py-1.5 text-sm text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
     >
-      Exportar informe (PDF)
+      {busy ? "Generando…" : "Exportar informe (PDF)"}
     </button>
   );
 }

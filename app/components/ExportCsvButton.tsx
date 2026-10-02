@@ -31,7 +31,7 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
   return (
     <button
       onClick={handleExport}
-      className="rounded border border-border-strong px-3 py-1.5 font-mono text-sm uppercase tracking-wide text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
+      className="border border-border-strong px-3 py-1.5 text-sm text-foreground transition-colors hover:border-accent-600 hover:text-accent-700 dark:hover:text-accent-400"
     >
       Exportar (CSV)
     </button>

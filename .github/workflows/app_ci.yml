@@ -1,0 +1,56 @@
+# app_ci.yml — comprobaciones del panel (app/) en cada push y PR que lo toque.
+#
+# Hasta ahora el panel no tenía ningún control automático: los bugs
+# encontrados en la auditoría (filas duplicadas en el feed, métricas
+# ausentes pintadas como 0) llegaron a main sin que nada fallara. Este job
+# corre lint, tipos, tests (incluidas las consultas contra un Postgres real
+# con el mismo schema.sql que el pipeline) y el build de producción.
+name: App CI
+
+on:
+  push:
+    paths:
+      - "app/**"
+      - "pipeline/db/schema.sql"
+      - ".github/workflows/app_ci.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "pipeline/db/schema.sql"
+      - ".github/workflows/app_ci.yml"
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Tests (incluye consultas contra Postgres)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app_test
+        run: npm test
+      - run: npm run build

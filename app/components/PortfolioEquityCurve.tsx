@@ -39,7 +39,7 @@ export function PortfolioEquityCurve({ points, startingCapital }: { points: Port
   const strokeColor = last >= startingCapital ? "#16a34a" : "#dc2626";
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" role="img" aria-label="Curva de equity en dólares">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" role="img" aria-label="Evolución del capital simulado, en dólares">
       <line x1={baseX1} y1={baseY} x2={baseX2} y2={baseY} stroke="currentColor" strokeOpacity={0.2} strokeDasharray="4 3" />
       <path d={pathD} fill="none" stroke={strokeColor} strokeWidth={1.5} />
     </svg>

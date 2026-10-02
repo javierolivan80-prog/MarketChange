@@ -32,12 +32,12 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={bins} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <BarChart data={bins} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="label" tick={{ fontSize: 9 }} unit="%" />
           <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
           <Tooltip
-            formatter={(value, _name, item) => [`${value} trades`, `${item.payload.lo.toFixed(1)}% a ${item.payload.hi.toFixed(1)}%`]}
+            formatter={(value, _name, item) => [`${value} operaciones`, `${item.payload.lo.toFixed(1)}% a ${item.payload.hi.toFixed(1)}%`]}
           />
           <Bar dataKey="count">
             {bins.map((b, i) => (

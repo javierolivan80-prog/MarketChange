@@ -64,9 +64,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Job separado para correr los tests contra un Postgres efímero de servicio,
-  # en cada push Y antes de cada corrida nocturna — nunca se ingiere sobre un
-  # esquema no verificado.
+  # Job separado para correr los tests contra un Postgres efímero de servicio
+  # antes de cada corrida — nunca se ingiere sobre un esquema no verificado.
+  # (Este workflow no corre en push: los tests de cada push/PR los lanza
+  # pipeline_ci.yml, sin arrastrar la ingesta ni el gasto de API.)
   test:
     runs-on: ubuntu-latest
     # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + A4): ningún job de este
@@ -415,9 +416,21 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Opcional (variable del repo, no secreto): URL del panel en Vercel
+          # para que cada aviso enlace a su análisis completo.
+          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          # Filtros opcionales de los avisos (variables del repo; vacías = sin
+          # filtro). Ver pipeline/config.py: ALERT_*.
+          ALERT_MAX_AGE_DAYS: ${{ vars.ALERT_MAX_AGE_DAYS }}
+          ALERT_MIN_CONFIDENCE: ${{ vars.ALERT_MIN_CONFIDENCE }}
+          ALERT_TICKERS: ${{ vars.ALERT_TICKERS }}
+          ALERT_EVENT_CLASSES: ${{ vars.ALERT_EVENT_CLASSES }}
         run: |
           python -m pipeline.notify.signals_notifier
           python -m pipeline.notify.exits_notifier
+          # Solo envía en la pasada del sábado (UTC) y una vez por semana ISO
+          # — ver pipeline/notify/weekly_digest.py.
+          python -m pipeline.notify.weekly_digest
           python -m pipeline.notify.alerts_notifier
 
       - name: Aviso de infraestructura si este job falla (IMPROVEMENT_PLAN.md A3)

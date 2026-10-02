@@ -6,7 +6,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ConfidenceBucket } from "@/lib/queries";
 
-export function ConfidenceBucketBars({ buckets, label = "Win rate" }: { buckets: ConfidenceBucket[]; label?: string }) {
+export function ConfidenceBucketBars({ buckets, label = "Acierto" }: { buckets: ConfidenceBucket[]; label?: string }) {
   if (buckets.length === 0) {
     return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin datos suficientes.</div>;
   }
@@ -15,7 +15,7 @@ export function ConfidenceBucketBars({ buckets, label = "Win rate" }: { buckets:
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
           <YAxis tick={{ fontSize: 10 }} unit="%" width={40} domain={[0, 100]} />

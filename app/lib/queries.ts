@@ -332,7 +332,9 @@ export interface SensitivityScenarioResult {
 
 export interface Sensitivity {
   run_batch_tag: string;
-  scenarios: Record<"CONSERVATIVE" | "AGGRESSIVE", Record<string, SensitivityScenarioResult>>;
+  // BALANCED se añadió en el pipeline después (IMPROVEMENT_PLAN.md R13): un
+  // reporte antiguo puede no traerla — de ahí Partial.
+  scenarios: Partial<Record<StrategyVersion, Record<string, SensitivityScenarioResult>>>;
 }
 
 export interface VersionDecision {
@@ -447,6 +449,8 @@ export interface SignalFeedFilters {
   dateTo?: string;
   minConfidence?: number;
   limit?: number;
+  /** Versión cuya decisión se muestra en la columna "Señal". */
+  version?: StrategyVersion;
 }
 
 // Formas exactas de los campos JSONB de event_analyses — deben mantenerse en
@@ -516,30 +520,27 @@ export interface AbstentionPerStrategy {
 
 export type AbstentionDecision = Record<"CONSERVATIVE" | "BALANCED" | "AGGRESSIVE", AbstentionPerStrategy>;
 
+/** Fila LIGERA del feed: lo que la tabla pinta, sin el razonamiento JSONB del
+ * LLM. Antes el feed mandaba hasta 500 filas con Bull/Bear/Judge/EV completos
+ * dentro del HTML aunque el usuario no abriera ninguna; el detalle se pide
+ * ahora bajo demanda (getSignalDetail, vía /api/senales/[id] o /senales/[id]). */
 export interface SignalFeedRow {
   event_id: number;
   ticker: string;
   event_class: string;
   source: string;
-  source_url: string;
-  filed_at: string;
-  analyzed_at: string;
-  model_version_bull_bear: string;
-  model_version_judge: string;
   d0_close_date: string;
   novelty_score: number;
-  novelty_reasoning: NoveltyReasoning | null;
-  bull_output: BullOutput | null;
-  bear_output: BearOutput | null;
-  judge_output: JudgeOutput | null;
-  impact_estimation: ImpactEstimation | null;
-  n_historical_analogues: number | null;
-  ev_calculation: EvCalculation | null;
-  abstention_decision: AbstentionDecision | null;
   net_conviction: number;
   confidence: number;
   ev_balanced: number;
+  /** Decisión de la versión mostrada (`shown_version`): la que recomienda el
+   * motor de validación, o BALANCED si todavía no hay informe. Antes se
+   * derivaba del signo de net_conviction en cuanto CUALQUIER versión operaba,
+   * así que la tabla podía decir "Long" para una señal que la versión
+   * recomendada descartaba. */
   signal: "LONG" | "SHORT" | "NO_TRADE";
+  shown_version: StrategyVersion;
   trade_decision_conservative: string;
   trade_decision_aggressive: string;
   trade_decision_balanced: string;
@@ -549,85 +550,158 @@ export interface SignalFeedRow {
   pnl_pct: number | null;
 }
 
+export interface SignalDetailData extends SignalFeedRow {
+  source_url: string;
+  filed_at: string;
+  analyzed_at: string;
+  model_version_bull_bear: string;
+  model_version_judge: string;
+  novelty_reasoning: NoveltyReasoning | null;
+  bull_output: BullOutput | null;
+  bear_output: BearOutput | null;
+  judge_output: JudgeOutput | null;
+  impact_estimation: ImpactEstimation | null;
+  n_historical_analogues: number | null;
+  ev_calculation: EvCalculation | null;
+  abstention_decision: AbstentionDecision | null;
+  company_name: string | null;
+}
+
 export async function getEventClasses(): Promise<string[]> {
   const pool = getPool();
   const { rows } = await pool.query(`SELECT DISTINCT event_class FROM events ORDER BY event_class`);
   return rows.map((r) => r.event_class);
 }
 
+const VERSION_COLUMN: Record<StrategyVersion, string> = {
+  CONSERVATIVE: "ea.trade_decision_conservative",
+  BALANCED: "ea.trade_decision_balanced",
+  AGGRESSIVE: "ea.trade_decision_aggressive",
+};
+
+function toDateStr(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  return v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+}
+
+function toIso(v: unknown): string {
+  return v instanceof Date ? v.toISOString() : String(v);
+}
+
+// Columnas comunes a feed y detalle. `$1` es siempre la versión mostrada.
+// pt: solo la corrida de cartera más reciente — portfolio_trades guarda una
+// fila por (event_id, version, run_batch_tag) y el pipeline escribe un
+// run_batch_tag nuevo cada día sin borrar los anteriores; sin ese filtro
+// cada evento operado salía repetido una vez por corrida histórica.
+function signalSelect(version: StrategyVersion, extraColumns: string): string {
+  return `
+      SELECT
+        e.event_id, e.ticker, e.event_class, e.source, e.d0_close_date,
+        ea.novelty_score, ea.net_conviction, ea.confidence_in_conviction AS confidence, ea.ev_balanced,
+        ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
+        ${VERSION_COLUMN[version]} AS value,
+        pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct
+        ${extraColumns}
+      FROM events e
+      JOIN event_analyses ea ON ea.event_id = e.event_id
+      LEFT JOIN portfolio_trades pt ON pt.event_id = e.event_id AND pt.version = $1
+        AND pt.run_batch_tag = (SELECT run_batch_tag FROM portfolio_reports ORDER BY created_at DESC LIMIT 1)`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapFeedRow(r: any, version: StrategyVersion): SignalFeedRow {
+  return {
+    event_id: Number(r.event_id),
+    ticker: r.ticker,
+    event_class: r.event_class,
+    source: r.source,
+    d0_close_date: toDateStr(r.d0_close_date) ?? "",
+    novelty_score: r.novelty_score,
+    net_conviction: parseFloat(r.net_conviction),
+    confidence: parseFloat(r.confidence),
+    ev_balanced: parseFloat(r.ev_balanced),
+    signal: r.value,
+    shown_version: version,
+    trade_decision_conservative: r.trade_decision_conservative,
+    trade_decision_aggressive: r.trade_decision_aggressive,
+    trade_decision_balanced: r.trade_decision_balanced,
+    entry_date: toDateStr(r.entry_date),
+    exit_date: toDateStr(r.exit_date),
+    exit_reason: r.exit_reason,
+    pnl_pct: r.pnl_pct !== null && r.pnl_pct !== undefined ? parseFloat(r.pnl_pct) : null,
+  };
+}
+
 export async function getSignalsFeed(filters: SignalFeedFilters): Promise<SignalFeedRow[]> {
   const pool = getPool();
+  const version = filters.version ?? "BALANCED";
+  const params: unknown[] = [version];
   const conditions: string[] = [];
-  const params: unknown[] = [];
 
   if (filters.ticker) {
     params.push(`%${filters.ticker.toUpperCase()}%`);
-    conditions.push(`e.ticker ILIKE $${params.length}`);
+    conditions.push(`signal.ticker ILIKE $${params.length}`);
   }
   if (filters.eventClass) {
     params.push(filters.eventClass);
-    conditions.push(`e.event_class = $${params.length}`);
+    conditions.push(`signal.event_class = $${params.length}`);
   }
   if (filters.dateFrom) {
     params.push(filters.dateFrom);
-    conditions.push(`e.d0_close_date >= $${params.length}`);
+    conditions.push(`signal.d0_close_date >= $${params.length}`);
   }
   if (filters.dateTo) {
     params.push(filters.dateTo);
-    conditions.push(`e.d0_close_date <= $${params.length}`);
+    conditions.push(`signal.d0_close_date <= $${params.length}`);
   }
-  if (filters.minConfidence !== undefined) {
+  if (filters.minConfidence !== undefined && Number.isFinite(filters.minConfidence)) {
     params.push(filters.minConfidence);
-    conditions.push(`ea.confidence_in_conviction >= $${params.length}`);
+    conditions.push(`signal.confidence >= $${params.length}`);
   }
   if (filters.signal) {
     params.push(filters.signal);
     conditions.push(`signal.value = $${params.length}`);
   }
-
-  params.push(filters.limit ?? 200);
+  params.push(Math.min(Math.max(filters.limit ?? 200, 1), 1000));
   const limitParam = `$${params.length}`;
 
   const { rows } = await pool.query(
     `
-    SELECT * FROM (
-      SELECT
-        e.event_id, e.ticker, e.event_class, e.source, e.source_url, e.filed_at, e.d0_close_date,
-        ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
-        ea.novelty_score, ea.novelty_reasoning, ea.bull_analyst_output AS bull_output, ea.bear_analyst_output AS bear_output,
-        ea.judge_output, ea.impact_estimation, ea.n_historical_analogues, ea.ev_calculation, ea.abstention_decision,
-        ea.net_conviction, ea.confidence_in_conviction AS confidence, ea.ev_balanced,
-        ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
-        (CASE
-          WHEN ea.trade_decision_conservative = 'NO_TRADE' AND ea.trade_decision_aggressive = 'NO_TRADE'
-               AND ea.trade_decision_balanced = 'NO_TRADE' THEN 'NO_TRADE'
-          WHEN ea.net_conviction > 0 THEN 'LONG'
-          ELSE 'SHORT'
-        END) AS value,
-        pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct
-      FROM events e
-      JOIN event_analyses ea ON ea.event_id = e.event_id
-      LEFT JOIN portfolio_trades pt ON pt.event_id = e.event_id AND pt.version = 'BALANCED'
-    ) signal
+    SELECT * FROM (${signalSelect(version, "")}) signal
     ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
-    ORDER BY signal.d0_close_date DESC
+    ORDER BY signal.d0_close_date DESC, signal.event_id DESC
     LIMIT ${limitParam}
     `,
     params
   );
+  return rows.map((r) => mapFeedRow(r, version));
+}
 
-  return rows.map((r) => ({
-    event_id: r.event_id,
-    ticker: r.ticker,
-    event_class: r.event_class,
-    source: r.source,
+/** Todo lo que el pipeline calculó para un evento: el razonamiento completo. */
+export async function getSignalDetail(eventId: number, version: StrategyVersion = "BALANCED"): Promise<SignalDetailData | null> {
+  if (!Number.isSafeInteger(eventId) || eventId <= 0) return null;
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `${signalSelect(
+      version,
+      `, e.source_url, e.filed_at, ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
+         ea.novelty_reasoning, ea.bull_analyst_output AS bull_output, ea.bear_analyst_output AS bear_output,
+         ea.judge_output, ea.impact_estimation, ea.n_historical_analogues, ea.ev_calculation, ea.abstention_decision,
+         u.company_name`
+    )}
+      LEFT JOIN universe u ON u.cik = e.cik
+      WHERE e.event_id = $2`,
+    [version, eventId]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    ...mapFeedRow(r, version),
     source_url: r.source_url,
-    filed_at: r.filed_at instanceof Date ? r.filed_at.toISOString() : r.filed_at,
-    analyzed_at: r.analyzed_at instanceof Date ? r.analyzed_at.toISOString() : r.analyzed_at,
+    filed_at: toIso(r.filed_at),
+    analyzed_at: toIso(r.analyzed_at),
     model_version_bull_bear: r.model_version_bull_bear,
     model_version_judge: r.model_version_judge,
-    d0_close_date: r.d0_close_date instanceof Date ? r.d0_close_date.toISOString().slice(0, 10) : r.d0_close_date,
-    novelty_score: r.novelty_score,
     novelty_reasoning: r.novelty_reasoning,
     bull_output: r.bull_output,
     bear_output: r.bear_output,
@@ -636,16 +710,270 @@ export async function getSignalsFeed(filters: SignalFeedFilters): Promise<Signal
     n_historical_analogues: r.n_historical_analogues,
     ev_calculation: r.ev_calculation,
     abstention_decision: r.abstention_decision,
-    net_conviction: parseFloat(r.net_conviction),
+    company_name: r.company_name ?? null,
+  };
+}
+
+// ============================================================================
+// Inicio, historial y abstenciones — lecturas ligeras
+// ============================================================================
+
+const VERSIONS: readonly StrategyVersion[] = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"];
+
+function asVersion(v: unknown): StrategyVersion {
+  return VERSIONS.includes(v as StrategyVersion) ? (v as StrategyVersion) : "BALANCED";
+}
+
+/** La versión que el motor de validación recomienda (best_version del último
+ * informe), o BALANCED si todavía no hay ninguno. Es la versión que la app
+ * enseña por defecto: al usuario se le da una recomendación, no tres. */
+export async function getRecommendedVersion(): Promise<StrategyVersion> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT report_json->>'best_version' AS v FROM validation_reports ORDER BY created_at DESC LIMIT 1`
+  );
+  return asVersion(rows[0]?.v);
+}
+
+export interface HomeSummary {
+  portfolio: {
+    sample: SampleSplit | null;
+    oos_warning: string | null;
+    trade_metrics: PortfolioTradeMetrics | null;
+    equity_metrics: PortfolioEquityMetrics | null;
+  } | null;
+  validation: { best_version: StrategyVersion; best_decision: VersionDecision } | null;
+  open_paper_positions: number | null;
+}
+
+/** Lo que Inicio necesita, extraído en SQL con rutas JSON en vez de bajar los
+ * report_json completos (que incluyen todas las operaciones y curvas de las 3
+ * versiones) para pintar cuatro cifras. */
+export async function getHomeSummary(version: StrategyVersion): Promise<HomeSummary> {
+  const pool = getPool();
+  const [portfolio, validation, paper] = await Promise.all([
+    pool.query(
+      `SELECT report_json->'sample' AS sample, report_json->>'oos_warning' AS oos_warning,
+              report_json->'versions'->$1->'trade_metrics' AS trade_metrics,
+              report_json->'versions'->$1->'equity_metrics' AS equity_metrics
+       FROM portfolio_reports ORDER BY created_at DESC LIMIT 1`,
+      [version]
+    ),
+    pool.query(
+      `SELECT report_json->>'best_version' AS best_version, report_json->'best_decision' AS best_decision
+       FROM validation_reports ORDER BY created_at DESC LIMIT 1`
+    ),
+    pool.query(
+      `SELECT (SELECT sum((v->>'n_open_positions')::int) FROM jsonb_each(report_json->'versions') AS x(k, v)) AS n_open
+       FROM paper_trading_reports ORDER BY created_at DESC LIMIT 1`
+    ),
+  ]);
+  const p = portfolio.rows[0];
+  const v = validation.rows[0];
+  const pp = paper.rows[0];
+  return {
+    portfolio: p
+      ? { sample: p.sample ?? null, oos_warning: p.oos_warning ?? null, trade_metrics: p.trade_metrics ?? null, equity_metrics: p.equity_metrics ?? null }
+      : null,
+    validation: v?.best_decision ? { best_version: asVersion(v.best_version), best_decision: v.best_decision } : null,
+    open_paper_positions: pp && pp.n_open !== null ? Number(pp.n_open) : null,
+  };
+}
+
+export interface RecentSignal {
+  event_id: number;
+  ticker: string;
+  event_class: string;
+  d0_close_date: string;
+  direction: "LONG" | "SHORT";
+  confidence: number;
+  ev_balanced: number;
+}
+
+/** Últimas señales en las que la versión mostrada decidió operar. */
+export async function getRecentTradeSignals(version: StrategyVersion, limit = 5): Promise<RecentSignal[]> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT e.event_id, e.ticker, e.event_class, e.d0_close_date,
+           ${VERSION_COLUMN[version]} AS direction,
+           ea.confidence_in_conviction AS confidence, ea.ev_balanced
+    FROM events e
+    JOIN event_analyses ea ON ea.event_id = e.event_id
+    WHERE ${VERSION_COLUMN[version]} != 'NO_TRADE'
+    ORDER BY e.d0_close_date DESC, ea.confidence_in_conviction DESC
+    LIMIT $1
+    `,
+    [limit]
+  );
+  return rows.map((r) => ({
+    event_id: Number(r.event_id),
+    ticker: r.ticker,
+    event_class: r.event_class,
+    d0_close_date: toDateStr(r.d0_close_date) ?? "",
+    direction: r.direction,
     confidence: parseFloat(r.confidence),
     ev_balanced: parseFloat(r.ev_balanced),
-    signal: r.value,
-    trade_decision_conservative: r.trade_decision_conservative,
-    trade_decision_aggressive: r.trade_decision_aggressive,
-    trade_decision_balanced: r.trade_decision_balanced,
-    entry_date: r.entry_date instanceof Date ? r.entry_date.toISOString().slice(0, 10) : r.entry_date,
-    exit_date: r.exit_date instanceof Date ? r.exit_date.toISOString().slice(0, 10) : r.exit_date,
-    exit_reason: r.exit_reason,
-    pnl_pct: r.pnl_pct !== null ? parseFloat(r.pnl_pct) : null,
   }));
+}
+
+/** Cuándo se analizó el último evento y cuántos en las últimas 24h — sin
+ * esto, un pipeline caído hace días se ve igual que uno que corrió anoche. */
+export async function getPipelineFreshness(): Promise<{ last_analyzed_at: string | null; analyzed_last_24h: number }> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT max(analyzed_at) AS last, count(*) FILTER (WHERE analyzed_at > now() - interval '24 hours') AS n24 FROM event_analyses`
+  );
+  const last = rows[0]?.last;
+  return {
+    last_analyzed_at: last ? toIso(last) : null,
+    analyzed_last_24h: Number(rows[0]?.n24 ?? 0),
+  };
+}
+
+// Los motivos de abstención son texto libre con un prefijo fijo según la
+// regla que disparó (pipeline/analyze/abstention_engine.py:decide_for_strategy).
+// Se agrupan por ese prefijo; un motivo nuevo sin mapear cae en "other".
+export type AbstentionCategory =
+  | "priced_in"
+  | "low_confidence"
+  | "low_ev"
+  | "delisting"
+  | "contradictory"
+  | "fda_unconfirmed"
+  | "illiquid"
+  | "other";
+
+export interface AbstentionSummary {
+  days: number;
+  analyzed: number;
+  traded: number;
+  reasons: { category: AbstentionCategory; n: number }[];
+}
+
+export async function getAbstentionSummary(version: StrategyVersion, days = 7): Promise<AbstentionSummary> {
+  const pool = getPool();
+  const reasonPath = `ea.abstention_decision->'${version}'->>'reason_if_no_trade'`;
+  const { rows } = await pool.query(
+    `
+    WITH recent AS (
+      SELECT ${VERSION_COLUMN[version]} AS decision, ${reasonPath} AS reason
+      FROM event_analyses ea
+      WHERE ea.analyzed_at > now() - make_interval(days => $1)
+    )
+    SELECT
+      (SELECT count(*) FROM recent) AS analyzed,
+      (SELECT count(*) FROM recent WHERE decision != 'NO_TRADE') AS traded,
+      category, count(*) AS n
+    FROM (
+      SELECT CASE
+        WHEN reason LIKE 'novelty_score=%' THEN 'priced_in'
+        WHEN reason LIKE 'confidence_in_conviction=%' THEN 'low_confidence'
+        WHEN reason LIKE '|ev|=%' THEN 'low_ev'
+        WHEN reason LIKE '%deslistado%' THEN 'delisting'
+        WHEN reason LIKE 'datos contradictorios%' THEN 'contradictory'
+        WHEN reason LIKE 'CRL de FDA%' THEN 'fda_unconfirmed'
+        WHEN reason LIKE '%ilíquido%' OR reason LIKE '%liquidez%' THEN 'illiquid'
+        ELSE 'other'
+      END AS category
+      FROM recent WHERE decision = 'NO_TRADE'
+    ) c
+    GROUP BY category
+    ORDER BY n DESC
+    `,
+    [days]
+  );
+  // Sin descartes la consulta agrupada no devuelve filas: los totales se piden aparte.
+  let analyzed = rows[0] ? Number(rows[0].analyzed) : 0;
+  let traded = rows[0] ? Number(rows[0].traded) : 0;
+  if (!rows[0]) {
+    const t = await pool.query(
+      `SELECT count(*) AS analyzed, count(*) FILTER (WHERE ${VERSION_COLUMN[version]} != 'NO_TRADE') AS traded
+       FROM event_analyses ea WHERE ea.analyzed_at > now() - make_interval(days => $1)`,
+      [days]
+    );
+    analyzed = Number(t.rows[0]?.analyzed ?? 0);
+    traded = Number(t.rows[0]?.traded ?? 0);
+  }
+  return {
+    days,
+    analyzed,
+    traded,
+    reasons: rows.map((r) => ({ category: r.category as AbstentionCategory, n: Number(r.n) })),
+  };
+}
+
+export interface HistoryRow {
+  event_id: number;
+  ticker: string;
+  event_class: string;
+  d0_close_date: string;
+  analyzed_at: string;
+  notified_at: string | null;
+  direction: "LONG" | "SHORT";
+  confidence: number;
+  status: string | null;
+  entry_date: string | null;
+  exit_date: string | null;
+  pnl_pct: number | null;
+}
+
+export interface SignalHistory {
+  version: StrategyVersion;
+  rows: HistoryRow[];
+  n_closed: number;
+  n_open: number;
+  win_rate: number | null;
+  avg_pnl_pct: number | null;
+}
+
+/** Historial hacia delante: cada señal que la versión mostrada decidió operar,
+ * con la hora a la que se calculó (y se avisó), y su resultado en la
+ * simulación en papel sobre precios reales posteriores — no el backtest. Es
+ * el único número que no puede estar sobreajustado al pasado. */
+export async function getSignalHistory(version: StrategyVersion, limit = 200): Promise<SignalHistory> {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT e.event_id, e.ticker, e.event_class, e.d0_close_date, ea.analyzed_at, ea.notified_at,
+           ${VERSION_COLUMN[version]} AS direction, ea.confidence_in_conviction AS confidence,
+           pt.status, pt.entry_date, pt.exit_date, pt.pnl_pct
+    FROM events e
+    JOIN event_analyses ea ON ea.event_id = e.event_id
+    LEFT JOIN LATERAL (
+      SELECT status, entry_date, exit_date, pnl_pct
+      FROM paper_trades p
+      WHERE p.event_id = e.event_id AND p.version = $1
+      ORDER BY p.updated_at DESC
+      LIMIT 1
+    ) pt ON TRUE
+    WHERE ${VERSION_COLUMN[version]} != 'NO_TRADE'
+    ORDER BY e.d0_close_date DESC, e.event_id DESC
+    LIMIT $2
+    `,
+    [version, limit]
+  );
+  const mapped: HistoryRow[] = rows.map((r) => ({
+    event_id: Number(r.event_id),
+    ticker: r.ticker,
+    event_class: r.event_class,
+    d0_close_date: toDateStr(r.d0_close_date) ?? "",
+    analyzed_at: toIso(r.analyzed_at),
+    notified_at: r.notified_at ? toIso(r.notified_at) : null,
+    direction: r.direction,
+    confidence: parseFloat(r.confidence),
+    status: r.status ?? null,
+    entry_date: toDateStr(r.entry_date),
+    exit_date: toDateStr(r.exit_date),
+    pnl_pct: r.pnl_pct !== null && r.pnl_pct !== undefined ? parseFloat(r.pnl_pct) : null,
+  }));
+  const closed = mapped.filter((r) => r.status !== null && r.status !== "OPEN" && r.pnl_pct !== null);
+  return {
+    version,
+    rows: mapped,
+    n_closed: closed.length,
+    n_open: mapped.filter((r) => r.status === "OPEN").length,
+    win_rate: closed.length > 0 ? closed.filter((r) => (r.pnl_pct ?? 0) > 0).length / closed.length : null,
+    avg_pnl_pct: closed.length > 0 ? closed.reduce((s, r) => s + (r.pnl_pct ?? 0), 0) / closed.length : null,
+  };
 }
