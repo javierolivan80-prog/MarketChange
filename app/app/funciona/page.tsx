@@ -1,13 +1,6 @@
 import { isDatabaseConfigured } from "@/lib/db";
-import {
-  getLatestPortfolioRunBatchTag,
-  getPortfolioReport,
-  getLatestValidationRunBatchTag,
-  getValidationReport,
-  type CalibrationDiagnostics,
-  type EventStudyClassResult,
-  type VersionDecision,
-} from "@/lib/queries";
+import { getLatestPortfolioRunBatchTag, getPortfolioReport, getLatestValidationRunBatchTag, getValidationReport } from "@/lib/data";
+import type { CalibrationDiagnostics, EventStudyClassResult, PortfolioVersionReport, StrategyVersion, VersionDecision } from "@/lib/queries";
 import { Nav } from "@/components/Nav";
 import { CalibrationCurve } from "@/components/CalibrationCurve";
 import { ComparisonTable, type ComparisonRow } from "@/components/ComparisonTable";
@@ -16,7 +9,6 @@ import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/P
 import { SignedPct } from "@/components/ui/DirectionBadge";
 import { formatPct, formatNum, formatFracAsPct, formatDrawdown } from "@/lib/format";
 import { VERSION_LABELS, VERSION_ORDER, eventClassLabel } from "@/lib/labels";
-import type { PortfolioVersionReport, StrategyVersion } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "¿Funciona?" };
@@ -90,7 +82,7 @@ function interpretCalibration(diag: CalibrationDiagnostics): { label: string; ad
 
 function DecisionCard({ title, decision }: { title: string; decision: VersionDecision }) {
   return (
-    <div className={`rounded border p-4 ${OPTION_STYLES[decision.option]}`}>
+    <div className={` border p-4 ${OPTION_STYLES[decision.option]}`}>
       <p className="mb-1 text-sm text-text-secondary">{title}</p>
       <p className={`mb-2 text-lg font-semibold ${OPTION_TEXT_STYLES[decision.option]}`}>{decision.label}</p>
       <p className="mb-2 text-sm text-foreground">{decision.recommendation}</p>
@@ -176,7 +168,7 @@ export default async function FuncionaPage() {
     <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
       <Nav active="/funciona" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">¿Funciona?</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">¿Funciona?</h1>
         <p className="mt-1 text-sm text-text-secondary">Todo lo que responde si te puedes fiar del sistema, y por qué.</p>
       </header>
 
@@ -189,7 +181,7 @@ export default async function FuncionaPage() {
       {/* Veredicto + decisión por versión */}
       {validationReport && (
         <section className="mb-10">
-          <div className={`mb-4 rounded border-2 p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
+          <div className={`mb-4  border-2 p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
             <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">
               Veredicto global · versión recomendada: {VERSION_LABELS[validationReport.best_version]}
             </p>
@@ -209,13 +201,13 @@ export default async function FuncionaPage() {
         <section className="mb-10">
           <h2 className="mb-1 text-base font-semibold text-foreground">¿El tipo de evento mueve el precio de verdad?</h2>
           <p className="mb-3 text-xs text-text-secondary">
-            Sobre TODOS los eventos detectados, no solo los que se operaron. "Sí" significa que el movimiento no parece casualidad; "aún
-            no se sabe" significa que hacen falta más casos para estar seguros — no que no haya efecto.
+            Sobre TODOS los eventos detectados, no solo los que se operaron. “Sí” significa que el movimiento no parece casualidad; “aún
+            no se sabe” significa que hacen falta más casos para estar seguros — no que no haya efecto.
           </p>
           {eventClasses.length === 0 ? (
             <p className="text-sm italic text-text-tertiary">Sin datos todavía.</p>
           ) : (
-            <div className="overflow-x-auto rounded border border-border-subtle">
+            <div className="overflow-x-auto border border-border-subtle">
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
@@ -241,13 +233,13 @@ export default async function FuncionaPage() {
       {/* Calibración */}
       <section className="mb-10">
         <h2 className="mb-1 text-base font-semibold text-foreground">¿El sistema sabe cuándo está seguro?</h2>
-        <p className="mb-3 text-xs text-text-secondary">Cuando dice "80% de confianza", ¿acierta de verdad el 80% de las veces?</p>
+        <p className="mb-3 text-xs text-text-secondary">Cuando dice “80% de confianza”, ¿acierta de verdad el 80% de las veces?</p>
         <div className="flex flex-col gap-4 md:flex-row">
           {VERSION_ORDER.filter((ver) => report.versions[ver]).map((ver) => {
             const diag = report.versions[ver].confidence_calibration;
             const { label, adjustment } = interpretCalibration(diag);
             return (
-              <div key={ver} className="min-w-[300px] flex-1 rounded border border-border-subtle bg-surface p-4">
+              <div key={ver} className="min-w-[300px] flex-1 border border-border-subtle bg-surface p-4">
                 <h3 className="mb-3 text-base font-semibold text-foreground">{VERSION_LABELS[ver]}</h3>
                 <CalibrationCurve buckets={diag.buckets} />
                 <p className="mb-3 mt-1 text-[10px] text-text-tertiary">Línea de referencia = calibración perfecta · tamaño del punto = nº de casos</p>
@@ -267,7 +259,7 @@ export default async function FuncionaPage() {
             Un resultado que se mantiene positivo en todos los escenarios es más de fiar que uno que solo funciona en el mejor de los
             casos.
           </p>
-          <div className="overflow-x-auto rounded border border-border-subtle">
+          <div className="overflow-x-auto border border-border-subtle">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">

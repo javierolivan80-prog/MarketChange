@@ -1,5 +1,6 @@
 import { isDatabaseConfigured } from "@/lib/db";
-import { getLatestQualityScoreDate, getQualityScores, type QualityScoreRow } from "@/lib/queries";
+import { getLatestQualityScoreDate, getQualityScores } from "@/lib/data";
+import type { QualityScoreRow } from "@/lib/queries";
 import { Nav } from "@/components/Nav";
 import { QualityCard } from "@/components/QualityCard";
 import { NoDataYet, NotConfigured } from "@/components/ui/PageState";
@@ -45,7 +46,7 @@ export default async function LargoPlazoPage() {
     <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
       <Nav active="/largo-plazo" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Largo plazo</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Largo plazo</h1>
         <p className="num mt-1 text-sm text-text-secondary">
           Empresas ordenadas por calidad de negocio y precio, según sus cuentas anuales auditadas. Horizonte de años, no de días. Datos
           a {asOfDate} · {scores.length} empresas analizadas.
@@ -53,7 +54,7 @@ export default async function LargoPlazoPage() {
       </header>
 
       {/* Aviso: esto no es asesoramiento */}
-      <div className="mb-6 rounded border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800/60 dark:bg-amber-500/10">
+      <div className="mb-6 border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800/60 dark:bg-amber-500/10">
         <p className="mb-1 font-medium text-amber-800 dark:text-amber-400">Esto no es una recomendación de inversión</p>
         <p className="text-text-secondary">
           Es un resumen estructurado de cuentas públicas, calculado automáticamente. Una nota alta significa que la empresa cumple
@@ -63,7 +64,7 @@ export default async function LargoPlazoPage() {
       </div>
 
       {/* Cómo se lee la nota */}
-      <section className="mb-6 rounded border border-border-subtle p-4">
+      <section className="mb-6 border border-border-subtle p-4">
         <p className="mb-2 text-sm font-medium text-foreground">Cómo se calcula la nota</p>
         <ul className="space-y-1 text-xs text-text-secondary">
           <li>

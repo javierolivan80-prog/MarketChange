@@ -144,10 +144,12 @@ y, sobre todo, cuándo y por qué se abstiene, tiene un posicionamiento propio
   una decisión que el sistema ya sabe tomar (`best_version`).
 - **DYNAMIC** (4ª versión): ya está marcada como pendiente de decisión en el
   plan; sin datos reales que la justifiquen, es complejidad pura.
-- **`backtester.py` y los componentes muertos.** `VersionOverviewCard` y
-  `CombinedEquityChart` (no los importa nadie) y los SVG de la plantilla de
-  create-next-app: *eliminados*. `backtester.py` (motor paralelo sin callers
-  en producción, según el propio plan): pendiente.
+- **Los componentes muertos.** `VersionOverviewCard` y `CombinedEquityChart`
+  (no los importa nadie) y los SVG de la plantilla de create-next-app:
+  *eliminados*. (Corrección: la primera versión de este informe daba
+  `backtester.py` como código muerto pendiente; no lo es — el motor paralelo
+  ya se había borrado en un PR anterior y lo que queda, `compute_car`, es
+  código vivo.)
 - **"Largo plazo" de la navegación principal.** Es otro producto (screener
   fundamental, horizonte de años). O se separa en su propia sección/subdominio,
   o se aparca hasta que el producto principal esté validado.
@@ -241,14 +243,14 @@ móvil. *Corregido; verificado scrollWidth = viewport a 375 px.*
 | Tabla de sensibilidad sin BALANCED (el pipeline ya la calcula, R13) | Información perdida | Columnas por `VERSION_ORDER` | ✅ |
 | jsPDF en el bundle inicial | 136 kB de JS innecesario | `import()` al pulsar | ✅ (372 → 236 kB) |
 | `ComparisonTable` cliente con Tanstack para 6 filas | JS sin interacción | Tabla de servidor | ✅ |
-| Sin tests en `app/`, sin ESLint | Regresiones como las de arriba pasan desapercibidas | ESLint + tests de `lib/` (format, labels, queries contra Postgres) | Pendiente |
-| `force-dynamic` en todo + `report_json` completo para 4 cifras | Coste por visita, latencia | `unstable_cache`/`revalidate` con TTL ~5 min (los datos cambian 3 veces al día); columnas resumen en `portfolio_reports` | Pendiente |
-| Feed: 500 filas con JSONB completo al cliente | HTML de varios MB a escala | Paginación en servidor; detalle bajo demanda | Pendiente |
+| Sin tests en `app/`, sin ESLint | Regresiones como las de arriba pasan desapercibidas | ESLint + tests de `lib/` (format, labels, queries contra Postgres) + workflow `app_ci.yml` | ✅ |
+| `force-dynamic` en todo + `report_json` completo para 4 cifras | Coste por visita, latencia | `lib/data.ts`: caché de datos de 1–60 min; Inicio lee solo las rutas JSON que pinta | ✅ |
+| Feed: 500 filas con JSONB completo al cliente | HTML de varios MB a escala | Filas ligeras; detalle bajo demanda (`/api/senales/[id]`) | ✅ |
 | Pool `max: 3` por instancia serverless | Agota conexiones del plan gratuito con tráfico | Pooler (Neon/Supabase pgbouncer) | Pendiente |
 | `queries.ts` de 700 líneas con tipos a mano | Deriva silenciosa respecto a `schema.sql` | Generar tipos o validar con un esquema en runtime | Pendiente |
-| Código muerto | Confusión | Borrar | ✅ panel / pendiente `backtester.py` |
+| Código muerto | Confusión | Borrar | ✅ |
 | Comentarios-ensayo | Ruido, coste de lectura | Pasada de limpieza | Pendiente |
-| `npm audit`: dompurify (corregido); postcss dentro de `next` | Solo build | Subir `next` en un PR propio | Parcial |
+| `npm audit`: dompurify; postcss dentro de `next` | Solo build | `next` 15.5.27 + `overrides` de postcss ≥ 8.5.28 | ✅ 0 vulnerabilidades |
 
 **Escalabilidad.** 10 usuarios: sin problema. 100: el pool y las consultas sin
 caché empiezan a notarse en el plan gratuito. 1.000: hace falta caché y
@@ -263,9 +265,9 @@ CDN; lo dinámico serían solo cuentas y preferencias.
 | Riesgo | Impacto | Solución | Prioridad |
 |---|---|---|---|
 | Panel sin autenticación | Cualquiera con la URL ve todo | `middleware.ts`: Basic Auth con `DASHBOARD_USER`/`DASHBOARD_PASSWORD` (comparación en tiempo constante) — *implementado, opcional* | 🔴 activar ya en Vercel |
-| Panel con credencial de escritura | Un fallo o RCE en el panel puede modificar/borrar datos | `CREATE ROLE dashboard_ro LOGIN PASSWORD '…'; GRANT CONNECT ON DATABASE … TO dashboard_ro; GRANT USAGE ON SCHEMA public TO dashboard_ro; GRANT SELECT ON ALL TABLES IN SCHEMA public TO dashboard_ro; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dashboard_ro;` y usar esa URL en Vercel | 🔴 |
+| Panel con credencial de escritura | Un fallo o RCE en el panel puede modificar/borrar datos | `pipeline/db/dashboard_readonly_role.sql` (idempotente; además fuerza transacciones de solo lectura y `statement_timeout`) — *script hecho y probado*; falta ejecutarlo y cambiar la URL en Vercel | 🔴 operador |
 | HTML de Telegram sin escapar | Avisos perdidos para siempre; inyección de enlaces | `html.escape` en todo texto interpolado — *implementado + tests* | ✅ |
-| Inyección de prompt vía texto del filing | Un emisor puede sesgar la decisión del LLM | Delimitar el extracto como datos no confiables en el prompt, recortar instrucciones imperativas, y comprobar que la decisión no depende de frases tipo instrucción (test adversarial) | 🟠 |
+| Inyección de prompt vía texto del filing | Un emisor puede sesgar la decisión del LLM | Extracto delimitado como dato no confiable, etiquetas de cierre falsas neutralizadas, regla explícita en los 3 system prompts — *implementado + tests*. Pendiente: evaluación adversarial con el modelo real | 🟡 |
 | Clickjacking / cabeceras | Bajo | `X-Frame-Options`, `frame-ancestors`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, sin `X-Powered-By` — *implementado* | ✅ |
 | Indexación | Un panel privado en buscadores | `robots: noindex` — *implementado* | ✅ |
 | SQL injection | — | Todas las consultas parametrizadas; el único SQL dinámico concatena fragmentos fijos | OK |
@@ -399,3 +401,53 @@ Verificación: `tsc --noEmit` y `next build` sin errores; 762 tests de Python
 en verde (759 previos + 3 nuevos); panel probado contra Postgres con datos
 sintéticos a 375 px y 1280 px (sin scroll horizontal, 12 filas para 12
 eventos); Basic Auth comprobada (401/401/200).
+
+
+## Anexo 2 — segunda tanda de implementación
+
+Aplicado todo lo que se podía hacer desde el código; lo que queda depende de
+infraestructura, datos reales o decisiones de negocio.
+
+| Punto del informe | Estado | Dónde |
+|---|---|---|
+| Página propia por señal, enlazada desde Telegram | ✅ | `app/app/senales/[id]/page.tsx`, `signals_notifier.py` |
+| Feed ligero + detalle bajo demanda | ✅ | `lib/queries.ts` (`getSignalsFeed`, `getSignalDetail`), `app/api/senales/[id]/route.ts`, `SignalsTable.tsx` |
+| Una sola versión de cara al usuario (la recomendada por el motor) | ✅ | `getRecommendedVersion`; columna Señal, Inicio, Historial y detalle la usan; las otras dos siguen en el detalle |
+| Historial hacia delante (resultado en papel tras cada señal) | ✅ | `app/app/historial/page.tsx`, `getSignalHistory` |
+| "Por qué no se ha operado" en Inicio | ✅ | `getAbstentionSummary`, `app/app/page.tsx` |
+| Resumen semanal por Telegram | ✅ | `pipeline/notify/weekly_digest.py` (sábado UTC, una vez por semana ISO, reintenta si falla) |
+| Onboarding de primera visita | ✅ | `components/WelcomeNote.tsx` |
+| Tarjetas de cartera: 3 cifras + resto plegado | ✅ | `PortfolioVersionCard.tsx` |
+| Tipografía: monoespaciada solo en cifras/tickers/marca; sin override de `.rounded` | ✅ | `globals.css`, componentes |
+| Toggle de tema muestra la acción | ✅ | `ThemeToggle.tsx` |
+| Largo plazo fuera de la navegación principal; Historial dentro | ✅ | `Nav.tsx`, `Disclaimer.tsx` |
+| Caché de datos | ✅ | `lib/data.ts` |
+| ESLint, tests del panel (18, incluidas consultas contra Postgres), CI | ✅ | `eslint.config.mjs`, `lib/*.test.ts`, `.github/workflows/app_ci.yml` |
+| Vulnerabilidades npm | ✅ 0 | `package.json` (`overrides`) |
+| Rol de solo lectura | ✅ script / 🔴 ejecutarlo | `pipeline/db/dashboard_readonly_role.sql` |
+| Mitigación de inyección de prompt | ✅ | `adversarial_analyzer.py` + 3 tests |
+| Gráficos: eje Y recortado, jerga en inglés | ✅ | `components/*Chart*.tsx`, `CalibrationCurve.tsx` |
+| Sesgos y aciertos con signo "+" | ✅ | `formatShare` en `lib/format.ts` |
+
+**No hecho, y por qué:**
+
+- **Corrida real y validación con datos reales**: necesita las credenciales
+  y la red de GitHub Actions; no se puede hacer desde el código.
+- **Activar Basic Auth, crear el rol de solo lectura, definir
+  `DASHBOARD_URL`**: configuración en Vercel/GitHub/Postgres (pasos en
+  `RUNBOOK.md` §4).
+- **Watchlist y "Mis operaciones"**: el panel es de solo lectura por diseño y
+  no tiene cuentas; ambas necesitan almacenar preferencias por usuario. Tiene
+  sentido construirlas junto con las cuentas (Fase 5), no antes.
+- **Cuentas, pagos, API**: dependen de validar el edge y de la consulta
+  legal.
+- **Limpieza de comentarios-ensayo y partir RUNBOOK/IMPROVEMENT_PLAN**: es
+  una pasada editorial sobre miles de líneas sin cambio funcional; hacerla
+  junto a cambios de comportamiento haría ilegible el diff. Mejor en un PR
+  propio.
+- **Retirar DYNAMIC**: el propio plan (Q3) deja la decisión pendiente de
+  datos reales; retirarla sin ellos sería decidir a ciegas.
+- **404 con estado HTTP 200 en `/senales/[id]` inexistente**: el
+  `loading.tsx` raíz hace que la respuesta empiece a enviarse antes de saber
+  que no existe; la página muestra correctamente "no encontrada". Impacto
+  nulo con `noindex`; no compensa perder el estado de carga.

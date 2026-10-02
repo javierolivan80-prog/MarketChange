@@ -25,7 +25,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
   const nDisponibles = row.components.filter((c) => c.score !== null).length;
 
   return (
-    <div className="overflow-hidden rounded border border-border-subtle">
+    <div className="overflow-hidden border border-border-subtle">
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="w-full p-4 text-left hover:bg-surface-raised">
         <div className="flex items-center gap-4">
           <span className="num w-6 text-xs text-text-tertiary">{rank}</span>
@@ -54,8 +54,8 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
                 <span className={`text-sm font-medium ${c.score === null ? "text-text-tertiary" : "text-foreground"}`}>{c.name}</span>
                 <span className="num font-mono text-xs text-text-secondary">{c.score !== null ? `${c.score.toFixed(0)}/100` : "sin datos"}</span>
               </div>
-              <div className="mb-1 h-1.5 rounded bg-surface-sunken">
-                <div className={`h-1.5 rounded ${barColorClass(c.score)}`} style={{ width: `${c.score ?? 0}%` }} />
+              <div className="mb-1 h-1.5 bg-surface-sunken">
+                <div className={`h-1.5  ${barColorClass(c.score)}`} style={{ width: `${c.score ?? 0}%` }} />
               </div>
               <p className="text-xs text-text-secondary">{c.explanation}</p>
             </div>

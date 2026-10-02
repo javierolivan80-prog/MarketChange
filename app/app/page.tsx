@@ -1,16 +1,9 @@
 import Link from "next/link";
 import { isDatabaseConfigured } from "@/lib/db";
-import {
-  getLatestPortfolioRunBatchTag,
-  getPortfolioReport,
-  getLatestPaperTradingRunBatchTag,
-  getPaperTradingReport,
-  getLatestValidationRunBatchTag,
-  getValidationReport,
-  getRecentTradeSignals,
-  getPipelineFreshness,
-} from "@/lib/queries";
+import { getAbstentionSummary, getHomeSummary, getPipelineFreshness, getRecentTradeSignals, getRecommendedVersion } from "@/lib/data";
+import type { AbstentionCategory } from "@/lib/queries";
 import { Nav } from "@/components/Nav";
+import { WelcomeNote } from "@/components/WelcomeNote";
 import { SampleBadge } from "@/components/ui/SampleBadge";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { NotConfigured } from "@/components/ui/PageState";
@@ -33,13 +26,24 @@ const VERDICT_COPY: Record<string, { title: string; color: string; text: string 
   C: { title: "Todavía no funciona de forma fiable", color: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10", text: "text-rose-800 dark:text-rose-400" },
 };
 
+const ABSTENTION_LABELS: Record<AbstentionCategory, string> = {
+  priced_in: "El mercado ya lo sabía",
+  low_confidence: "El debate no fue concluyente",
+  low_ev: "Valor esperado insuficiente tras costes",
+  delisting: "Riesgo de exclusión de bolsa",
+  contradictory: "Datos contradictorios",
+  fda_unconfirmed: "FDA aún no confirmado por la empresa",
+  illiquid: "Acción poco líquida",
+  other: "Otros motivos",
+};
+
 // Más de 2 días sin analizar nada (fin de semana incluido) = algo va mal.
 const STALE_AFTER_HOURS = 60;
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
-      <p className="mb-1 font-mono text-xs uppercase tracking-wide text-text-secondary">{label}</p>
+      <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">{label}</p>
       <p className="num text-2xl font-semibold text-foreground">{value}</p>
       {hint && <p className="mt-0.5 text-xs text-text-tertiary">{hint}</p>}
     </div>
@@ -49,27 +53,20 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 export default async function InicioPage() {
   if (!isDatabaseConfigured()) return <NotConfigured active="/" title="Resumen" />;
 
-  const [portfolioTag, paperTag, validationTag, recent, freshness] = await Promise.all([
-    getLatestPortfolioRunBatchTag(),
-    getLatestPaperTradingRunBatchTag(),
-    getLatestValidationRunBatchTag(),
-    getRecentTradeSignals(5),
+  const version = await getRecommendedVersion();
+  const [summary, recent, freshness, abstention] = await Promise.all([
+    getHomeSummary(version),
+    getRecentTradeSignals(version, 5),
     getPipelineFreshness(),
+    getAbstentionSummary(version, 7),
   ]);
 
-  const [portfolioReport, paperReport, validationReport] = await Promise.all([
-    portfolioTag ? getPortfolioReport(portfolioTag) : Promise.resolve(null),
-    paperTag ? getPaperTradingReport(paperTag) : Promise.resolve(null),
-    validationTag ? getValidationReport(validationTag) : Promise.resolve(null),
-  ]);
-
-  // Las cifras de abajo son de la versión que el propio motor de validación
-  // recomienda — antes se mostraba siempre BALANCED, aunque el veredicto de
-  // justo encima hablara de otra versión.
-  const shownVersion = validationReport?.best_version ?? "BALANCED";
-  const shown = portfolioReport?.versions?.[shownVersion];
-  const verdict = validationReport ? VERDICT_COPY[validationReport.best_decision.option] : null;
-  const openPositions = paperReport ? Object.values(paperReport.versions).reduce((sum, v) => sum + v.n_open_positions, 0) : null;
+  // Las cifras y señales de esta página son las de la versión que el propio
+  // motor de validación recomienda — no siempre BALANCED.
+  const shownVersion = version;
+  const shown = summary.portfolio?.trade_metrics && summary.portfolio.equity_metrics ? summary.portfolio : null;
+  const verdict = summary.validation ? VERDICT_COPY[summary.validation.best_decision.option] : null;
+  const openPositions = summary.open_paper_positions;
 
   const lastAnalyzed = freshness.last_analyzed_at ? new Date(freshness.last_analyzed_at) : null;
   const hoursSince = lastAnalyzed ? (Date.now() - lastAnalyzed.getTime()) / 3_600_000 : null;
@@ -80,13 +77,15 @@ export default async function InicioPage() {
       <Nav active="/" />
 
       <header className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="font-mono text-2xl font-semibold tracking-tight text-foreground">Resumen</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Resumen</h1>
         <p className={`num text-xs ${isStale ? "text-amber-700 dark:text-amber-400" : "text-text-tertiary"}`}>
           {lastAnalyzed
             ? `Último análisis: ${formatDateTime(freshness.last_analyzed_at)} · ${freshness.analyzed_last_24h} eventos en 24 h${isStale ? " · el pipeline no ha corrido recientemente" : ""}`
             : "El pipeline todavía no ha analizado ningún evento"}
         </p>
       </header>
+
+      <WelcomeNote />
 
       {/* Últimas señales — lo accionable va primero */}
       <section className="mb-6">
@@ -97,16 +96,16 @@ export default async function InicioPage() {
           </Link>
         </div>
         {recent.length === 0 ? (
-          <p className="rounded border border-dashed border-border-subtle p-4 text-sm text-text-secondary">
+          <p className="border border-dashed border-border-subtle p-4 text-sm text-text-secondary">
             Ningún evento ha superado todavía los filtros para operar. La mayoría de eventos se descartan a propósito: el sistema solo
             señala los que tienen un valor esperado positivo después de costes.
           </p>
         ) : (
-          <ul className="divide-y divide-border-subtle rounded border border-border-subtle">
+          <ul className="divide-y divide-border-subtle border border-border-subtle">
             {recent.map((s) => (
               <li key={s.event_id}>
                 <Link
-                  href={`/senales?ticker=${encodeURIComponent(s.ticker)}`}
+                  href={`/senales/${s.event_id}`}
                   className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-0.5 px-3 py-2 text-sm hover:bg-surface-raised sm:grid-cols-[6rem_5rem_auto_1fr_auto]"
                 >
                   <span className="num text-text-tertiary">{formatDate(s.d0_close_date)}</span>
@@ -123,23 +122,45 @@ export default async function InicioPage() {
         )}
       </section>
 
-      {portfolioReport && (portfolioReport.sample || portfolioReport.oos_warning) && (
+      {/* Lo que NO se ha operado y por qué — tan informativo como lo que sí */}
+      {abstention.analyzed > 0 && (
+        <section className="mb-6">
+          <h2 className="mb-2 text-base font-semibold text-foreground">Últimos {abstention.days} días</h2>
+          <p className="num mb-2 text-sm text-text-secondary">
+            {abstention.analyzed} eventos analizados · {abstention.traded} superaron los filtros · {abstention.analyzed - abstention.traded}{" "}
+            descartados
+          </p>
+          {abstention.reasons.length > 0 && (
+            <ul className="space-y-1 text-sm">
+              {abstention.reasons.map((r) => (
+                <li key={r.category} className="flex items-center gap-3">
+                  <span className="num w-10 text-right text-text-tertiary">{r.n}</span>
+                  <span className="h-1.5 bg-border-strong" style={{ width: `${Math.max(4, (r.n / (abstention.analyzed - abstention.traded)) * 160)}px` }} aria-hidden="true" />
+                  <span className="text-text-secondary">{ABSTENTION_LABELS[r.category]}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {summary.portfolio && (summary.portfolio.sample || summary.portfolio.oos_warning) && (
         <div className="mb-3">
-          <SampleBadge sample={portfolioReport.sample} warning={portfolioReport.oos_warning} />
+          <SampleBadge sample={summary.portfolio.sample} warning={summary.portfolio.oos_warning ?? undefined} />
         </div>
       )}
 
       {/* Semáforo */}
       {verdict ? (
-        <section className={`mb-5 rounded border p-4 ${verdict.color}`}>
+        <section className={`mb-5  border p-4 ${verdict.color}`}>
           <p className={`mb-1.5 text-lg font-semibold ${verdict.text}`}>{verdict.title}</p>
-          <p className="text-sm text-foreground">{validationReport!.best_decision.recommendation}</p>
+          <p className="text-sm text-foreground">{summary.validation!.best_decision.recommendation}</p>
           <Link href="/funciona" className="mt-1.5 inline-block text-sm text-accent-700 hover:underline dark:text-accent-400">
             Ver por qué →
           </Link>
         </section>
       ) : (
-        <section className="mb-5 rounded border border-border-subtle p-4">
+        <section className="mb-5 border border-border-subtle p-4">
           <p className="mb-1.5 text-lg font-semibold text-foreground">Todavía acumulando datos</p>
           <p className="text-sm text-text-secondary">
             Hacen falta más eventos reales antes de poder decir con confianza si el sistema funciona. Al principio es normal.
@@ -147,7 +168,7 @@ export default async function InicioPage() {
         </section>
       )}
 
-      {shown && (
+      {shown && shown.trade_metrics && shown.equity_metrics && (
         <section>
           <p className="mb-2 text-xs text-text-tertiary">
             Backtest de la versión {versionLabel(shownVersion).toLowerCase()} — simulado, sin dinero real.

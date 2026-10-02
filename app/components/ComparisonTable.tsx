@@ -18,7 +18,7 @@ const KEY = { CONSERVATIVE: "conservative", BALANCED: "balanced", AGGRESSIVE: "a
 
 export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
   return (
-    <div className="overflow-x-auto rounded border border-border-subtle">
+    <div className="overflow-x-auto border border-border-subtle">
       <table className="w-full border-collapse text-left text-sm">
         <thead>
           <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">

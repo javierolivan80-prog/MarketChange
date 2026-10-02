@@ -11,7 +11,7 @@ export function StatePage({ active, title, children }: { active: string; title: 
   return (
     <main className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
       <Nav active={active} />
-      <h1 className="mb-4 font-mono text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+      <h1 className="mb-4 text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
       {children}
     </main>
   );
@@ -19,7 +19,7 @@ export function StatePage({ active, title, children }: { active: string; title: 
 
 export function StateBox({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="rounded border border-border-subtle bg-surface p-4">
+    <div className="border border-border-subtle bg-surface p-4">
       <p className="mb-1 font-medium text-foreground">{title}</p>
       {children && <div className="text-sm text-text-secondary">{children}</div>}
     </div>

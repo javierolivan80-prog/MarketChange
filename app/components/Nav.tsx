@@ -14,12 +14,14 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 // Antes la cabecera usaba márgenes negativos (-mx-6) para "salirse" del
 // padding de la página — con páginas de padding 4 eso la hacía 8px más ancha
 // que la pantalla y provocaba scroll horizontal en móvil.
+// Largo plazo (ranking fundamental) es otro producto, con otro horizonte: va
+// en el pie de página, no compitiendo con el flujo principal de señales.
 const TABS = [
   { href: "/", label: "Resumen" },
   { href: "/senales", label: "Señales" },
+  { href: "/historial", label: "Historial" },
   { href: "/cartera", label: "Cartera" },
   { href: "/funciona", label: "¿Funciona?" },
-  { href: "/largo-plazo", label: "Largo plazo" },
   { href: "/como-funciona", label: "Cómo funciona" },
 ] as const;
 
@@ -44,7 +46,7 @@ export function Nav({ active }: { active?: string }) {
                 key={tab.href}
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
-                className={`whitespace-nowrap border-b-2 px-3 py-2 font-mono text-xs uppercase tracking-wide ${
+                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
                   isActive
                     ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
                     : "border-transparent text-text-secondary hover:text-foreground"

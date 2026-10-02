@@ -10,7 +10,7 @@ import type { SampleSplit } from "@/lib/queries";
 export function SampleBadge({ sample, warning }: { sample: SampleSplit | undefined; warning?: string }) {
   if (sample === "oos") {
     return (
-      <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-500/10 dark:text-amber-400">
+      <div className="border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-500/10 dark:text-amber-400">
         <span className="mr-1 font-semibold uppercase tracking-wide">Out-of-sample</span>
         {warning ?? "Datos fuera de la muestra usada para calibrar el sistema — no usar para ajustar parámetros."}
       </div>
@@ -18,14 +18,14 @@ export function SampleBadge({ sample, warning }: { sample: SampleSplit | undefin
   }
   if (sample === "in_sample") {
     return (
-      <div className="rounded border border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
+      <div className="border border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
         <span className="mr-1 font-semibold uppercase tracking-wide text-foreground">In-sample</span>
         Corrida sobre la parte del histórico usada para calibrar el sistema.
       </div>
     );
   }
   return (
-    <div className="rounded border border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
+    <div className="border border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
       <span className="mr-1 font-semibold uppercase tracking-wide text-foreground">Sin partición de muestra</span>
       Corrida sobre todo el histórico disponible, sin separar in-sample de out-of-sample.
     </div>

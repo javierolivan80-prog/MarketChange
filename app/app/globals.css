@@ -105,13 +105,7 @@ body {
   font-feature-settings: "tnum" 1;
 }
 
-/* Aspecto "terminal técnico" pedido explícitamente: sin esquinas
-   redondeadas en tarjetas/botones/inputs — una terminal de verdad
-   (Bloomberg, un panel de control) no tiene bordes curvos. Se sobreescribe
-   aquí, en un solo sitio, en vez de quitar "rounded" de cada componente uno
-   a uno. Deliberadamente NO toca rounded-full (círculos: el paso numerado
-   de Cómo funciona, la barra de "sorpresa" de Señales), que sigue siendo
-   una clase con su propio valor fijo (9999px), no ligada a --radius. */
-.rounded {
-  border-radius: 0;
-}
+/* Esquinas rectas en toda la interfaz: los componentes simplemente no usan
+   `rounded` (antes lo usaban y una regla global `.rounded { border-radius: 0 }`
+   lo anulaba — una clase que dice una cosa y hace otra). rounded-full se
+   mantiene donde un círculo es intencional. */

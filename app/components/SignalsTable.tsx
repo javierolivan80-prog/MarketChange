@@ -1,14 +1,14 @@
 "use client";
 
-// SignalsTable.tsx — feed cronológico con sort/paginación real vía Tanstack
-// Table (el filtrado ya llegó hecho del servidor, ver SignalsFilterForm).
-// Bull/Bear/Judge se expande por fila (colapsable) — un Set de event_ids
-// expandidos en vez del expanding model de Tanstack, más simple para una
-// sub-fila de texto libre en vez de una tabla anidada.
-import { Fragment, useState } from "react";
+// SignalsTable.tsx — feed cronológico con sort/paginación vía Tanstack Table
+// (el filtrado ya llegó hecho del servidor, ver SignalsFilterForm). Las filas
+// son ligeras; el razonamiento completo de cada una se pide a
+// /api/senales/[id] solo al desplegarla (SignalRowDetail).
+import Link from "next/link";
+import { Fragment, useEffect, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, getPaginationRowModel, getSortedRowModel, useReactTable, type SortingState } from "@tanstack/react-table";
-import type { SignalFeedRow } from "@/lib/queries";
-import { SignalDetail } from "@/components/SignalDetail";
+import type { SignalDetailData, SignalFeedRow, StrategyVersion } from "@/lib/queries";
+import { SignalAnalysis } from "@/components/SignalAnalysis";
 import { DirectionBadge, SignedPct } from "@/components/ui/DirectionBadge";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { formatDate, formatFracAsPct } from "@/lib/format";
@@ -18,7 +18,14 @@ const columnHelper = createColumnHelper<SignalFeedRow>();
 
 const columns = [
   columnHelper.accessor("d0_close_date", { header: "Fecha", cell: (c) => <span className="num">{formatDate(c.getValue())}</span> }),
-  columnHelper.accessor("ticker", { header: "Ticker", cell: (c) => <span className="font-mono font-medium">{c.getValue()}</span> }),
+  columnHelper.accessor("ticker", {
+    header: "Ticker",
+    cell: (c) => (
+      <Link href={`/senales/${c.row.original.event_id}`} className="font-mono font-medium text-foreground hover:underline">
+        {c.getValue()}
+      </Link>
+    ),
+  }),
   columnHelper.accessor("event_class", { header: "Evento", cell: (c) => eventClassLabel(c.getValue()) }),
   columnHelper.accessor("source", { header: "Fuente", cell: (c) => sourceLabel(c.getValue()) }),
   columnHelper.accessor("novelty_score", {
@@ -75,7 +82,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         <ExportCsvButton rows={rows} />
       </div>
 
-      <div className="overflow-x-auto rounded border border-border-subtle">
+      <div className="overflow-x-auto border border-border-subtle">
         <table className="w-full min-w-[760px] border-collapse text-left text-sm">
           <caption className="sr-only">Señales generadas por el sistema, con su convicción, confianza y resultado si se operó</caption>
           <thead>
@@ -111,7 +118,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                         onClick={() => toggle(row.original.event_id)}
                         aria-expanded={isExpanded}
                         aria-label={`${isExpanded ? "Ocultar" : "Ver"} razonamiento de ${row.original.ticker}, ${formatDate(row.original.d0_close_date)}`}
-                        className="text-text-tertiary hover:text-foreground"
+                        className="-m-2 p-2 text-text-tertiary hover:text-foreground"
                       >
                         {isExpanded ? "▾" : "▸"}
                       </button>
@@ -122,7 +129,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       </td>
                     ))}
                   </tr>
-                  {isExpanded && <SignalDetail row={row.original} colSpan={columns.length + 1} />}
+                  {isExpanded && <SignalRowDetail eventId={row.original.event_id} colSpan={columns.length + 1} />}
                 </Fragment>
               );
             })}
@@ -134,7 +141,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         <button
           onClick={() => table.previousPage()}
           disabled={!table.getCanPreviousPage()}
-          className="rounded border border-border-strong px-2 py-1 disabled:opacity-40"
+          className="min-h-11 border border-border-strong px-3 disabled:opacity-40 sm:min-h-0 sm:py-1"
         >
           ← Anterior
         </button>
@@ -144,11 +151,48 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         <button
           onClick={() => table.nextPage()}
           disabled={!table.getCanNextPage()}
-          className="rounded border border-border-strong px-2 py-1 disabled:opacity-40"
+          className="min-h-11 border border-border-strong px-3 disabled:opacity-40 sm:min-h-0 sm:py-1"
         >
           Siguiente →
         </button>
       </div>
     </div>
+  );
+}
+
+type DetailState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ok"; detail: SignalDetailData; recommended: StrategyVersion };
+
+function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: number }) {
+  const [state, setState] = useState<DetailState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/senales/${eventId}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((body) => !cancelled && setState({ status: "ok", detail: body.detail, recommended: body.recommended }))
+      .catch(() => !cancelled && setState({ status: "error" }));
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId]);
+
+  return (
+    <tr className="border-b border-border-subtle bg-surface-raised">
+      <td colSpan={colSpan} className="px-4 py-4">
+        {state.status === "loading" && <p className="text-xs text-text-tertiary">Cargando análisis…</p>}
+        {state.status === "error" && (
+          <p className="text-xs text-text-secondary">
+            No se pudo cargar el análisis.{" "}
+            <Link href={`/senales/${eventId}`} className="text-accent-700 underline dark:text-accent-400">
+              Abrir la señal
+            </Link>
+          </p>
+        )}
+        {state.status === "ok" && <SignalAnalysis detail={state.detail} recommended={state.recommended} />}
+      </td>
+    </tr>
   );
 }

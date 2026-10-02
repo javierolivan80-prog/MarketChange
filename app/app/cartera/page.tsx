@@ -1,5 +1,5 @@
 import { isDatabaseConfigured } from "@/lib/db";
-import { getLatestPortfolioRunBatchTag, getPortfolioReport, getLatestPaperTradingRunBatchTag, getPaperTradingReport } from "@/lib/queries";
+import { getLatestPortfolioRunBatchTag, getPortfolioReport, getLatestPaperTradingRunBatchTag, getPaperTradingReport } from "@/lib/data";
 import { PortfolioVersionCard } from "@/components/PortfolioVersionCard";
 import { Nav } from "@/components/Nav";
 import { ExportPdfButton } from "@/components/ExportPdfButton";
@@ -8,7 +8,7 @@ import { ConfidenceBucketBars } from "@/components/ConfidenceBucketBars";
 import { Callout } from "@/components/ui/Callout";
 import { SampleBadge } from "@/components/ui/SampleBadge";
 import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/PageState";
-import { formatPct, formatUsd } from "@/lib/format";
+import { formatShare, formatUsd } from "@/lib/format";
 import { VERSION_LABELS, VERSION_ORDER } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +48,7 @@ export default async function CarteraPage() {
       <Nav active="/cartera" />
       <header className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Cartera</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Cartera</h1>
           <ExportPdfButton report={report} />
         </div>
         <p className="mt-1 text-sm text-text-secondary">Cómo le ha ido al sistema si se hubiera operado — todo simulado, nunca con dinero real.</p>
@@ -73,7 +73,7 @@ export default async function CarteraPage() {
             </ul>
           </Callout>
         ) : (
-          <div className="mb-4 rounded border border-border-subtle bg-surface-raised p-4">
+          <div className="mb-4 border border-border-subtle bg-surface-raised p-4">
             <p className="mb-2 font-medium text-foreground">¿Invertir dinero real? {recommendation.verdict}</p>
             <ul className="list-inside list-disc space-y-0.5 text-sm text-text-secondary">
               {recommendation.findings.map((f, i) => (
@@ -83,11 +83,11 @@ export default async function CarteraPage() {
           </div>
         )}
 
-        <div className="mb-4 rounded border border-border-subtle p-4 text-sm">
+        <div className="mb-4 border border-border-subtle p-4 text-sm">
           <p className="mb-1 font-medium text-foreground">Sesgos de datos a tener en cuenta</p>
           <p className="num text-text-secondary">
-            {bias_report.n_delisted}/{bias_report.n_total_tickers} acciones que desaparecieron de bolsa ({formatPct(bias_report.survivorship_bias_pct, 1)}{" "}
-            posible sesgo) · {bias_report.n_price_gaps}/{bias_report.n_price_rows} filas de precio con huecos ({formatPct(bias_report.data_gap_pct, 1)})
+            {bias_report.n_delisted}/{bias_report.n_total_tickers} acciones que desaparecieron de bolsa ({formatShare(bias_report.survivorship_bias_pct, 1)}{" "}
+            posible sesgo) · {bias_report.n_price_gaps}/{bias_report.n_price_rows} filas de precio con huecos ({formatShare(bias_report.data_gap_pct, 1)})
           </p>
         </div>
 
@@ -117,7 +117,7 @@ export default async function CarteraPage() {
               {VERSION_ORDER.filter((v) => paperReport.versions[v]).map((version) => {
                 const v = paperReport.versions[version];
                 return (
-                  <div key={version} className="min-w-[300px] flex-1 rounded border border-border-subtle bg-surface p-4">
+                  <div key={version} className="min-w-[300px] flex-1 border border-border-subtle bg-surface p-4">
                     <h3 className="mb-3 text-base font-semibold text-foreground">{VERSION_LABELS[version]}</h3>
 
                     <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
@@ -128,7 +128,7 @@ export default async function CarteraPage() {
                       <dt className="text-text-secondary">Cerradas</dt>
                       <dd className="num text-right text-foreground">{v.n_closed_trades}</dd>
                       <dt className="text-text-secondary">Acierto esta semana</dt>
-                      <dd className="num text-right text-foreground">{v.trade_metrics.win_rate !== null ? formatPct(v.trade_metrics.win_rate * 100, 0) : "—"}</dd>
+                      <dd className="num text-right text-foreground">{v.trade_metrics.win_rate !== null ? formatShare(v.trade_metrics.win_rate * 100, 0) : "—"}</dd>
                     </dl>
 
                     {v.alerts.length > 0 && (

@@ -27,7 +27,7 @@ export default function ComoFuncionaPage() {
     <main className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
       <Nav active="/como-funciona" />
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground font-mono">Cómo funciona</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Cómo funciona</h1>
         <p className="mt-1 text-sm text-text-secondary">Qué hace el sistema, paso a paso, sin dar nada por sabido.</p>
       </header>
 
@@ -50,7 +50,7 @@ export default function ComoFuncionaPage() {
 
         <Step n={2} title="¿Es esto una sorpresa? (Novelty)">
           <p>
-            Si la empresa ya había avisado de esto antes, o el precio ya se movió en los días previos anticipándolo, la "sorpresa" es
+            Si la empresa ya había avisado de esto antes, o el precio ya se movió en los días previos anticipándolo, la “sorpresa” es
             baja — y algo que el mercado ya sabe no da ventaja. Se mide qué tan nuevo es realmente el evento.
           </p>
         </Step>
@@ -80,7 +80,7 @@ export default function ComoFuncionaPage() {
 
         <Step n={6} title="¿Merece la pena operar, o mejor abstenerse?">
           <p>
-            Antes de decidir "operar", el sistema comprueba 7 condiciones: ¿es realmente una sorpresa?, ¿el Juez tiene suficiente
+            Antes de decidir “operar”, el sistema comprueba 7 condiciones: ¿es realmente una sorpresa?, ¿el Juez tiene suficiente
             seguridad?, ¿el valor esperado compensa las comisiones?, ¿hay señales de que el dato es poco fiable?, ¿la acción tiene
             suficiente liquidez?... Si CUALQUIERA falla, la decisión es <strong>no operar</strong> — abstenerse es un resultado válido,
             no un fallo del sistema.
@@ -98,7 +98,7 @@ export default function ComoFuncionaPage() {
         <Step n={8} title="¿Realmente funciona esto?">
           <p>
             Por último, se audita el propio sistema: ¿el tipo de evento mueve el precio de forma estadísticamente real, o podría ser
-            ruido? ¿El sistema sabe cuándo confiar en sí mismo (si dice "80% seguro", acierta de verdad el 80% de las veces)? ¿El
+            ruido? ¿El sistema sabe cuándo confiar en sí mismo (si dice “80% seguro”, acierta de verdad el 80% de las veces)? ¿El
             resultado se mantiene si suben las comisiones o cambia el mercado? Todo esto está en la pestaña{" "}
             <strong>¿Funciona?</strong>
           </p>
@@ -123,9 +123,9 @@ export default function ComoFuncionaPage() {
       <section className="mt-8 border-t border-border-subtle pt-6">
         <p className="mb-2 font-semibold text-foreground">Reglas que el sistema nunca rompe</p>
         <ul className="list-inside list-disc space-y-1 text-sm text-text-secondary">
-          <li>Nunca usa información que no existía en el momento de la decisión (nada de "trampa" mirando al futuro).</li>
+          <li>Nunca usa información que no existía en el momento de la decisión (nada de “trampa” mirando al futuro).</li>
           <li>Nunca inventa un número que no pueda calcular — si un dato no está disponible, lo dice, no lo estima a ciegas.</li>
-          <li>Prefiere decir "no operar" antes que fingir seguridad que no tiene.</li>
+          <li>Prefiere decir “no operar” antes que fingir seguridad que no tiene.</li>
         </ul>
       </section>
     </main>

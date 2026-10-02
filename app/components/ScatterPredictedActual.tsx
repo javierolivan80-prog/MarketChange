@@ -27,7 +27,7 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
     <div>
       <div className="h-48 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+          <ComposedChart margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
             <XAxis
               dataKey="predicted"
@@ -54,7 +54,7 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               cursor={{ strokeDasharray: "3 3" }}
             />
             <Line data={diagonal} dataKey="actual" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
-            <Scatter data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name="trades" />
+            <Scatter data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name="operaciones" />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

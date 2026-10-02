@@ -15,15 +15,15 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
   return (
     <main className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
       <Nav active="" />
-      <h1 className="mb-4 font-mono text-2xl font-semibold tracking-tight text-foreground">No se pudieron cargar los datos</h1>
-      <div className="rounded border border-border-subtle bg-surface p-4 text-sm text-text-secondary">
+      <h1 className="mb-4 text-2xl font-semibold tracking-tight text-foreground">No se pudieron cargar los datos</h1>
+      <div className="border border-border-subtle bg-surface p-4 text-sm text-text-secondary">
         <p className="mb-3">
           Lo más habitual es que la base de datos esté arrancando o no responda. Suele resolverse en unos segundos.
         </p>
         <button
           type="button"
           onClick={reset}
-          className="rounded bg-accent-600 px-3 py-1.5 font-mono text-sm font-medium uppercase tracking-wide text-white hover:bg-accent-700"
+          className="bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700"
         >
           Reintentar
         </button>

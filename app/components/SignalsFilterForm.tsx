@@ -11,7 +11,7 @@ import { useId, useState } from "react";
 import { eventClassLabel } from "@/lib/labels";
 
 const INPUT =
-  "rounded border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600";
+  " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600";
 const LABEL = "text-xs font-medium text-text-secondary";
 
 export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) {
@@ -56,7 +56,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
   }
 
   return (
-    <form onSubmit={apply} className="mb-5 flex flex-wrap items-end gap-3 rounded border border-border-subtle bg-surface-raised p-3 text-sm">
+    <form onSubmit={apply} className="mb-5 flex flex-wrap items-end gap-3 border border-border-subtle bg-surface-raised p-3 text-sm">
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.ticker} className={LABEL}>
           Ticker
@@ -114,10 +114,10 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         />
       </div>
       <div className="flex gap-2">
-        <button type="submit" className="rounded bg-accent-600 px-3 py-1.5 font-mono text-sm font-medium uppercase tracking-wide text-white hover:bg-accent-700">
+        <button type="submit" className="bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700">
           Filtrar
         </button>
-        <button type="button" onClick={clear} className="px-2 py-1.5 font-mono text-sm uppercase tracking-wide text-text-secondary hover:text-foreground">
+        <button type="button" onClick={clear} className="px-2 py-1.5 text-sm text-text-secondary hover:text-foreground">
           Limpiar
         </button>
       </div>

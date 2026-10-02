@@ -27,7 +27,7 @@ export function Callout({
   className?: string;
 }) {
   return (
-    <div className={`rounded border px-2 py-1.5 text-xs ${STYLES[kind]} ${className}`}>
+    <div className={` border px-2 py-1.5 text-xs ${STYLES[kind]} ${className}`}>
       <span className="mr-1 font-semibold uppercase tracking-wide">{LABELS[kind]}:</span>
       {children}
     </div>
