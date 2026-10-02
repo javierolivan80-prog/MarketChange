@@ -89,6 +89,10 @@ def fetch_pending_signals(conn) -> list[dict]:
     if config.ALERT_EVENT_CLASSES:
         filters.append("e.event_class = ANY(%s)")
         params.append(list(config.ALERT_EVENT_CLASSES))
+    if config.ALERT_REQUIRE_TECHNICAL:
+        # Solo señales cuyo plan técnico pasa las comprobaciones previas
+        # (analyze/technical_analysis.py). Sin plan todavía = pendiente.
+        filters.append("ta.passes_filters IS TRUE")
     extra = "".join(f"\n              AND {f}" for f in filters)
     with conn.cursor() as cur:
         cur.execute(
@@ -97,9 +101,13 @@ def fetch_pending_signals(conn) -> list[dict]:
                    ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
                    ea.confidence_in_conviction, ea.net_conviction,
                    ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
-                   ea.bull_analyst_output, ea.bear_analyst_output, ea.judge_output
+                   ea.bull_analyst_output, ea.bear_analyst_output, ea.judge_output,
+                   ta.entry_price, ta.stop_price, ta.target_price, ta.target2_price, ta.risk_reward,
+                   ta.confidence AS tech_confidence, ta.passes_filters, ta.position_size_pct, ta.timeframe_days,
+                   ta.details->>'reason_if_rejected' AS tech_reason
             FROM event_analyses ea
             JOIN events e ON e.event_id = ea.event_id
+            LEFT JOIN technical_analyses ta ON ta.event_id = ea.event_id
             WHERE ea.notified_at IS NULL
               AND (ea.trade_decision_conservative != 'NO_TRADE'
                    OR ea.trade_decision_aggressive != 'NO_TRADE'
@@ -109,6 +117,32 @@ def fetch_pending_signals(conn) -> list[dict]:
             params,
         )
         return cur.fetchall()
+
+
+def _price(value) -> str:
+    return f"{float(value):.2f}"
+
+
+def _plan_lines(row: dict) -> list[str]:
+    """Plan técnico (analyze/technical_analysis.py), si ya está calculado."""
+    if row.get("tech_confidence") is None or row.get("entry_price") is None:
+        return []
+    verdict = "pasa los filtros de riesgo" if row.get("passes_filters") else f"no pasa los filtros: {row.get('tech_reason') or 'ver panel'}"
+    lines = [f"\n<b>Plan técnico</b> · confianza {int(row['tech_confidence'])}/100 · {html.escape(verdict)}"]
+    targets = f"Objetivo {_price(row['target_price'])}" if row.get("target_price") is not None else "Objetivo —"
+    if row.get("target2_price") is not None:
+        targets += f" (final {_price(row['target2_price'])})"
+    lines.append(f"Entrada ~{_price(row['entry_price'])} · Stop {_price(row['stop_price'])} · {targets}")
+    extra = []
+    if row.get("risk_reward") is not None:
+        extra.append(f"Riesgo/beneficio 1:{float(row['risk_reward']):.1f}")
+    if row.get("timeframe_days") is not None:
+        extra.append(f"~{int(row['timeframe_days'])} sesiones")
+    if row.get("position_size_pct") is not None and row.get("passes_filters"):
+        extra.append(f"tamaño máx. {float(row['position_size_pct']):g}% del capital")
+    if extra:
+        lines.append(" · ".join(extra))
+    return lines
 
 
 def _format_message(row: dict) -> str:
@@ -152,6 +186,7 @@ def _format_message(row: dict) -> str:
     uncertainty = (row.get("judge_output") or {}).get("key_uncertainty")
     if uncertainty:
         lines.append(f"<b>Qué lo cambiaría:</b> {e(_clip(uncertainty))}")
+    lines.extend(_plan_lines(row))
 
     links = [f'<a href="{e(row["source_url"], quote=True)}">Filing</a>']
     if config.DASHBOARD_URL:

@@ -685,6 +685,7 @@ sin filtro):
 | `ALERT_MIN_CONFIDENCE` | `65` | Confianza mínima del Judge para avisar |
 | `ALERT_TICKERS` | `AAPL,MSFT` | Solo esos tickers |
 | `ALERT_EVENT_CLASSES` | `8K_2.02_EARNINGS,FDA_CRL` | Solo esos tipos de evento |
+| `ALERT_REQUIRE_TECHNICAL` | `true` | Solo señales cuyo plan técnico pasa las comprobaciones previas (catalizador confirmado, ≥ 2 indicadores alineados, riesgo/beneficio ≥ 1:2, stop sobre soporte). Desactivado por defecto hasta validar esa capa con datos reales; mientras, el plan se incluye en cada aviso como información |
 
 Un evento filtrado no se marca como avisado: si se amplía el filtro, los que
 sigan dentro de la ventana de antigüedad se avisan en la siguiente pasada.

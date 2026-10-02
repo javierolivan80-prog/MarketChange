@@ -70,6 +70,15 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "Bloque __main__ del smoke test manual (--smoke-test), fuera del "
         "camino de producción."
     ),
+    (
+        "technical_analysis.py",
+        "LEFT JOIN technical_analyses ta ON ta.event_id = e.event_id",
+    ): (
+        "Cola de trabajo: qué eventos operables no tienen plan técnico. No "
+        "aporta información al cálculo — cada plan se calcula después con "
+        "load_prices(..., as_of=d0_close_date) y la confirmación del "
+        "catalizador va acotada por d0_close_date BETWEEN."
+    ),
     # La entrada que hasta la sesión 11 (IMPROVEMENT_PLAN.md R11) cubría la
     # rama as_of_date=None de fetch_annual_rows ("SELECT * FROM fundamentals
     # WHERE cik = %s ORDER BY fiscal_period_end") ya no hace falta: esa rama

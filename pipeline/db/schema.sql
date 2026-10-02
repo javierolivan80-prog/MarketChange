@@ -790,3 +790,26 @@ ALTER TABLE portfolio_trades ADD CONSTRAINT portfolio_trades_exit_reason_check
 -- ningún cálculo, solo notifica la primera vez que ve esa transición.
 -- ============================================================================
 ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+
+-- ============================================================================
+-- technical_analyses: confirmación técnica y plan de operación por señal
+-- (pipeline/analyze/technical_analysis.py). Una fila por evento con alguna
+-- versión operando. Calculado SOLO con precios de trade_date <= d0_close_date.
+-- details guarda indicadores, niveles, comprobaciones, puntuación desglosada,
+-- reglas de salida y limitaciones declaradas del cálculo.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS technical_analyses (
+    event_id            BIGINT PRIMARY KEY REFERENCES events(event_id),
+    computed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    direction           TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
+    entry_price         NUMERIC,
+    stop_price          NUMERIC,
+    target_price        NUMERIC,      -- objetivo parcial (primera resistencia/soporte)
+    target2_price       NUMERIC,      -- objetivo final
+    risk_reward         NUMERIC,      -- recompensa/riesgo hasta target_price
+    confidence          INT NOT NULL CHECK (confidence BETWEEN 0 AND 100),
+    passes_filters      BOOLEAN NOT NULL,
+    position_size_pct   NUMERIC,      -- % máximo del capital, ya ajustado por volatilidad
+    timeframe_days      INT,
+    details             JSONB NOT NULL
+);
