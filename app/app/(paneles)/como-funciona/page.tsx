@@ -87,11 +87,11 @@ export default function ComoFuncionaPage() {
           </p>
         </Step>
 
-        <Step n={7} title="Simulación (nunca dinero real)">
+        <Step n={7} title="Seguimiento de resultados">
           <p>
-            Cuando sí se decide operar, se simula la operación con reglas realistas (comisiones, entrada al día siguiente, stop-loss,
-            take-profit) para ver qué habría pasado. Esto se hace de dos formas: sobre todo el histórico (<strong>Cartera</strong>) y en
-            vivo esta semana con datos reales pero sin arriesgar dinero (<strong>papel</strong>).
+            Cada señal se mide con reglas realistas (comisiones, entrada al día siguiente, stop-loss, objetivo de beneficio) de dos
+            formas: aplicada a todos los eventos pasados (<strong>Cartera</strong>) y, desde que se publica, con los precios reales de
+            mercado (<strong>Historial</strong>). Así se ve si lo que funcionó en el pasado se sigue cumpliendo.
           </p>
         </Step>
 
@@ -100,7 +100,7 @@ export default function ComoFuncionaPage() {
             Por último, se audita el propio sistema: ¿el tipo de evento mueve el precio de forma estadísticamente real, o podría ser
             ruido? ¿El sistema sabe cuándo confiar en sí mismo (si dice “80% seguro”, acierta de verdad el 80% de las veces)? ¿El
             resultado se mantiene si suben las comisiones o cambia el mercado? Todo esto está en la pestaña{" "}
-            <strong>¿Funciona?</strong>
+            <strong>Fiabilidad</strong>
           </p>
         </Step>
       </section>

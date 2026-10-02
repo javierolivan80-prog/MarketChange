@@ -19,6 +19,7 @@ signals_notifier.py (un fallo de red a mitad del envío se resuelve fila a
 fila, ver notified_at)."""
 from __future__ import annotations
 
+import html
 import logging
 
 from pipeline.notify import telegram
@@ -26,6 +27,8 @@ from pipeline.notify import telegram
 logger = logging.getLogger(__name__)
 
 _CLOSED_STATUSES = ("CLOSED_TP", "CLOSED_SL", "CLOSED_TIMEOUT")
+
+_VERSION_LABEL = {"CONSERVATIVE": "conservadora", "BALANCED": "equilibrada", "AGGRESSIVE": "agresiva"}
 
 _EXIT_REASON_LABEL = {
     "TAKE_PROFIT": "Objetivo de beneficio alcanzado",
@@ -61,7 +64,9 @@ def _format_message(row: dict) -> str:
     pnl = row["pnl_pct"]
     pnl_text = f"{float(pnl):+.2f}%" if pnl is not None else "—"
     lines = [
-        f"<b>CERRAR {row['ticker']}</b> ({row['version']}, {row['direction']})",
+        # Mismo vocabulario que el aviso de entrada y el panel (estrategia en
+        # español, nada de nombres internos); ticker escapado por parse_mode=HTML.
+        f"<b>CERRAR {html.escape(str(row['ticker']))}</b> · estrategia {_VERSION_LABEL.get(row['version'], row['version'])} · {row['direction'].capitalize()}",
         label,
         f"Entrada: {row['entry_date']} a {float(row['entry_price']):.2f}",
         f"Salida sugerida: {row['exit_date']} a {float(row['exit_price']):.2f} · "

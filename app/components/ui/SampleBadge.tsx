@@ -1,33 +1,36 @@
-// SampleBadge.tsx — "Transparencia de rendimiento: IN_SAMPLE y OOS
-// separados y etiquetados" (requisito de credibilidad del brief). El campo
-// viene de portfolio_report.py / validation report.py (sample_split.py):
-// null = sin partición de muestra (todo el rango histórico disponible),
-// 'in_sample' = acotado a la parte usada para calibrar, 'oos' = fuera de
-// muestra — un resultado OOS nunca debe leerse como si fuera in-sample, así
-// que se marca de forma explícita y, si trae oos_warning, con más énfasis.
+// SampleBadge.tsx — de qué periodo salen las cifras: el que se usó para
+// ajustar el sistema (in-sample) o uno que nunca vio (out-of-sample). La
+// distinción se mantiene porque es justo lo que separa un resultado fiable de
+// uno optimista, pero contada al usuario: el texto que trae el pipeline
+// (oos_warning, "no usar para ajustar parámetros") es una instrucción para
+// quien opera el sistema y no se muestra.
 import type { SampleSplit } from "@/lib/queries";
 
-export function SampleBadge({ sample, warning }: { sample: SampleSplit | undefined; warning?: string }) {
-  if (sample === "oos") {
-    return (
-      <div className="border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-500/10 dark:text-amber-400">
-        <span className="mr-1 font-semibold uppercase tracking-wide">Out-of-sample</span>
-        {warning ?? "Datos fuera de la muestra usada para calibrar el sistema — no usar para ajustar parámetros."}
-      </div>
-    );
-  }
-  if (sample === "in_sample") {
-    return (
-      <div className="border border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
-        <span className="mr-1 font-semibold uppercase tracking-wide text-foreground">In-sample</span>
-        Corrida sobre la parte del histórico usada para calibrar el sistema.
-      </div>
-    );
-  }
+const COPY: Record<"oos" | "in_sample" | "full", { label: string; text: string; tone: string }> = {
+  oos: {
+    label: "Periodo no visto",
+    text: "Resultados en un periodo que no se usó para ajustar el sistema: la prueba más exigente.",
+    tone: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-500/10 dark:text-emerald-400",
+  },
+  in_sample: {
+    label: "Periodo de ajuste",
+    text: "Resultados en el mismo periodo con el que se ajustó el sistema; suelen ser más optimistas que los futuros.",
+    tone: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800/60 dark:bg-amber-500/10 dark:text-amber-400",
+  },
+  full: {
+    label: "Histórico completo",
+    text: "Incluye el periodo con el que se ajustó el sistema, así que puede ser algo optimista.",
+    tone: "border-border-subtle bg-surface-raised text-text-secondary",
+  },
+};
+
+// `warning` se acepta por compatibilidad con los llamadores, pero no se pinta (ver arriba).
+export function SampleBadge({ sample }: { sample: SampleSplit | undefined; warning?: string }) {
+  const c = COPY[sample === "oos" ? "oos" : sample === "in_sample" ? "in_sample" : "full"];
   return (
-    <div className="border border-border-subtle bg-surface-raised px-3 py-2 text-xs text-text-secondary">
-      <span className="mr-1 font-semibold uppercase tracking-wide text-foreground">Sin partición de muestra</span>
-      Corrida sobre todo el histórico disponible, sin separar in-sample de out-of-sample.
+    <div className={`border px-3 py-2 text-xs ${c.tone}`}>
+      <span className="mr-1 font-semibold">{c.label}.</span>
+      {c.text}
     </div>
   );
 }

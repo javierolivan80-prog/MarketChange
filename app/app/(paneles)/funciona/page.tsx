@@ -8,10 +8,10 @@ import { SampleBadge } from "@/components/ui/SampleBadge";
 import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/PageState";
 import { SignedPct } from "@/components/ui/DirectionBadge";
 import { formatPct, formatNum, formatFracAsPct, formatDrawdown } from "@/lib/format";
-import { VERSION_LABELS, VERSION_ORDER, eventClassLabel } from "@/lib/labels";
+import { RELIABILITY, VERSION_LABELS, VERSION_ORDER, eventClassLabel } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "¿Funciona?" };
+export const metadata = { title: "Fiabilidad" };
 
 
 // funciona/page.tsx — fusiona lo que antes eran tres pestañas separadas
@@ -82,10 +82,10 @@ function interpretCalibration(diag: CalibrationDiagnostics): { label: string; ad
 
 function DecisionCard({ title, decision }: { title: string; decision: VersionDecision }) {
   return (
-    <div className={` border p-4 ${OPTION_STYLES[decision.option]}`}>
+    <div className={`border p-4 ${OPTION_STYLES[decision.option]}`}>
       <p className="mb-1 text-sm text-text-secondary">{title}</p>
-      <p className={`mb-2 text-lg font-semibold ${OPTION_TEXT_STYLES[decision.option]}`}>{decision.label}</p>
-      <p className="mb-2 text-sm text-foreground">{decision.recommendation}</p>
+      <p className={`mb-2 text-lg font-semibold ${OPTION_TEXT_STYLES[decision.option]}`}>{RELIABILITY[decision.option].title}</p>
+      <p className="mb-2 text-xs text-text-tertiary">Criterios evaluados:</p>
       <ul className="list-inside list-disc space-y-0.5 text-xs text-text-secondary">
         {decision.reasons.map((r, i) => (
           <li key={i}>{r}</li>
@@ -113,11 +113,11 @@ function EventStudyRow({ eventClass, stats }: { eventClass: string; stats: Event
 }
 
 export default async function FuncionaPage() {
-  if (!isDatabaseConfigured()) return <NotConfigured active="/funciona" title="¿Funciona?" />;
+  if (!isDatabaseConfigured()) return <NotConfigured active="/funciona" title="Fiabilidad" />;
 
   const [portfolioTag, validationTag] = await Promise.all([getLatestPortfolioRunBatchTag(), getLatestValidationRunBatchTag()]);
 
-  if (!portfolioTag) return <NoDataYet active="/funciona" title="¿Funciona?" what="Todavía no hay ningún backtest de cartera." />;
+  if (!portfolioTag) return <NoDataYet active="/funciona" title="Fiabilidad" what="Todavía no hay resultados para evaluar el sistema." />;
 
   const [report, validationReport] = await Promise.all([
     getPortfolioReport(portfolioTag),
@@ -126,9 +126,9 @@ export default async function FuncionaPage() {
 
   if (!report) {
     return (
-      <StatePage active="/funciona" title="¿Funciona?">
-        <StateBox title="No se pudo leer el último informe de cartera.">
-          Corrida <code className="font-mono">{portfolioTag}</code>. Revisa los logs de la última ejecución del pipeline.
+      <StatePage active="/funciona" title="Fiabilidad">
+        <StateBox title="Estos resultados no están disponibles ahora mismo.">
+          Inténtalo de nuevo en unos minutos.
         </StateBox>
       </StatePage>
     );
@@ -168,8 +168,8 @@ export default async function FuncionaPage() {
     <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
       <Nav active="/funciona" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">¿Funciona?</h1>
-        <p className="mt-1 text-sm text-text-secondary">Todo lo que responde si te puedes fiar del sistema, y por qué.</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Fiabilidad</h1>
+        <p className="mt-1 text-sm text-text-secondary">Cómo de fiables son las señales: si los eventos mueven el precio de verdad, si la confianza declarada se cumple y cómo aguantan los resultados en condiciones peores.</p>
       </header>
 
       {validationReport && (
@@ -181,12 +181,12 @@ export default async function FuncionaPage() {
       {/* Veredicto + decisión por versión */}
       {validationReport && (
         <section className="mb-10">
-          <div className={`mb-4  border-2 p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
+          <div className={`mb-4 border-2 p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
             <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">
-              Veredicto global · versión recomendada: {VERSION_LABELS[validationReport.best_version]}
+              Calificación global · estrategia recomendada: {VERSION_LABELS[validationReport.best_version]}
             </p>
-            <p className={`mb-2 text-2xl font-semibold ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{validationReport.best_decision.label}</p>
-            <p className="text-sm text-foreground">{validationReport.best_decision.recommendation}</p>
+            <p className={`mb-2 text-2xl font-semibold ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{RELIABILITY[validationReport.best_decision.option].title}</p>
+            <p className="text-sm text-foreground">{RELIABILITY[validationReport.best_decision.option].summary}</p>
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {VERSION_ORDER.filter((ver) => validationReport.decisions[ver]).map((ver) => (

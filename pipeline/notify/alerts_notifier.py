@@ -14,6 +14,7 @@ existía, no se devuelve nada y esa alert concreta no se reenvía.
 from __future__ import annotations
 
 import hashlib
+import html
 import logging
 
 from pipeline.notify import telegram
@@ -21,6 +22,7 @@ from pipeline.notify import telegram
 logger = logging.getLogger(__name__)
 
 _EMOJI_BY_TYPE = {"WARNING": "⚠️", "CONGRATULATE": "✅"}
+_VERSION_LABEL = {"CONSERVATIVE": "conservadora", "BALANCED": "equilibrada", "AGGRESSIVE": "agresiva"}
 
 
 def fetch_latest_paper_trading_report(conn) -> dict | None:
@@ -70,7 +72,9 @@ def notify_new_alerts(conn) -> int:
             if not _try_claim(conn, notification_id):
                 continue  # ya se mandó esta misma alert en una pasada anterior
             emoji = _EMOJI_BY_TYPE.get(alert["type"], "")
-            text = f"{emoji} <b>{version}</b> ({run_batch_tag})\n{alert['message']}"
+            # Sin el run_batch_tag (identificador interno de la corrida) y con
+            # el nombre de la estrategia en español, como en el resto de avisos.
+            text = f"{emoji} <b>Estrategia {_VERSION_LABEL.get(version, version)}</b>\n{html.escape(alert['message'])}"
             if telegram.send_message(text):
                 sent += 1
             else:

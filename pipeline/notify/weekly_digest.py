@@ -5,7 +5,7 @@ semana sin señales (lo normal en un sistema que se abstiene la mayor parte
 del tiempo) era una semana de silencio, indistinguible de un pipeline roto.
 El resumen cierra ese hueco una vez por semana: cuántos eventos se
 analizaron, cuántos superaron los filtros, por qué se descartó el resto, y
-cómo han ido las señales cerradas en la simulación en papel — con enlace al
+cómo han ido las señales cerradas, medidas con precios reales — con enlace al
 historial del panel si DASHBOARD_URL está definida.
 
 Se envía en la pasada nocturna del sábado (UTC), que es la primera tras el
@@ -38,7 +38,7 @@ _VERSION_COLUMN = {
     "BALANCED": "trade_decision_balanced",
     "AGGRESSIVE": "trade_decision_aggressive",
 }
-_VERSION_LABEL = {"CONSERVATIVE": "conservador", "BALANCED": "equilibrado", "AGGRESSIVE": "agresivo"}
+_VERSION_LABEL = {"CONSERVATIVE": "conservadora", "BALANCED": "equilibrada", "AGGRESSIVE": "agresiva"}
 
 # (prefijo/patrón LIKE, etiqueta) — en el mismo orden que el CASE del panel.
 _REASON_CATEGORIES = [
@@ -121,7 +121,7 @@ def collect_week(conn, version: str, days: int = 7) -> dict:
 
 def format_digest(data: dict) -> str:
     e = html.escape
-    lines = [f"<b>Resumen semanal</b> · versión {_VERSION_LABEL[data['version']]}"]
+    lines = [f"<b>Resumen semanal</b> · estrategia {_VERSION_LABEL[data['version']]}"]
     lines.append(f"{data['analyzed']} eventos analizados · {data['traded']} superaron los filtros")
     if data["discarded"]:
         lines.append("\n<b>Descartados</b>")
@@ -131,14 +131,14 @@ def format_digest(data: dict) -> str:
     if closed:
         wins = sum(1 for _, pnl in closed if pnl > 0)
         avg = sum(pnl for _, pnl in closed) / len(closed)
-        lines.append(f"\n<b>Cerradas esta semana</b> (papel): {len(closed)} · {wins} con ganancia · media {avg:+.2f}%")
+        lines.append(f"\n<b>Cerradas esta semana</b>: {len(closed)} · {wins} con ganancia · media {avg:+.2f}%")
         for ticker, pnl in sorted(closed, key=lambda t: -t[1])[:5]:
             lines.append(f"{e(str(ticker))} {pnl:+.2f}%")
     else:
         lines.append("\nNinguna posición cerrada esta semana.")
-    lines.append(f"Abiertas en papel: {data['open']}")
+    lines.append(f"Posiciones abiertas: {data['open']}")
     if data["analyzed"] == 0:
-        lines.append("\nAviso: no se ha analizado ningún evento en 7 días — revisa el pipeline.")
+        lines.append("\nEsta semana no se ha publicado ningún análisis: las actualizaciones se reanudarán en breve.")
     if config.DASHBOARD_URL:
         lines.append(f'\n<a href="{e(config.DASHBOARD_URL + "/historial", quote=True)}">Ver historial completo</a>')
     return "\n".join(lines)

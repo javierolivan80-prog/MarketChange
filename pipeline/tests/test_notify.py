@@ -562,6 +562,8 @@ def test_exits_format_message_incluye_motivo_entrada_y_salida():
     }
     text = _format_message(row)
     assert "CERRAR ACME" in text
+    assert row["version"] not in text  # nombre interno de la estrategia, no se muestra
+    assert "estrategia" in text
     assert "Objetivo de beneficio alcanzado" in text
     assert "100.00" in text
     assert "108.50" in text
@@ -728,6 +730,7 @@ def test_weekly_digest_format_escapes_and_links(monkeypatch):
         }
     )
     assert "12 eventos analizados · 2 superaron los filtros" in text
+    assert "papel" not in text
     assert "6 · El mercado ya lo sabía" in text
     assert "A&amp;B +3.20%" in text
     assert "2 · 1 con ganancia · media +1.10%" in text
@@ -740,7 +743,7 @@ def test_weekly_digest_warns_when_nothing_was_analyzed(monkeypatch):
 
     monkeypatch.setattr(config, "DASHBOARD_URL", None)
     text = format_digest({"version": "AGGRESSIVE", "days": 7, "analyzed": 0, "traded": 0, "discarded": [], "closed": [], "open": 0})
-    assert "revisa el pipeline" in text
+    assert "no se ha publicado ningún análisis" in text
     assert "href" not in text
 
 

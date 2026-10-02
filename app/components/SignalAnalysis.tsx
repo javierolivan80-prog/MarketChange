@@ -185,7 +185,7 @@ export function SignalAnalysis({ detail, recommended }: { detail: SignalDetailDa
             const decision = decisionOf(detail, strategy);
             const isRec = strategy === recommended;
             return (
-              <div key={strategy} className={` border p-2 ${isRec ? "border-accent-500" : "border-border-subtle"} bg-surface`}>
+              <div key={strategy} className={`border p-2 ${isRec ? "border-accent-500" : "border-border-subtle"} bg-surface`}>
                 <p className="mb-1 flex items-center justify-between font-medium text-foreground">
                   <span>
                     {VERSION_LABELS[strategy]}
@@ -204,7 +204,7 @@ export function SignalAnalysis({ detail, recommended }: { detail: SignalDetailDa
         </div>
         {(detail.entry_date || detail.exit_date) && (
           <p className="num mt-2 text-xs text-text-tertiary">
-            En el backtest: {detail.entry_date && `entrada ${detail.entry_date}`}
+            En el histórico: {detail.entry_date && `entrada ${detail.entry_date}`}
             {detail.exit_date && ` · salida ${detail.exit_date} (${exitReasonLabel(detail.exit_reason)})`}
             {detail.pnl_pct !== null && ` · resultado ${detail.pnl_pct.toFixed(2)}%`}
           </p>

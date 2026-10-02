@@ -8,7 +8,8 @@ import { ConfidenceBucketBars } from "@/components/ConfidenceBucketBars";
 import { Callout } from "@/components/ui/Callout";
 import { SampleBadge } from "@/components/ui/SampleBadge";
 import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/PageState";
-import { formatShare, formatUsd } from "@/lib/format";
+import Link from "next/link";
+import { formatDate, formatShare } from "@/lib/format";
 import { VERSION_LABELS, VERSION_ORDER } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
@@ -26,22 +27,21 @@ export default async function CarteraPage() {
 
   const [portfolioTag, paperTag] = await Promise.all([getLatestPortfolioRunBatchTag(), getLatestPaperTradingRunBatchTag()]);
 
-  if (!portfolioTag) return <NoDataYet active="/cartera" title="Cartera" what="Todavía no hay ningún backtest de cartera." />;
+  if (!portfolioTag) return <NoDataYet active="/cartera" title="Cartera" what="Todavía no hay resultados de la cartera." />;
 
   const [report, paperReport] = await Promise.all([getPortfolioReport(portfolioTag), paperTag ? getPaperTradingReport(paperTag) : Promise.resolve(null)]);
 
   if (!report) {
     return (
       <StatePage active="/cartera" title="Cartera">
-        <StateBox title="No se pudo leer el último informe de cartera.">
-          Corrida <code className="font-mono">{portfolioTag}</code>. Revisa los logs de la última ejecución del pipeline.
+        <StateBox title="Los resultados de la cartera no están disponibles ahora mismo.">
+          Inténtalo de nuevo en unos minutos.
         </StateBox>
       </StatePage>
     );
   }
 
-  const { recommendation, bias_report } = report;
-  const verdictIsYes = recommendation.verdict.startsWith("SÍ");
+  const { bias_report } = report;
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
@@ -51,67 +51,60 @@ export default async function CarteraPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Cartera</h1>
           <ExportPdfButton report={report} />
         </div>
-        <p className="mt-1 text-sm text-text-secondary">Cómo le ha ido al sistema si se hubiera operado — todo simulado, nunca con dinero real.</p>
+        <p className="mt-1 max-w-3xl text-sm text-text-secondary">
+          Rentabilidad de cada estrategia aplicada a todos los eventos pasados, y el seguimiento de las señales de esta semana con precios de
+          mercado. Rentabilidades pasadas no garantizan resultados futuros.
+        </p>
       </header>
 
       {/* Sección 1: histórico */}
       <section className="mb-10">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-base font-semibold text-foreground">Resultado histórico completo</h2>
+          <h2 className="text-base font-semibold text-foreground">Rentabilidad histórica</h2>
         </div>
 
         <SampleBadge sample={report.sample} warning={report.oos_warning} />
         <div className="mb-4" />
-
-        {verdictIsYes ? (
-          <Callout kind="positive" className="mb-4">
-            <p className="font-medium normal-case">¿Invertir dinero real? {recommendation.verdict}</p>
-            <ul className="mt-1 list-inside list-disc font-normal normal-case">
-              {recommendation.findings.map((f, i) => (
-                <li key={i}>{f}</li>
-              ))}
-            </ul>
-          </Callout>
-        ) : (
-          <div className="mb-4 border border-border-subtle bg-surface-raised p-4">
-            <p className="mb-2 font-medium text-foreground">¿Invertir dinero real? {recommendation.verdict}</p>
-            <ul className="list-inside list-disc space-y-0.5 text-sm text-text-secondary">
-              {recommendation.findings.map((f, i) => (
-                <li key={i}>{f}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="mb-4 border border-border-subtle p-4 text-sm">
-          <p className="mb-1 font-medium text-foreground">Sesgos de datos a tener en cuenta</p>
-          <p className="num text-text-secondary">
-            {bias_report.n_delisted}/{bias_report.n_total_tickers} acciones que desaparecieron de bolsa ({formatShare(bias_report.survivorship_bias_pct, 1)}{" "}
-            posible sesgo) · {bias_report.n_price_gaps}/{bias_report.n_price_rows} filas de precio con huecos ({formatShare(bias_report.data_gap_pct, 1)})
-          </p>
-        </div>
-
-        <p className="num mb-3 text-xs text-text-tertiary">
-          Corrida: <code className="font-mono">{portfolioTag}</code> · Capital inicial: <code className="font-mono">{formatUsd(report.starting_capital, 0)}</code>
-        </p>
 
         <div className="flex flex-col gap-4 md:flex-row">
           {VERSION_ORDER.filter((v) => report.versions[v]).map((version) => (
             <PortfolioVersionCard key={version} report={report.versions[version]} startingCapital={report.starting_capital} />
           ))}
         </div>
+
+        {/* Lo que el usuario necesita para leer bien las cifras, sin ocupar la
+            pantalla: el veredicto interno de go/no-go del motor vive en
+            /funciona, y el capital nominal del backtest no se muestra (las
+            cifras van en %). */}
+        <details className="mt-4 text-sm">
+          <summary className="cursor-pointer text-text-secondary">Cómo leer estas cifras</summary>
+          <div className="mt-2 space-y-1 text-text-secondary">
+            <p>
+              Cada estrategia se aplica a los eventos pasados con las mismas reglas que hoy: entrada el día siguiente al evento, costes
+              incluidos y sin usar información posterior a cada fecha.
+            </p>
+            <p className="num">
+              {bias_report.n_delisted} de {bias_report.n_total_tickers} empresas del histórico dejaron de cotizar ({formatShare(bias_report.survivorship_bias_pct, 1)}) y
+              el {formatShare(bias_report.data_gap_pct, 1)} de los precios tiene huecos; ambas cosas pueden desviar ligeramente los resultados.
+            </p>
+            <p>
+              <Link href="/funciona" className="text-accent-700 hover:underline dark:text-accent-400">
+                Fiabilidad del sistema →
+              </Link>
+            </p>
+          </div>
+        </details>
       </section>
 
       {/* Sección 2: esta semana */}
       <section>
-        <h2 className="mb-3 text-base font-semibold text-foreground">Esta semana (simulación en papel)</h2>
+        <h2 className="mb-3 text-base font-semibold text-foreground">Seguimiento de esta semana</h2>
         {!paperReport ? (
-          <p className="italic text-sm text-text-tertiary">Todavía no hay ningún reporte de esta semana.</p>
+          <p className="text-sm text-text-tertiary">Todavía no hay señales en seguimiento esta semana.</p>
         ) : (
           <>
             <p className="num mb-3 text-xs text-text-tertiary">
-              Semana: <code className="font-mono">{paperReport.week_start}</code> a <code className="font-mono">{paperReport.week_end}</code> — datos
-              reales, sin dinero real.
+              Del {formatDate(paperReport.week_start)} al {formatDate(paperReport.week_end)}, con precios reales de mercado desde cada señal.
             </p>
             <div className="flex flex-col gap-4 md:flex-row">
               {VERSION_ORDER.filter((v) => paperReport.versions[v]).map((version) => {

@@ -21,7 +21,7 @@ const TABS = [
   { href: "/senales", label: "Señales" },
   { href: "/historial", label: "Historial" },
   { href: "/cartera", label: "Cartera" },
-  { href: "/funciona", label: "¿Funciona?" },
+  { href: "/funciona", label: "Fiabilidad" },
   { href: "/como-funciona", label: "Cómo funciona" },
 ] as const;
 
@@ -47,7 +47,7 @@ export function Nav({ active }: { active?: string }) {
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
                 className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
-                  isActive
+ isActive
                     ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
                     : "border-transparent text-text-secondary hover:text-foreground"
                 }`}
