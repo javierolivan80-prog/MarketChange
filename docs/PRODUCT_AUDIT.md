@@ -436,9 +436,9 @@ infraestructura, datos reales o decisiones de negocio.
 - **Activar Basic Auth, crear el rol de solo lectura, definir
   `DASHBOARD_URL`**: configuración en Vercel/GitHub/Postgres (pasos en
   `RUNBOOK.md` §4).
-- **Watchlist y "Mis operaciones"**: el panel es de solo lectura por diseño y
-  no tiene cuentas; ambas necesitan almacenar preferencias por usuario. Tiene
-  sentido construirlas junto con las cuentas (Fase 5), no antes.
+- **"Mis operaciones"**: necesita guardar qué hizo cada usuario, y el panel es
+  de solo lectura y sin cuentas por diseño. Va con las cuentas (Fase 5). La
+  watchlist sí se ha resuelto para el uso actual (un usuario): ver abajo.
 - **Cuentas, pagos, API**: dependen de validar el edge y de la consulta
   legal.
 - **Limpieza de comentarios-ensayo y partir RUNBOOK/IMPROVEMENT_PLAN**: es
@@ -447,7 +447,14 @@ infraestructura, datos reales o decisiones de negocio.
   propio.
 - **Retirar DYNAMIC**: el propio plan (Q3) deja la decisión pendiente de
   datos reales; retirarla sin ellos sería decidir a ciegas.
-- **404 con estado HTTP 200 en `/senales/[id]` inexistente**: el
-  `loading.tsx` raíz hace que la respuesta empiece a enviarse antes de saber
-  que no existe; la página muestra correctamente "no encontrada". Impacto
-  nulo con `noindex`; no compensa perder el estado de carga.
+
+## Anexo 3 — tercera tanda
+
+| Punto | Estado | Dónde |
+|---|---|---|
+| Tests del pipeline en cada push/PR (antes solo con el cron) | ✅ | `.github/workflows/pipeline_ci.yml` |
+| M1: reintentos ante fallos transitorios al consultar un batch | ✅ | `adversarial_analyzer.py` + 3 tests |
+| Avalancha de avisos de un backfill histórico | ✅ `ALERT_MAX_AGE_DAYS` (7 por defecto) | `config.py`, `signals_notifier.py` + tests |
+| Watchlist de un usuario (confianza mínima, tickers, tipos de evento) | ✅ variables del repo `ALERT_*` | `config.py`, `RUNBOOK.md` §4 |
+| 404 real para señales inexistentes | ✅ `loading.tsx` en el grupo `(paneles)` | `app/app/(paneles)/` |
+| Cifras desfasadas del RUNBOOK | ✅ | `RUNBOOK.md` |
