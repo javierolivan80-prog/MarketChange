@@ -293,4 +293,11 @@ def test_price_tickers_incluye_referencias_aunque_el_universo_este_vacio(conn):
 
     assert {"SPY", "^VIX", "XLK"} <= set(price_tickers(conn))
     _empresa(conn, "1", "MEGA", 100.0, 3e9)
-    assert "MEGA" in price_tickers(conn)
+    _empresa(conn, "2", "VIEJA", 100.0, 3e9)
+    _evento(conn, "1", "MEGA", date.today() - timedelta(days=10))
+    _evento(conn, "2", "VIEJA", date.today() - timedelta(days=2000))
+    tickers = set(price_tickers(conn))
+    assert "MEGA" in tickers
+    # Solo aparece en un evento de hace años: sus precios los baja, acotados,
+    # ops_history_prices — no la descarga nocturna de 500 días.
+    assert "VIEJA" not in tickers

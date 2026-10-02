@@ -25,13 +25,14 @@ Idempotente: se recalcula entero en cada pasada (una sola sentencia SQL).
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from pipeline import config
 
 logger = logging.getLogger(__name__)
 
 ADV_WINDOW_SESSIONS = 60
+PRICE_RECENT_EVENT_DAYS = 500
 
 
 def is_investable(price: float | None, market_cap: float | None, adv_usd: float | None) -> bool:
@@ -148,11 +149,20 @@ def top_companies(conn, n: int = 50, min_market_cap: float | None = None) -> lis
 def price_tickers(conn) -> list[str]:
     """Tickers cuyo precio hay que descargar: el universo entero MÁS las series
     de referencia de enrichment.py (SPY, ^VIX, ETFs sectoriales), que no son
-    empresas y por eso nunca aparecían en `universe`."""
+    empresas y por eso nunca aparecían en `universe`.
+
+    Solo empresas con algún evento en los últimos PRICE_RECENT_EVENT_DAYS:
+    tras cargar el histórico, `universe` incluye miles de empresas que solo
+    aparecen en eventos de hace años (muchas ya ni cotizan). Bajarles 500
+    días de precio cada noche llenaría la base de datos sin servir a ningún
+    evento; sus precios históricos los baja, acotados, ops_history_prices."""
     from pipeline.analyze.enrichment import BENCHMARK_TICKERS
 
     with conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT ticker FROM universe WHERE ticker IS NOT NULL")
+        cur.execute(
+            "SELECT DISTINCT ticker FROM events WHERE ticker IS NOT NULL AND d0_close_date >= %s",
+            (date.today() - timedelta(days=PRICE_RECENT_EVENT_DAYS),),
+        )
         tickers = {r["ticker"] for r in cur.fetchall()}
     return sorted(tickers | set(BENCHMARK_TICKERS))
 
