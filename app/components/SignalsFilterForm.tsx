@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useId, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { eventClassLabel } from "@/lib/labels";
+import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 
 const INPUT =
   " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600";
@@ -27,15 +28,17 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
   // Filtrar recarga la página en el servidor: sin estado pendiente, el botón
   // no respondía durante esa espera y parecía que no había pasado nada.
   const [pending, startTransition] = useTransition();
+  const t = useT();
+  const locale = useLocale();
 
-  const SIGNAL_LABELS: Record<string, string> = { LONG: "Long", SHORT: "Short", NO_TRADE: "Sin operar" };
+  const SIGNAL_LABELS: Record<string, string> = { LONG: "Long", SHORT: "Short", NO_TRADE: t("Sin operar", "No trade") };
   const active: { key: string; label: string }[] = [
     { key: "ticker", label: `Ticker: ${searchParams.get("ticker") ?? ""}` },
-    { key: "eventClass", label: `Evento: ${eventClassLabel(searchParams.get("eventClass") ?? "")}` },
-    { key: "signal", label: `Señal: ${SIGNAL_LABELS[searchParams.get("signal") ?? ""] ?? ""}` },
-    { key: "dateFrom", label: `Desde ${searchParams.get("dateFrom") ?? ""}` },
-    { key: "dateTo", label: `Hasta ${searchParams.get("dateTo") ?? ""}` },
-    { key: "minConfidence", label: `Confianza ≥ ${searchParams.get("minConfidence") ?? ""}%` },
+    { key: "eventClass", label: `${t("Evento", "Event")}: ${eventClassLabel(searchParams.get("eventClass") ?? "", locale)}` },
+    { key: "signal", label: `${t("Señal", "Signal")}: ${SIGNAL_LABELS[searchParams.get("signal") ?? ""] ?? ""}` },
+    { key: "dateFrom", label: `${t("Desde", "From")} ${searchParams.get("dateFrom") ?? ""}` },
+    { key: "dateTo", label: `${t("Hasta", "To")} ${searchParams.get("dateTo") ?? ""}` },
+    { key: "minConfidence", label: `${t("Confianza", "Confidence")} ≥ ${searchParams.get("minConfidence") ?? ""}%` },
   ].filter((f) => searchParams.get(f.key));
 
   function removeFilter(key: string) {
@@ -86,43 +89,43 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.eventClass} className={LABEL}>
-          Tipo de evento
+          {t("Tipo de evento", "Event type")}
         </label>
         <select id={ids.eventClass} className={INPUT} value={eventClass} onChange={(e) => setEventClass(e.target.value)}>
-          <option value="">Todos</option>
+          <option value="">{t("Todos", "All")}</option>
           {eventClasses.map((c) => (
             <option key={c} value={c}>
-              {eventClassLabel(c)}
+              {eventClassLabel(c, locale)}
             </option>
           ))}
         </select>
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.signal} className={LABEL}>
-          Señal
+          {t("Señal", "Signal")}
         </label>
         <select id={ids.signal} className={INPUT} value={signal} onChange={(e) => setSignal(e.target.value)}>
-          <option value="">Todas</option>
+          <option value="">{t("Todas", "All")}</option>
           <option value="LONG">Long</option>
           <option value="SHORT">Short</option>
-          <option value="NO_TRADE">Sin operar</option>
+          <option value="NO_TRADE">{t("Sin operar", "No trade")}</option>
         </select>
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.dateFrom} className={LABEL}>
-          Desde
+          {t("Desde", "From")}
         </label>
         <input id={ids.dateFrom} type="date" className={INPUT} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.dateTo} className={LABEL}>
-          Hasta
+          {t("Hasta", "To")}
         </label>
         <input id={ids.dateTo} type="date" className={INPUT} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.minConfidence} className={LABEL}>
-          Confianza mín. (%)
+          {t("Confianza mín. (%)", "Min. confidence (%)")}
         </label>
         <input
           id={ids.minConfidence}
@@ -136,21 +139,21 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
       </div>
       <div className="flex gap-2">
         <Button type="submit" variant="primary" disabled={pending}>
-          {pending ? "Filtrando…" : "Filtrar"}
+          {pending ? t("Filtrando…", "Filtering…") : t("Filtrar", "Filter")}
         </Button>
         <Button variant="ghost" onClick={clear} disabled={pending}>
-          Limpiar
+          {t("Limpiar", "Clear")}
         </Button>
       </div>
       {active.length > 0 && (
-        <div className="flex w-full flex-wrap items-center gap-2 border-t border-border-subtle pt-3" aria-label="Filtros activos">
-          <span className="text-xs text-text-secondary">Filtros activos:</span>
+        <div className="flex w-full flex-wrap items-center gap-2 border-t border-border-subtle pt-3" aria-label={t("Filtros activos", "Active filters")}>
+          <span className="text-xs text-text-secondary">{t("Filtros activos:", "Active filters:")}</span>
           {active.map((f) => (
             <button
               key={f.key}
               type="button"
               onClick={() => removeFilter(f.key)}
-              aria-label={`Quitar filtro ${f.label}`}
+              aria-label={`${t("Quitar filtro", "Remove filter")} ${f.label}`}
               className="inline-flex items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors hover:border-accent-500 hover:bg-surface"
             >
               {f.label}

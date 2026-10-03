@@ -9,7 +9,9 @@ import { SampleBadge } from "@/components/ui/SampleBadge";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { NotConfigured } from "@/components/ui/PageState";
 import { formatPct, formatNum, formatDate, formatDateTime, formatDrawdown } from "@/lib/format";
-import { RELIABILITY, eventClassLabel, versionLabel } from "@/lib/labels";
+import { eventClassLabel, reliability, versionLabel } from "@/lib/labels";
+import { getT } from "@/lib/locale";
+import type { T } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
 
@@ -27,16 +29,19 @@ const VERDICT_COPY: Record<string, { color: string; text: string }> = {
   C: { color: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10", text: "text-rose-800 dark:text-rose-400" },
 };
 
-const ABSTENTION_LABELS: Record<AbstentionCategory, string> = {
-  priced_in: "El mercado ya lo sabía",
-  low_confidence: "El debate no fue concluyente",
-  low_ev: "Valor esperado insuficiente tras costes",
-  delisting: "Riesgo de exclusión de bolsa",
-  contradictory: "Datos contradictorios",
-  fda_unconfirmed: "FDA aún no confirmado por la empresa",
-  illiquid: "Acción poco líquida",
-  other: "Otros motivos",
-};
+function abstentionLabel(category: AbstentionCategory, t: T): string {
+  const labels: Record<AbstentionCategory, string> = {
+    priced_in: t("El mercado ya lo sabía", "The market already knew"),
+    low_confidence: t("El debate no fue concluyente", "The debate was inconclusive"),
+    low_ev: t("Valor esperado insuficiente tras costes", "Expected value too low after costs"),
+    delisting: t("Riesgo de exclusión de bolsa", "Delisting risk"),
+    contradictory: t("Datos contradictorios", "Contradictory data"),
+    fda_unconfirmed: t("FDA aún no confirmado por la empresa", "FDA news not yet confirmed by the company"),
+    illiquid: t("Acción poco líquida", "Illiquid stock"),
+    other: t("Otros motivos", "Other reasons"),
+  };
+  return labels[category];
+}
 
 // Más de 2 días sin analizar nada (fin de semana incluido) = algo va mal.
 const STALE_AFTER_HOURS = 60;
@@ -52,7 +57,9 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 export default async function InicioPage() {
-  if (!isDatabaseConfigured()) return <NotConfigured active="/" title="Resumen" />;
+  const { locale, t } = await getT();
+  if (!isDatabaseConfigured()) return <NotConfigured active="/" title={t("Resumen", "Overview")} />;
+  const RELIABILITY = reliability(locale);
 
   const version = await getRecommendedVersion();
   const [summary, recent, freshness, abstention] = await Promise.all([
@@ -78,11 +85,14 @@ export default async function InicioPage() {
       <Nav active="/" />
 
       <header className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Resumen</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Resumen", "Overview")}</h1>
         <p className={`num text-xs ${isStale ? "text-amber-700 dark:text-amber-400" : "text-text-tertiary"}`}>
           {lastAnalyzed
-            ? `Actualizado: ${formatDateTime(freshness.last_analyzed_at)} · ${freshness.analyzed_last_24h} eventos analizados en 24 h${isStale ? " · la actualización lleva retraso" : ""}`
-            : "Todavía no hay eventos analizados"}
+            ? `${t("Actualizado", "Updated")}: ${formatDateTime(freshness.last_analyzed_at, locale)} · ${freshness.analyzed_last_24h} ${t(
+                "eventos analizados en 24 h",
+                "events analysed in 24 h",
+              )}${isStale ? t(" · la actualización lleva retraso", " · updates are running late") : ""}`
+            : t("Todavía no hay eventos analizados", "No events analysed yet")}
         </p>
       </header>
 
@@ -92,34 +102,45 @@ export default async function InicioPage() {
       <section className="mb-6">
         <SectionHeader
           id="senales-operables"
-          title="Señales operables"
-          description="Las más recientes en las que la estrategia recomendada decidió operar, con su plan técnico."
-          action={{ href: "/senales", label: "Ver todas" }}
+          title={t("Señales operables", "Tradable signals")}
+          description={t(
+            "Las más recientes en las que la estrategia recomendada decidió operar, con su plan técnico.",
+            "The latest ones the recommended strategy decided to trade, with their technical plan.",
+          )}
+          action={{ href: "/senales", label: t("Ver todas", "See all") }}
         />
         {recent.length === 0 ? (
           <p className="border border-dashed border-border-subtle p-4 text-sm text-text-secondary">
-            Ningún evento ha superado todavía los filtros para operar. La mayoría de eventos se descartan a propósito: el sistema solo
-            señala los que tienen un valor esperado positivo después de costes.
+            {t(
+              "Ningún evento ha superado todavía los filtros para operar. La mayoría de eventos se descartan a propósito: el sistema solo señala los que tienen un valor esperado positivo después de costes.",
+              "No event has passed the trading filters yet. Most events are discarded on purpose: the system only flags those with a positive expected value after costs.",
+            )}
           </p>
         ) : (
           <>
           <div className="overflow-x-auto border border-border-subtle">
             <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-              <caption className="sr-only">Señales operables más recientes con su plan técnico</caption>
+              <caption className="sr-only">{t("Señales operables más recientes con su plan técnico", "Latest tradable signals with their technical plan")}</caption>
               <thead>
                 <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
-                  <th scope="col" className="py-2 pl-3 pr-3 font-medium">Símbolo</th>
-                  <th scope="col" className="py-2 pr-3 font-medium">Catalizador</th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">Confianza técnica</th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">Entrada</th>
+                  <th scope="col" className="py-2 pl-3 pr-3 font-medium">{t("Símbolo", "Ticker")}</th>
+                  <th scope="col" className="py-2 pr-3 font-medium">{t("Catalizador", "Catalyst")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{t("Confianza técnica", "Technical confidence")}</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{t("Entrada", "Entry")}</th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">Stop</th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">Objetivo</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{t("Objetivo", "Target")}</th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">
-                    <abbr title="Riesgo/beneficio: lo que se puede ganar hasta el objetivo por cada unidad que se arriesga hasta el stop" className="no-underline">
-                      Riesgo/benef.
+                    <abbr
+                      title={t(
+                        "Riesgo/beneficio: lo que se puede ganar hasta el objetivo por cada unidad que se arriesga hasta el stop",
+                        "Risk/reward: what can be gained up to the target for each unit risked down to the stop",
+                      )}
+                      className="no-underline"
+                    >
+                      {t("Riesgo/benef.", "Risk/reward")}
                     </abbr>
                   </th>
-                  <th scope="col" className="py-2 pr-3 text-right font-medium">Horizonte</th>
+                  <th scope="col" className="py-2 pr-3 text-right font-medium">{t("Horizonte", "Horizon")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -132,8 +153,8 @@ export default async function InicioPage() {
                       </Link>
                     </td>
                     <td className="py-2 pr-3 text-text-secondary">
-                      {eventClassLabel(s.event_class)}
-                      <span className="num ml-1 text-xs text-text-tertiary">{formatDate(s.d0_close_date)}</span>
+                      {eventClassLabel(s.event_class, locale)}
+                      <span className="num ml-1 text-xs text-text-tertiary">{formatDate(s.d0_close_date, locale)}</span>
                     </td>
                     <td className="num py-2 pr-3 text-right">
                       {s.tech_confidence !== null ? (
@@ -148,15 +169,17 @@ export default async function InicioPage() {
                     <td className="num py-2 pr-3 text-right text-foreground">{s.stop !== null ? s.stop.toFixed(2) : "—"}</td>
                     <td className="num py-2 pr-3 text-right text-foreground">{s.target !== null ? s.target.toFixed(2) : "—"}</td>
                     <td className="num py-2 pr-3 text-right text-foreground">{s.risk_reward !== null ? `1:${s.risk_reward.toFixed(1)}` : "—"}</td>
-                    <td className="num py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} sesiones` : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} ${t("sesiones", "sessions")}` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="mt-1.5 text-xs text-text-tertiary">
-            Confianza técnica 0-100; ✓ = pasa los filtros de riesgo (catalizador confirmado, indicadores alineados, riesgo/beneficio de
-            1:2 o mejor y stop sobre un nivel real). Entrada de referencia: cierre del día del evento.
+            {t(
+              "Confianza técnica 0-100; ✓ = pasa los filtros de riesgo (catalizador confirmado, indicadores alineados, riesgo/beneficio de 1:2 o mejor y stop sobre un nivel real). Entrada de referencia: cierre del día del evento.",
+              "Technical confidence 0-100; ✓ = passes the risk filters (confirmed catalyst, aligned indicators, risk/reward of 1:2 or better and a stop on a real level). Reference entry: close on the event day.",
+            )}
           </p>
           </>
         )}
@@ -166,12 +189,15 @@ export default async function InicioPage() {
       {abstention.analyzed > 0 && (
         <section className="mb-6">
           <SectionHeader
-            title={`Últimos ${abstention.days} días`}
-            description="Tan importante como lo que se opera: cuántos eventos se descartaron y por qué."
+            title={t(`Últimos ${abstention.days} días`, `Last ${abstention.days} days`)}
+            description={t(
+              "Tan importante como lo que se opera: cuántos eventos se descartaron y por qué.",
+              "As important as what gets traded: how many events were discarded and why.",
+            )}
           />
           <p className="num mb-2 text-sm text-text-secondary">
-            {abstention.analyzed} eventos analizados · {abstention.traded} superaron los filtros · {abstention.analyzed - abstention.traded}{" "}
-            descartados
+            {abstention.analyzed} {t("eventos analizados", "events analysed")} · {abstention.traded} {t("superaron los filtros", "passed the filters")} ·{" "}
+            {abstention.analyzed - abstention.traded} {t("descartados", "discarded")}
           </p>
           {abstention.reasons.length > 0 && (
             <ul className="space-y-1 text-sm">
@@ -179,7 +205,7 @@ export default async function InicioPage() {
                 <li key={r.category} className="flex items-center gap-3">
                   <span className="num w-10 text-right text-text-tertiary">{r.n}</span>
                   <span className="h-1.5 bg-border-strong" style={{ width: `${Math.max(4, (r.n / (abstention.analyzed - abstention.traded)) * 160)}px` }} aria-hidden="true" />
-                  <span className="text-text-secondary">{ABSTENTION_LABELS[r.category]}</span>
+                  <span className="text-text-secondary">{abstentionLabel(r.category, t)}</span>
                 </li>
               ))}
             </ul>
@@ -193,9 +219,12 @@ export default async function InicioPage() {
       <section aria-labelledby="fiabilidad" className="mb-2">
         <SectionHeader
           id="fiabilidad"
-          title="¿Me puedo fiar?"
-          description="Calificación del motor de validación y las cifras históricas en que se apoya."
-          action={{ href: "/funciona", label: "Ver por qué" }}
+          title={t("¿Me puedo fiar?", "Can I trust it?")}
+          description={t(
+            "Calificación del motor de validación y las cifras históricas en que se apoya.",
+            "The validation engine's rating and the historical figures behind it.",
+          )}
+          action={{ href: "/funciona", label: t("Ver por qué", "See why") }}
         />
         <div className={`border ${verdict ? verdict.color : "border-border-subtle"}`}>
           <div className="p-4">
@@ -206,29 +235,45 @@ export default async function InicioPage() {
               </>
             ) : (
               <>
-                <p className="mb-1 text-lg font-semibold text-foreground">Evaluación de fiabilidad en curso</p>
-                <p className="text-sm text-text-secondary">La calificación aparece cuando hay suficientes eventos para medirla con rigor.</p>
+                <p className="mb-1 text-lg font-semibold text-foreground">{t("Evaluación de fiabilidad en curso", "Reliability assessment in progress")}</p>
+                <p className="text-sm text-text-secondary">
+                  {t(
+                    "La calificación aparece cuando hay suficientes eventos para medirla con rigor.",
+                    "The rating appears once there are enough events to measure it rigorously.",
+                  )}
+                </p>
               </>
             )}
           </div>
           {shown && shown.trade_metrics && shown.equity_metrics && (
             <div className="border-t border-border-subtle bg-surface p-4">
               <p className="mb-3 text-xs text-text-tertiary">
-                Rentabilidad histórica de la estrategia {versionLabel(shownVersion).toLowerCase()}, aplicada a todos los eventos pasados.
+                {t(
+                  `Rentabilidad histórica de la estrategia ${versionLabel(shownVersion, locale).toLowerCase()}, aplicada a todos los eventos pasados.`,
+                  `Historical performance of the ${versionLabel(shownVersion, locale).toLowerCase()} strategy, applied to all past events.`,
+                )}
               </p>
               <div className="flex flex-wrap gap-y-4">
                 <Stat
-                  label="Acierto"
+                  label={t("Acierto", "Win rate")}
                   value={shown.trade_metrics.win_rate !== null ? `${(shown.trade_metrics.win_rate * 100).toFixed(0)}%` : "—"}
-                  hint={`en ${shown.trade_metrics.total_trades} operaciones`}
+                  hint={t(`en ${shown.trade_metrics.total_trades} operaciones`, `over ${shown.trade_metrics.total_trades} trades`)}
                 />
                 <Stat
-                  label="Resultado acumulado"
+                  label={t("Resultado acumulado", "Cumulative return")}
                   value={shown.equity_metrics.total_return !== null ? formatPct(shown.equity_metrics.total_return * 100, 1) : "—"}
-                  hint="costes incluidos"
+                  hint={t("costes incluidos", "after costs")}
                 />
-                <Stat label="Peor caída" value={formatDrawdown(shown.equity_metrics.max_drawdown)} hint="pérdida temporal máxima" />
-                <Stat label="Posiciones abiertas" value={openPositions !== null ? formatNum(openPositions, 0) : "—"} hint="señales en seguimiento" />
+                <Stat
+                  label={t("Peor caída", "Max drawdown")}
+                  value={formatDrawdown(shown.equity_metrics.max_drawdown)}
+                  hint={t("pérdida temporal máxima", "largest temporary loss")}
+                />
+                <Stat
+                  label={t("Posiciones abiertas", "Open positions")}
+                  value={openPositions !== null ? formatNum(openPositions, 0) : "—"}
+                  hint={t("señales en seguimiento", "signals being tracked")}
+                />
               </div>
             </div>
           )}

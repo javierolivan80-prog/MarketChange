@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { LanguageToggle } from "@/components/ui/LanguageToggle";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 // Nav.tsx — barra de navegación.
 //
@@ -17,17 +19,18 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 // Largo plazo (ranking fundamental) es otro producto, con otro horizonte: va
 // en el pie de página, no compitiendo con el flujo principal de señales.
 const TABS = [
-  { href: "/", label: "Resumen" },
-  { href: "/senales", label: "Señales" },
-  { href: "/historial", label: "Historial" },
-  { href: "/cartera", label: "Cartera" },
-  { href: "/funciona", label: "Fiabilidad" },
-  { href: "/como-funciona", label: "Cómo funciona" },
+  { href: "/", es: "Resumen", en: "Overview" },
+  { href: "/senales", es: "Señales", en: "Signals" },
+  { href: "/historial", es: "Historial", en: "Track record" },
+  { href: "/cartera", es: "Cartera", en: "Portfolio" },
+  { href: "/funciona", es: "Fiabilidad", en: "Reliability" },
+  { href: "/como-funciona", es: "Cómo funciona", en: "How it works" },
 ] as const;
 
 export function Nav({ active }: { active?: string }) {
   const pathname = usePathname();
   const current = pathname ?? active ?? "";
+  const t = useT();
 
   return (
     <header className="mb-5 border-b border-border-subtle">
@@ -35,9 +38,12 @@ export function Nav({ active }: { active?: string }) {
         <Link href="/" className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
           MarketChange
         </Link>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <LanguageToggle />
+          <ThemeToggle />
+        </div>
       </div>
-      <nav aria-label="Secciones" className="-mb-px mt-2 overflow-x-auto">
+      <nav aria-label={t("Secciones", "Sections")} className="-mb-px mt-2 overflow-x-auto">
         <div className="flex gap-1">
           {TABS.map((tab) => {
             const isActive = tab.href === "/" ? current === "/" : current.startsWith(tab.href);
@@ -52,7 +58,7 @@ export function Nav({ active }: { active?: string }) {
                     : "border-transparent text-text-secondary hover:text-foreground"
                 }`}
               >
-                {tab.label}
+                {t(tab.es, tab.en)}
               </Link>
             );
           })}

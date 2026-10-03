@@ -1,13 +1,17 @@
 import { isDatabaseConfigured } from "@/lib/db";
 import { getEventClasses, getRecommendedVersion, getSignalsFeed } from "@/lib/data";
-import { VERSION_LABELS } from "@/lib/labels";
+import { versionLabel } from "@/lib/labels";
+import { getT } from "@/lib/locale";
 import { Nav } from "@/components/Nav";
 import { SignalsFilterForm } from "@/components/SignalsFilterForm";
 import { SignalsTable } from "@/components/SignalsTable";
 import { NotConfigured } from "@/components/ui/PageState";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Señales" };
+export async function generateMetadata() {
+  const { t } = await getT();
+  return { title: t("Señales", "Signals") };
+}
 
 // Los searchParams llegan tal cual de la URL (también desde el enlace de
 // Telegram): un valor mal formado no debe llegar a Postgres como error 500.
@@ -15,7 +19,8 @@ const SIGNALS = new Set(["LONG", "SHORT", "NO_TRADE"]);
 const isDate = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
 
 export default async function SenalesPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
-  if (!isDatabaseConfigured()) return <NotConfigured active="/senales" title="Señales" />;
+  const { locale, t } = await getT();
+  if (!isDatabaseConfigured()) return <NotConfigured active="/senales" title={t("Señales", "Signals")} />;
 
   const params = await searchParams;
   const version = await getRecommendedVersion();
@@ -38,11 +43,12 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
     <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
       <Nav active="/senales" />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Señales</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Señales", "Signals")}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
-          Cada evento analizado, el más reciente primero. Despliega una fila para ver el debate a favor y en contra, los casos
-          parecidos del pasado y por qué cada estrategia opera o no. La columna Señal es la decisión de la estrategia recomendada
-          ({VERSION_LABELS[version].toLowerCase()}). Hasta 500 eventos.
+          {t(
+            `Cada evento analizado, el más reciente primero. Despliega una fila para ver el debate a favor y en contra, los casos parecidos del pasado y por qué cada estrategia opera o no. La columna Señal es la decisión de la estrategia recomendada (${versionLabel(version, locale).toLowerCase()}). Hasta 500 eventos.`,
+            `Every analysed event, most recent first. Expand a row to see the case for and against, similar past cases and why each strategy trades or not. The Signal column is the recommended strategy's decision (${versionLabel(version, locale).toLowerCase()}). Up to 500 events.`,
+          )}
         </p>
       </header>
 
@@ -50,7 +56,7 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
 
       {rows.length === 0 ? (
         <p className="border border-dashed border-border-subtle p-6 text-center text-sm text-text-tertiary">
-          Sin eventos que cumplan estos filtros.
+          {t("Sin eventos que cumplan estos filtros.", "No events match these filters.")}
         </p>
       ) : (
         <SignalsTable rows={rows} />
