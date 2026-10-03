@@ -1,3 +1,5 @@
+"use client";
+
 // DirectionBadge.tsx — única fuente visual para LONG/SHORT/NO_TRADE en toda
 // la app. Verde/rojo están reservados a esto y a P&L (ver globals.css) — en
 // ningún otro sitio de la interfaz se usa ese color, para que cuando
@@ -8,14 +10,12 @@ const STYLES: Record<string, string> = {
   NO_TRADE: "bg-surface-sunken text-text-secondary ring-border-strong",
 };
 
-const LABELS: Record<string, string> = {
-  LONG: "Long",
-  SHORT: "Short",
-  NO_TRADE: "Sin operar",
-};
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function DirectionBadge({ value, className = "" }: { value: string; className?: string }) {
+  const t = useT();
   const style = STYLES[value] ?? STYLES.NO_TRADE;
+  const LABELS: Record<string, string> = { LONG: "Long", SHORT: "Short", NO_TRADE: t("Sin operar", "No trade") };
   const label = LABELS[value] ?? value;
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style} ${className}`}>

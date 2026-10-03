@@ -9,10 +9,12 @@
 // solo para esta línea sería más ingeniería de la que pide el spec (que
 // solo pide ver el R², no una ecuación).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function ScatterPredictedActual({ points, rSquared }: { points: { predicted: number; actual: number }[]; rSquared: number | null }) {
+  const t = useT();
   if (points.length === 0) {
-    return <div className="flex h-48 items-center justify-center text-sm italic text-text-tertiary">Sin trades todavía.</div>;
+    return <div className="flex h-48 items-center justify-center text-sm italic text-text-tertiary">{t("Sin trades todavía.", "No trades yet.")}</div>;
   }
 
   const allValues = points.flatMap((p) => [p.predicted, p.actual]);
@@ -32,7 +34,7 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
             <XAxis
               dataKey="predicted"
               type="number"
-              name="Predicho (EV%)"
+              name={t("Predicho (EV%)", "Predicted (EV%)")}
               tick={{ fontSize: 10 }}
               unit="%"
               domain={[min, max]}
@@ -41,7 +43,7 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
             <YAxis
               dataKey="actual"
               type="number"
-              name="Real (%)"
+              name={t("Real (%)", "Actual (%)")}
               tick={{ fontSize: 10 }}
               unit="%"
               width={40}
@@ -54,12 +56,12 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               cursor={{ strokeDasharray: "3 3" }}
             />
             <Line data={diagonal} dataKey="actual" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
-            <Scatter data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name="operaciones" />
+            <Scatter data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name={t("operaciones", "trades")} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
       <p className="mt-1 text-xs text-text-tertiary">
-        R² = {rSquared !== null ? rSquared.toFixed(3) : "—"} (línea de referencia = calibración perfecta, predicho == real)
+        R² = {rSquared !== null ? rSquared.toFixed(3) : "—"} {t("(línea de referencia = calibración perfecta, predicho == real)", "(reference line = perfect calibration, predicted == actual)")}
       </p>
     </div>
   );

@@ -6,12 +6,14 @@
 // trivial sobre datos ya presentes en all_trades, a diferencia de las
 // fórmulas financieras (Sharpe, calibración) que sí viven en Python.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 const N_BINS = 10;
 
 export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
+  const t = useT();
   if (pnlPcts.length === 0) {
-    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin trades todavía.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">{t("Sin trades todavía.", "No trades yet.")}</div>;
   }
 
   const min = Math.min(...pnlPcts);
@@ -37,7 +39,10 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
           <XAxis dataKey="label" tick={{ fontSize: 9 }} unit="%" />
           <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
           <Tooltip
-            formatter={(value, _name, item) => [`${value} operaciones`, `${item.payload.lo.toFixed(1)}% a ${item.payload.hi.toFixed(1)}%`]}
+            formatter={(value, _name, item) => [
+              `${value} ${t("operaciones", "trades")}`,
+              `${item.payload.lo.toFixed(1)}% ${t("a", "to")} ${item.payload.hi.toFixed(1)}%`,
+            ]}
           />
           <Bar dataKey="count">
             {bins.map((b, i) => (

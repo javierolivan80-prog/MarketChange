@@ -5,7 +5,8 @@
 // lo justificara, y cabeceras en inglés ("Conservative/Aggressive/Balanced")
 // en una app en español. Ahora es una tabla HTML renderizada en servidor,
 // con el mismo orden y nombres de versión que el resto de la app.
-import { VERSION_LABELS, VERSION_ORDER } from "@/lib/labels";
+import { VERSION_ORDER, versionLabel } from "@/lib/labels";
+import { makeT, type Locale } from "@/lib/i18n";
 
 export interface ComparisonRow {
   metric: string;
@@ -16,18 +17,19 @@ export interface ComparisonRow {
 
 const KEY = { CONSERVATIVE: "conservative", BALANCED: "balanced", AGGRESSIVE: "aggressive" } as const;
 
-export function ComparisonTable({ rows }: { rows: ComparisonRow[] }) {
+export function ComparisonTable({ rows, locale = "es" }: { rows: ComparisonRow[]; locale?: Locale }) {
+  const t = makeT(locale);
   return (
     <div className="overflow-x-auto border border-border-subtle">
       <table className="w-full border-collapse text-left text-sm">
         <thead>
           <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
             <th scope="col" className="py-2 pl-3 pr-4 font-medium">
-              Métrica
+              {t("Métrica", "Metric")}
             </th>
             {VERSION_ORDER.map((ver) => (
               <th key={ver} scope="col" className="py-2 pr-4 text-right font-medium last:pr-3">
-                {VERSION_LABELS[ver]}
+                {versionLabel(ver, locale)}
               </th>
             ))}
           </tr>

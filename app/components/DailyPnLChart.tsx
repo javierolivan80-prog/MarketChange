@@ -7,15 +7,17 @@
 // volumen de una semana de POC, 10 alcanza casi siempre).
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PaperClosedTrade } from "@/lib/queries";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function DailyPnLChart({ trades }: { trades: PaperClosedTrade[] }) {
+  const t = useT();
   if (trades.length === 0) {
-    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin trades cerrados esta semana.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">{t("Sin trades cerrados esta semana.", "No closed trades this week.")}</div>;
   }
 
   const byDate = new Map<string, number>();
-  for (const t of trades) {
-    byDate.set(t.exit_date, (byDate.get(t.exit_date) ?? 0) + t.pnl_pct);
+  for (const tr of trades) {
+    byDate.set(tr.exit_date, (byDate.get(tr.exit_date) ?? 0) + tr.pnl_pct);
   }
   const data = Array.from(byDate.entries())
     .sort(([a], [b]) => a.localeCompare(b))

@@ -5,6 +5,13 @@
 // formatea a mano con toFixed(), un 2% en un sitio y un 2.00% en otro
 // (o un 0.05 sin multiplicar por 100) es un accidente de tiempo, no una
 // cuestión de si va a pasar.
+//
+// Fechas en el idioma de la página (último argumento, por defecto español).
+// Los números llevan punto decimal en los dos idiomas, como siempre ha hecho
+// el panel: cambiar a coma en español mezclaría formatos con los gráficos.
+import { intlTag, type Locale } from "./i18n";
+
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function formatPct(value: number | null | undefined, digits = 1): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
@@ -35,20 +42,21 @@ export function formatNum(value: number | null | undefined, digits = 2): string 
 
 /** Fecha corta legible (es-ES), sin depender de la zona horaria del navegador
  * para fechas puras (YYYY-MM-DD de Postgres 'date', sin componente horario). */
-export function formatDate(value: string | null | undefined): string {
+export function formatDate(value: string | null | undefined, locale: Locale = "es"): string {
   if (!value) return "—";
   const [y, m, d] = value.slice(0, 10).split("-");
   if (!y || !m || !d) return value;
+  if (locale === "en") return `${MONTHS_EN[Number(m) - 1] ?? m} ${Number(d)}, ${y}`;
   return `${d}/${m}/${y}`;
 }
 
 /** Fecha+hora con zona explícita — para timestamps reales (analyzed_at,
  * filed_at), donde ocultar la hora perdería precisión de trazabilidad. */
-export function formatDateTime(value: string | Date | null | undefined): string {
+export function formatDateTime(value: string | Date | null | undefined, locale: Locale = "es"): string {
   if (!value) return "—";
   const d = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("es-ES", {
+  return new Intl.DateTimeFormat(intlTag(locale), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

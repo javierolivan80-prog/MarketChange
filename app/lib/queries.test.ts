@@ -196,7 +196,13 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
   test("Inicio lee solo las rutas JSON que necesita", async () => {
     await seedPortfolioRun("run-1", 1, [], {
       sample: "oos",
-      versions: { AGGRESSIVE: { trade_metrics: { total_trades: 7 }, equity_metrics: { total_return: 0.1 } } },
+      versions: {
+        AGGRESSIVE: {
+          trade_metrics: { total_trades: 7 },
+          equity_metrics: { total_return: 0.1 },
+          equity_curve: Array.from({ length: 300 }, (_, i) => ({ trade_date: `d${i}`, balance: 100 + i })),
+        },
+      },
     });
     await getPool().query(
       `INSERT INTO paper_trading_reports (run_batch_tag, week_start, week_end, report_json)
@@ -207,7 +213,12 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal(s.portfolio?.trade_metrics?.total_trades, 7);
     assert.equal(s.open_paper_positions, 5);
     assert.equal(s.validation, null);
+    // Curva reducida: ~60 puntos, con el primero y el último.
+    assert.ok(s.equity_spark.length >= 50 && s.equity_spark.length <= 62, String(s.equity_spark.length));
+    assert.equal(s.equity_spark[0], 100);
+    assert.equal(s.equity_spark[s.equity_spark.length - 1], 399);
     assert.equal((await getHomeSummary("BALANCED")).portfolio?.trade_metrics, null);
+    assert.deepEqual((await getHomeSummary("BALANCED")).equity_spark, []);
   });
 
   test("plan técnico en feed, detalle y señales recientes", async () => {

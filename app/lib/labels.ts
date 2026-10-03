@@ -6,6 +6,10 @@
 // de en lenguaje llano. Un producto que habla de la misma cosa con dos
 // nombres distintos transmite descuido — aquí se fija una sola palabra por
 // concepto.
+//
+// Cada etiqueta existe en español e inglés (lib/i18n.ts); el idioma es el
+// último argumento y por defecto español.
+import type { Locale } from "./i18n";
 import type { StrategyVersion } from "./queries";
 
 export const VERSION_ORDER: readonly StrategyVersion[] = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"];
@@ -16,8 +20,18 @@ export const VERSION_LABELS: Record<StrategyVersion, string> = {
   AGGRESSIVE: "Agresivo",
 };
 
-export function versionLabel(version: string): string {
-  return VERSION_LABELS[version as StrategyVersion] ?? version;
+const VERSION_LABELS_EN: Record<StrategyVersion, string> = {
+  CONSERVATIVE: "Conservative",
+  BALANCED: "Balanced",
+  AGGRESSIVE: "Aggressive",
+};
+
+export function versionLabels(locale: Locale = "es"): Record<StrategyVersion, string> {
+  return locale === "en" ? VERSION_LABELS_EN : VERSION_LABELS;
+}
+
+export function versionLabel(version: string, locale: Locale = "es"): string {
+  return versionLabels(locale)[version as StrategyVersion] ?? version;
 }
 
 // Claves = event_class tal como lo escribe el pipeline
@@ -34,12 +48,25 @@ const EVENT_CLASS_LABELS: Record<string, string> = {
   FDA_CRL: "Rechazo FDA (CRL)",
 };
 
+const EVENT_CLASS_LABELS_EN: Record<string, string> = {
+  "8K_2.02_EARNINGS": "Earnings",
+  "8K_1.01_MATERIAL_AGMT": "Material agreement / M&A",
+  "8K_4.02_RESTATEMENT": "Financial restatement",
+  "8K_5.02_MGMT_CHANGE": "Management change",
+  "8K_1.03_BANKRUPTCY": "Bankruptcy",
+  "8K_4.01_AUDITOR_CHANGE": "Auditor change",
+  "8K_8.01_OTHER": "Other material events",
+  FDA_APPROVAL: "FDA approval",
+  FDA_CRL: "FDA rejection (CRL)",
+};
+
 /** Nombre legible de una clase de evento. Una clase nueva que el pipeline
  * añada sin pasar por aquí se muestra con su código (sin el prefijo 8K_) en
  * vez de desaparecer — mejor un código feo que un hueco. */
-export function eventClassLabel(eventClass: string | null | undefined): string {
+export function eventClassLabel(eventClass: string | null | undefined, locale: Locale = "es"): string {
   if (!eventClass) return "—";
-  return EVENT_CLASS_LABELS[eventClass] ?? eventClass.replace(/^8K_/, "");
+  const labels = locale === "en" ? EVENT_CLASS_LABELS_EN : EVENT_CLASS_LABELS;
+  return labels[eventClass] ?? eventClass.replace(/^8K_/, "");
 }
 
 const EXIT_REASON_LABELS: Record<string, string> = {
@@ -49,9 +76,16 @@ const EXIT_REASON_LABELS: Record<string, string> = {
   TRAILING_STOP: "Stop dinámico",
 };
 
-export function exitReasonLabel(reason: string | null | undefined): string {
+const EXIT_REASON_LABELS_EN: Record<string, string> = {
+  TAKE_PROFIT: "Target reached",
+  STOP_LOSS: "Stop loss",
+  MAX_HOLDING: "Maximum holding period",
+  TRAILING_STOP: "Trailing stop",
+};
+
+export function exitReasonLabel(reason: string | null | undefined, locale: Locale = "es"): string {
   if (!reason) return "—";
-  return EXIT_REASON_LABELS[reason] ?? reason;
+  return (locale === "en" ? EXIT_REASON_LABELS_EN : EXIT_REASON_LABELS)[reason] ?? reason;
 }
 
 const SOURCE_LABELS: Record<string, string> = { EDGAR: "SEC", FDA_OPENFDA: "FDA" };
@@ -81,3 +115,22 @@ export const RELIABILITY: Record<"A" | "B" | "C", { title: string; summary: stri
     summary: "Con los datos disponibles los resultados todavía no son concluyentes. Tómalos como orientativos.",
   },
 };
+
+const RELIABILITY_EN: Record<"A" | "B" | "C", { title: string; summary: string }> = {
+  A: {
+    title: "High reliability",
+    summary: "The results hold up in every check: statistical significance, calibration and adverse scenarios.",
+  },
+  B: {
+    title: "Medium reliability",
+    summary: "The results are promising, but some checks are not yet conclusive. Follow them with caution.",
+  },
+  C: {
+    title: "Low reliability",
+    summary: "With the data available, the results are not yet conclusive. Treat them as indicative only.",
+  },
+};
+
+export function reliability(locale: Locale = "es"): Record<"A" | "B" | "C", { title: string; summary: string }> {
+  return locale === "en" ? RELIABILITY_EN : RELIABILITY;
+}

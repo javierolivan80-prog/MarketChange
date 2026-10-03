@@ -65,6 +65,10 @@ on:
         description: "Carga de histórico SIN IA — fecha fin (YYYY-MM-DD)"
         required: false
         default: ""
+      history_finalize_only:
+        description: "Con history_from: solo el paso final (precios, factores, CAR, diagnóstico) sobre los eventos ya cargados, sin volver a ingerir EDGAR"
+        required: false
+        default: "false"
 
 # Nunca dos corridas a la vez. Un backfill manual de horas se solapaba con las
 # pasadas programadas: dos procesos escribiendo las mismas tablas y, peor, dos
@@ -135,6 +139,7 @@ jobs:
 
   history_edgar:
     needs: history_plan
+    if: github.event.inputs.history_finalize_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 340
     strategy:
@@ -384,6 +389,9 @@ jobs:
         if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5' && github.event.inputs.backfill_start == ''
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Freno de tamaño también aquí (yfinance_backfill.MAX_DB_MB): sin él,
+          # 3.800 empresas nuevas x 500 días habrían pasado de los 400 MB.
+          HISTORY_MAX_DB_MB: ${{ vars.HISTORY_MAX_DB_MB || '400' }}
         run: |
           # Universo + series de referencia (ver el paso de backfill).
           python -m pipeline.ingest.universe_maintenance --tickers-file /tmp/tickers.txt

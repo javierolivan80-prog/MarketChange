@@ -9,6 +9,8 @@
 // la nota se apoya en más criterios de los que realmente usa.
 import { useState } from "react";
 import type { QualityScoreRow } from "@/lib/queries";
+import { useLocale, useT } from "@/components/i18n/LocaleProvider";
+import { qualityText } from "@/lib/qualityText";
 
 // Nota de calidad no es P&L ni dirección — se codifica con intensidad del
 // acento único (más pálido = nota más baja), no con semáforo verde/rojo.
@@ -22,6 +24,8 @@ function barColorClass(score: number | null): string {
 
 export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreRow; rank: number; scoreColorClass: string }) {
   const [open, setOpen] = useState(false);
+  const t = useT();
+  const locale = useLocale();
   const nDisponibles = row.components.filter((c) => c.score !== null).length;
 
   return (
@@ -36,14 +40,15 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
           <div className="text-right">
             <p className={`num text-2xl font-semibold ${scoreColorClass}`}>{row.total_score !== null ? row.total_score.toFixed(0) : "—"}</p>
             <p className="num text-[10px] text-text-tertiary">
-              {nDisponibles}/5 criterios · {row.n_years} {row.n_years === 1 ? "ejercicio" : "ejercicios"}
+              {nDisponibles}/5 {t("criterios", "criteria")} · {row.n_years}{" "}
+              {row.n_years === 1 ? t("ejercicio", "fiscal year") : t("ejercicios", "fiscal years")}
             </p>
           </div>
           <span className="text-text-tertiary" aria-hidden="true">
             {open ? "▾" : "▸"}
           </span>
         </div>
-        <p className="ml-10 mt-2 text-xs text-text-secondary">{row.verdict}</p>
+        <p className="ml-10 mt-2 text-xs text-text-secondary">{qualityText(row.verdict, locale)}</p>
       </button>
 
       {open && (
@@ -51,17 +56,19 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
           {row.components.map((c) => (
             <div key={c.name}>
               <div className="mb-1 flex items-baseline justify-between gap-2">
-                <span className={`text-sm font-medium ${c.score === null ? "text-text-tertiary" : "text-foreground"}`}>{c.name}</span>
-                <span className="num font-mono text-xs text-text-secondary">{c.score !== null ? `${c.score.toFixed(0)}/100` : "sin datos"}</span>
+                <span className={`text-sm font-medium ${c.score === null ? "text-text-tertiary" : "text-foreground"}`}>{qualityText(c.name, locale)}</span>
+                <span className="num font-mono text-xs text-text-secondary">{c.score !== null ? `${c.score.toFixed(0)}/100` : t("sin datos", "no data")}</span>
               </div>
               <div className="mb-1 h-1.5 bg-surface-sunken">
                 <div className={`h-1.5 ${barColorClass(c.score)}`} style={{ width: `${c.score ?? 0}%` }} />
               </div>
-              <p className="text-xs text-text-secondary">{c.explanation}</p>
+              <p className="text-xs text-text-secondary">{qualityText(c.explanation, locale)}</p>
             </div>
           ))}
           {row.price_used !== null && (
-            <p className="num pt-1 text-[10px] text-text-tertiary">Valorada con un precio de {row.price_used.toFixed(2)} por acción.</p>
+            <p className="num pt-1 text-[10px] text-text-tertiary">
+              {t(`Valorada con un precio de ${row.price_used.toFixed(2)} por acción.`, `Valued at a price of ${row.price_used.toFixed(2)} per share.`)}
+            </p>
           )}
         </div>
       )}

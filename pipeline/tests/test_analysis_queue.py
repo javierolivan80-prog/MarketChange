@@ -301,3 +301,19 @@ def test_price_tickers_incluye_referencias_aunque_el_universo_este_vacio(conn):
     # Solo aparece en un evento de hace años: sus precios los baja, acotados,
     # ops_history_prices — no la descarga nocturna de 500 días.
     assert "VIEJA" not in tickers
+
+
+@pytestmark_db
+def test_price_tickers_mas_activos_primero_y_sin_simbolos_no_operables(conn):
+    from pipeline.ingest.universe_maintenance import price_tickers
+
+    _empresa(conn, "1", "POCO", 100.0, 3e9)
+    _empresa(conn, "2", "MUCHO", 100.0, 3e9)
+    _empresa(conn, "3", "PCG-PB", 100.0, 3e9)
+    _evento(conn, "1", "POCO", date.today() - timedelta(days=5))
+    for i in range(3):
+        _evento(conn, "2", "MUCHO", date.today() - timedelta(days=5 + i))
+    _evento(conn, "3", "PCG-PB", date.today() - timedelta(days=5))
+    tickers = price_tickers(conn)
+    assert tickers.index("MUCHO") < tickers.index("POCO")
+    assert "PCG-PB" not in tickers

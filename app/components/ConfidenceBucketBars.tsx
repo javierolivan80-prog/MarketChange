@@ -5,10 +5,13 @@
 // mismo dato (ConfidenceBucket[]), dos contextos.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ConfidenceBucket } from "@/lib/queries";
+import { useT } from "@/components/i18n/LocaleProvider";
 
-export function ConfidenceBucketBars({ buckets, label = "Acierto" }: { buckets: ConfidenceBucket[]; label?: string }) {
+export function ConfidenceBucketBars({ buckets, label }: { buckets: ConfidenceBucket[]; label?: string }) {
+  const t = useT();
+  const seriesLabel = label ?? t("Acierto", "Win rate");
   if (buckets.length === 0) {
-    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin datos suficientes.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">{t("Sin datos suficientes.", "Not enough data.")}</div>;
   }
   const data = buckets.map((b) => ({ ...b, hit_rate_pct: b.hit_rate * 100 }));
 
@@ -22,7 +25,7 @@ export function ConfidenceBucketBars({ buckets, label = "Acierto" }: { buckets: 
           <Tooltip
             formatter={(value, name, item) => [
               name === "hit_rate_pct" ? `${Number(value).toFixed(1)}% (n=${item.payload.n})` : value,
-              label,
+              seriesLabel,
             ]}
           />
           <Bar dataKey="hit_rate_pct" fill="var(--color-accent-600)">
