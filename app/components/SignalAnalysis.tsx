@@ -21,6 +21,7 @@ import { formatDateTime } from "@/lib/format";
 import { VERSION_ORDER, exitReasonLabel, versionLabel } from "@/lib/labels";
 import { makeT, type Locale } from "@/lib/i18n";
 import { planText } from "@/lib/planText";
+import { HBars } from "@/components/viz/Bars";
 
 function Section({ title, accent, children }: { title: string; accent?: "long" | "short"; children: React.ReactNode }) {
   const accentClass = accent === "long" ? "text-emerald-700 dark:text-emerald-400" : accent === "short" ? "text-rose-700 dark:text-rose-400" : "text-foreground";
@@ -176,10 +177,17 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
                 {detail.n_historical_analogues ?? "?"} {t("casos · confianza", "cases · confidence")} {impact.confidence.toFixed(0)}/100
               </p>
               <p>{planText(impact.expected_magnitude, locale)}</p>
-              <p className="num text-text-tertiary">
-                {t("Prob. de moverse", "Prob. of moving")} ±5%: {impact.probability_5pct_move.toFixed(0)}% · ±10%: {impact.probability_10pct_move.toFixed(0)}% · ±20%:{" "}
-                {impact.probability_20pct_move.toFixed(0)}%
-              </p>
+              <p className="mt-1 text-xs text-text-tertiary">{t("Probabilidad de que se mueva al menos:", "Probability of moving at least:")}</p>
+              <HBars
+                max={100}
+                labelWidth="3rem"
+                rows={[
+                  { label: "±5%", value: impact.probability_5pct_move },
+                  { label: "±10%", value: impact.probability_10pct_move },
+                  { label: "±20%", value: impact.probability_20pct_move },
+                ]}
+                format={(v) => `${v.toFixed(0)}%`}
+              />
               {(detail.n_historical_analogues ?? 0) < 5 && (
                 <p className="text-amber-700 dark:text-amber-400">
                   {t(

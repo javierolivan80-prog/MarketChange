@@ -36,6 +36,12 @@
   --border-subtle: var(--color-neutral-200);
   --border-strong: var(--color-neutral-300);
   --focus-ring: var(--color-accent-600);
+  /* Ganancia / pérdida en los gráficos (barras de riesgo-beneficio,
+     resultados). Par validado para daltonismo con el validador de la skill de
+     visualización (ΔE CVD 10.6 en claro, 8.3 en oscuro); en claro la pérdida
+     no llega a 3:1 de contraste, así que siempre va con etiqueta visible. */
+  --gain: #047857;
+  --loss: #fb7185;
 }
 
 /* Modo oscuro: negro real (no "gris oscuro" tipo neutral-950) — la app abre
@@ -57,6 +63,8 @@
   --border-subtle: oklch(0.2 0 0);
   --border-strong: oklch(0.32 0 0);
   --focus-ring: var(--color-accent-400);
+  --gain: #059669;
+  --loss: #f43f5e;
 }
 
 @theme inline {
@@ -69,6 +77,8 @@
   --color-text-tertiary: var(--text-tertiary);
   --color-border-subtle: var(--border-subtle);
   --color-border-strong: var(--border-strong);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
 }

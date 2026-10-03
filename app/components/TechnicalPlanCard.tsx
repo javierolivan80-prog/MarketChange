@@ -10,6 +10,8 @@
 import type { TechnicalPlan } from "@/lib/queries";
 import { makeT, type Locale, type T } from "@/lib/i18n";
 import { planReason, planText } from "@/lib/planText";
+import { TradeLevels } from "@/components/viz/TradeLevels";
+import { ScoreSegments } from "@/components/viz/Meter";
 
 const checkLabels = (t: T): Record<string, string> => ({
   catalyst_confirmed: t("Catalizador confirmado (no especulativo)", "Confirmed catalyst (not speculative)"),
@@ -67,6 +69,23 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
         </ul>
       )}
 
+      <div className="mb-4">
+        <TradeLevels
+          entry={plan.entry}
+          stop={plan.stop}
+          target={plan.target}
+          target2={plan.target2}
+          labels={{
+            stop: "Stop",
+            entry: t("Entrada", "Entry"),
+            target: t("Objetivo parcial", "Partial target"),
+            target2: t("Objetivo final", "Final target"),
+            risk: t("Riesgo", "Risk"),
+            reward: t("Beneficio", "Reward"),
+          }}
+        />
+      </div>
+
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         <Metric label={t("Entrada", "Entry")} value={price(plan.entry)} hint={t("cierre del día del evento", "close on the event day")} />
         <Metric label="Stop" value={price(plan.stop)} />
@@ -99,7 +118,19 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
           </ul>
         </div>
         <div>
-          <p className="mb-1 font-medium text-foreground">{t("Puntuación", "Score")}</p>
+          <p className="mb-1 font-medium text-foreground">
+            {t("Puntuación", "Score")} <span className="num font-normal text-text-secondary">{plan.confidence}/100</span>
+          </p>
+          <div className="mb-2 max-w-[16rem]">
+            <ScoreSegments
+              label={`${t("Puntuación", "Score")} ${plan.confidence}/100`}
+              parts={Object.entries(COMPONENT_LABELS).map(([key, { label, max }]) => ({
+                name: label,
+                max,
+                value: d.components?.[key as keyof typeof d.components] ?? 0,
+              }))}
+            />
+          </div>
           <ul className="num space-y-0.5">
             {Object.entries(COMPONENT_LABELS).map(([key, { label, max }]) => (
               <li key={key}>

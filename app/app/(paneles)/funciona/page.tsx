@@ -12,6 +12,7 @@ import { VERSION_ORDER, eventClassLabel, reliability, versionLabel } from "@/lib
 import { getT } from "@/lib/locale";
 import { makeT, type Locale, type T } from "@/lib/i18n";
 import { validationText } from "@/lib/validationText";
+import { ReliabilityScale } from "@/components/viz/ReliabilityScale";
 
 export const dynamic = "force-dynamic";
 export async function generateMetadata() {
@@ -226,6 +227,13 @@ export default async function FuncionaPage() {
             </p>
             <p className={`mb-2 text-2xl font-semibold ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{RELIABILITY[validationReport.best_decision.option].title}</p>
             <p className="text-sm text-foreground">{RELIABILITY[validationReport.best_decision.option].summary}</p>
+            <div className="mt-3">
+              <ReliabilityScale
+                option={validationReport.best_decision.option}
+                labels={{ A: t("Alta", "High"), B: t("Media", "Medium"), C: t("Baja", "Low") }}
+                ariaLabel={`${t("Fiabilidad", "Reliability")}: ${RELIABILITY[validationReport.best_decision.option].title}`}
+              />
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {VERSION_ORDER.filter((ver) => validationReport.decisions[ver]).map((ver) => (

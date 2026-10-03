@@ -7,6 +7,7 @@ import { DirectionBadge, SignedPct } from "@/components/ui/DirectionBadge";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { eventClassLabel, versionLabel } from "@/lib/labels";
 import { getT } from "@/lib/locale";
+import { PnlBar } from "@/components/viz/Bars";
 
 export const dynamic = "force-dynamic";
 export async function generateMetadata() {
@@ -35,6 +36,10 @@ export default async function HistorialPage() {
   if (history.rows.length === 0) {
     return <NoDataYet active="/historial" title={title} what={t("Todavía no se ha emitido ninguna señal operable.", "No tradable signal has been issued yet.")} />;
   }
+
+  // Escala común de la columna de resultados: la operación con el mayor
+  // movimiento (a favor o en contra) llena media barra.
+  const maxAbsPnl = Math.max(0, ...history.rows.map((r) => (r.pnl_pct !== null ? Math.abs(r.pnl_pct) : 0)));
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
@@ -111,7 +116,12 @@ export default async function HistorialPage() {
                 </td>
                 <td className="py-2 pr-4 text-text-secondary">{r.status ? (STATUS_LABELS[r.status] ?? r.status) : t("Pendiente", "Pending")}</td>
                 <td className="py-2 pr-3 text-right">
-                  <SignedPct value={r.pnl_pct} />
+                  <span className="inline-flex items-center justify-end gap-2">
+                    <PnlBar value={r.pnl_pct} maxAbs={maxAbsPnl} />
+                    <span className="inline-block w-16 text-right">
+                      <SignedPct value={r.pnl_pct} />
+                    </span>
+                  </span>
                 </td>
               </tr>
             ))}

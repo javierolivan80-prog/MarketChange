@@ -12,6 +12,11 @@ import { formatPct, formatNum, formatDate, formatDateTime, formatDrawdown } from
 import { eventClassLabel, reliability, versionLabel } from "@/lib/labels";
 import { getT } from "@/lib/locale";
 import type { T } from "@/lib/i18n";
+import { TradeLevels } from "@/components/viz/TradeLevels";
+import { Meter } from "@/components/viz/Meter";
+import { ReliabilityScale } from "@/components/viz/ReliabilityScale";
+import { Sparkline } from "@/components/viz/Sparkline";
+import { HBars } from "@/components/viz/Bars";
 
 export const dynamic = "force-dynamic";
 
@@ -46,11 +51,12 @@ function abstentionLabel(category: AbstentionCategory, t: T): string {
 // Más de 2 días sin analizar nada (fin de semana incluido) = algo va mal.
 const STALE_AFTER_HOURS = 60;
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Stat({ label, value, hint, children }: { label: string; value: string; hint?: string; children?: React.ReactNode }) {
   return (
     <div className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
       <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">{label}</p>
-      <p className="num text-2xl font-semibold text-foreground">{value}</p>
+      <p className="text-2xl font-semibold text-foreground">{value}</p>
+      {children}
       {hint && <p className="mt-0.5 text-xs text-text-tertiary">{hint}</p>}
     </div>
   );
@@ -60,6 +66,14 @@ export default async function InicioPage() {
   const { locale, t } = await getT();
   if (!isDatabaseConfigured()) return <NotConfigured active="/" title={t("Resumen", "Overview")} />;
   const RELIABILITY = reliability(locale);
+  const levelLabels = {
+    stop: "Stop",
+    entry: t("Entrada", "Entry"),
+    target: t("Objetivo", "Target"),
+    target2: t("Objetivo final", "Final target"),
+    risk: t("Riesgo", "Risk"),
+    reward: t("Beneficio", "Reward"),
+  };
 
   const version = await getRecommendedVersion();
   const [summary, recent, freshness, abstention] = await Promise.all([
@@ -119,7 +133,7 @@ export default async function InicioPage() {
         ) : (
           <>
           <div className="overflow-x-auto border border-border-subtle">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[860px] border-collapse text-left text-sm">
               <caption className="sr-only">{t("Señales operables más recientes con su plan técnico", "Latest tradable signals with their technical plan")}</caption>
               <thead>
                 <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
@@ -158,8 +172,16 @@ export default async function InicioPage() {
                     </td>
                     <td className="num py-2 pr-3 text-right">
                       {s.tech_confidence !== null ? (
-                        <span className={s.tech_passes ? "text-emerald-700 dark:text-emerald-400" : "text-text-secondary"}>
-                          {s.tech_confidence}/100{s.tech_passes ? " ✓" : ""}
+                        <span className="inline-flex items-center justify-end gap-2">
+                          <Meter
+                            value={s.tech_confidence}
+                            strong={s.tech_passes === true}
+                            label={`${t("Confianza técnica", "Technical confidence")} ${s.tech_confidence}/100`}
+                          />
+                          <span className={s.tech_passes ? "text-foreground" : "text-text-secondary"}>
+                            {s.tech_confidence}
+                            {s.tech_passes ? " ✓" : ""}
+                          </span>
                         </span>
                       ) : (
                         <span className="text-text-tertiary">—</span>
@@ -168,8 +190,13 @@ export default async function InicioPage() {
                     <td className="num py-2 pr-3 text-right text-foreground">{s.entry !== null ? s.entry.toFixed(2) : "—"}</td>
                     <td className="num py-2 pr-3 text-right text-foreground">{s.stop !== null ? s.stop.toFixed(2) : "—"}</td>
                     <td className="num py-2 pr-3 text-right text-foreground">{s.target !== null ? s.target.toFixed(2) : "—"}</td>
-                    <td className="num py-2 pr-3 text-right text-foreground">{s.risk_reward !== null ? `1:${s.risk_reward.toFixed(1)}` : "—"}</td>
-                    <td className="num py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} ${t("sesiones", "sessions")}` : "—"}</td>
+                    <td className="num py-2 pr-3 text-right text-foreground">
+                      <span className="inline-flex items-center justify-end gap-2">
+                        <TradeLevels entry={s.entry} stop={s.stop} target={s.target} labels={levelLabels} compact />
+                        {s.risk_reward !== null ? `1:${s.risk_reward.toFixed(1)}` : "—"}
+                      </span>
+                    </td>
+                    <td className="num whitespace-nowrap py-2 pr-3 text-right text-text-secondary">{s.timeframe_days !== null ? `~${s.timeframe_days} ${t("sesiones", "sessions")}` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -177,8 +204,8 @@ export default async function InicioPage() {
           </div>
           <p className="mt-1.5 text-xs text-text-tertiary">
             {t(
-              "Confianza técnica 0-100; ✓ = pasa los filtros de riesgo (catalizador confirmado, indicadores alineados, riesgo/beneficio de 1:2 o mejor y stop sobre un nivel real). Entrada de referencia: cierre del día del evento.",
-              "Technical confidence 0-100; ✓ = passes the risk filters (confirmed catalyst, aligned indicators, risk/reward of 1:2 or better and a stop on a real level). Reference entry: close on the event day.",
+              "Confianza técnica 0-100; ✓ = pasa los filtros de riesgo (catalizador confirmado, indicadores alineados, riesgo/beneficio de 1:2 o mejor y stop sobre un nivel real). En la barra de riesgo/beneficio, el tramo rojo es lo que se arriesga hasta el stop y el verde lo que se puede ganar hasta el objetivo; la raya es la entrada. Entrada de referencia: cierre del día del evento.",
+              "Technical confidence 0-100; ✓ = passes the risk filters (confirmed catalyst, aligned indicators, risk/reward of 1:2 or better and a stop on a real level). In the risk/reward bar, the red stretch is what is risked down to the stop and the green one what can be gained up to the target; the tick is the entry. Reference entry: close on the event day.",
             )}
           </p>
           </>
@@ -200,15 +227,15 @@ export default async function InicioPage() {
             {abstention.analyzed - abstention.traded} {t("descartados", "discarded")}
           </p>
           {abstention.reasons.length > 0 && (
-            <ul className="space-y-1 text-sm">
-              {abstention.reasons.map((r) => (
-                <li key={r.category} className="flex items-center gap-3">
-                  <span className="num w-10 text-right text-text-tertiary">{r.n}</span>
-                  <span className="h-1.5 bg-border-strong" style={{ width: `${Math.max(4, (r.n / (abstention.analyzed - abstention.traded)) * 160)}px` }} aria-hidden="true" />
-                  <span className="text-text-secondary">{abstentionLabel(r.category, t)}</span>
-                </li>
-              ))}
-            </ul>
+            <HBars
+              max={abstention.analyzed - abstention.traded}
+              labelWidth="minmax(0,18rem)"
+              rows={abstention.reasons.map((r) => ({ key: r.category, label: abstentionLabel(r.category, t), value: r.n }))}
+              format={(n) => {
+                const discarded = abstention.analyzed - abstention.traded;
+                return discarded > 0 ? `${n} · ${Math.round((n / discarded) * 100)}%` : String(n);
+              }}
+            />
           )}
         </section>
       )}
@@ -232,6 +259,13 @@ export default async function InicioPage() {
               <>
                 <p className={`mb-1 text-lg font-semibold ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
                 <p className="text-sm text-foreground">{RELIABILITY[summary.validation!.best_decision.option].summary}</p>
+                <div className="mt-3">
+                  <ReliabilityScale
+                    option={summary.validation!.best_decision.option}
+                    labels={{ A: t("Alta", "High"), B: t("Media", "Medium"), C: t("Baja", "Low") }}
+                    ariaLabel={`${t("Fiabilidad", "Reliability")}: ${RELIABILITY[summary.validation!.best_decision.option].title}`}
+                  />
+                </div>
               </>
             ) : (
               <>
@@ -262,8 +296,14 @@ export default async function InicioPage() {
                 <Stat
                   label={t("Resultado acumulado", "Cumulative return")}
                   value={shown.equity_metrics.total_return !== null ? formatPct(shown.equity_metrics.total_return * 100, 1) : "—"}
-                  hint={t("costes incluidos", "after costs")}
-                />
+                  hint={t("costes incluidos · evolución en el histórico", "after costs · path over the backtest")}
+                >
+                  <Sparkline
+                    values={summary.equity_spark}
+                    className="mt-1 h-8 w-full max-w-[180px]"
+                    label={t("Evolución del resultado acumulado", "Cumulative return over time")}
+                  />
+                </Stat>
                 <Stat
                   label={t("Peor caída", "Max drawdown")}
                   value={formatDrawdown(shown.equity_metrics.max_drawdown)}

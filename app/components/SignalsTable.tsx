@@ -16,6 +16,7 @@ import { formatDate, formatFracAsPct } from "@/lib/format";
 import { eventClassLabel, sourceLabel } from "@/lib/labels";
 import type { Locale, T } from "@/lib/i18n";
 import { useLocale, useT } from "@/components/i18n/LocaleProvider";
+import { Meter } from "@/components/viz/Meter";
 
 const columnHelper = createColumnHelper<SignalFeedRow>();
 
@@ -54,8 +55,15 @@ const buildColumns = (t: T, locale: Locale) => [
       if (v === null) return <span className="text-text-tertiary">—</span>;
       const passes = c.row.original.tech_passes;
       return (
-        <span className={`num ${passes ? "text-emerald-700 dark:text-emerald-400" : "text-text-secondary"}`} title={passes ? t("Pasa los filtros de riesgo", "Passes the risk filters") : t("No pasa los filtros de riesgo", "Does not pass the risk filters")}>
-          {v}/100{passes ? " ✓" : ""}
+        <span
+          className="inline-flex items-center gap-2"
+          title={passes ? t("Pasa los filtros de riesgo", "Passes the risk filters") : t("No pasa los filtros de riesgo", "Does not pass the risk filters")}
+        >
+          <Meter value={v} strong={passes === true} width="w-12" label={`${t("Confianza técnica", "Technical confidence")} ${v}/100`} />
+          <span className={`num ${passes ? "text-foreground" : "text-text-secondary"}`}>
+            {v}
+            {passes ? " ✓" : ""}
+          </span>
         </span>
       );
     },

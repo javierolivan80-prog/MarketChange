@@ -800,6 +800,9 @@ export interface HomeSummary {
   } | null;
   validation: { best_version: StrategyVersion; best_decision: VersionDecision } | null;
   open_paper_positions: number | null;
+  /** Curva de capital de la versión, reducida a ~60 puntos (primero y último
+   * siempre incluidos) para el minigráfico de Inicio. Vacía si no hay. */
+  equity_spark: number[];
 }
 
 /** Lo que Inicio necesita, extraído en SQL con rutas JSON en vez de bajar los
@@ -807,7 +810,7 @@ export interface HomeSummary {
  * versiones) para pintar cuatro cifras. */
 export async function getHomeSummary(version: StrategyVersion): Promise<HomeSummary> {
   const pool = getPool();
-  const [portfolio, validation, paper] = await Promise.all([
+  const [portfolio, validation, paper, spark] = await Promise.all([
     pool.query(
       `SELECT report_json->'sample' AS sample, report_json->>'oos_warning' AS oos_warning,
               report_json->'versions'->$1->'trade_metrics' AS trade_metrics,
@@ -823,6 +826,20 @@ export async function getHomeSummary(version: StrategyVersion): Promise<HomeSumm
       `SELECT (SELECT sum((v->>'n_open_positions')::int) FROM jsonb_each(report_json->'versions') AS x(k, v)) AS n_open
        FROM paper_trading_reports ORDER BY created_at DESC LIMIT 1`
     ),
+    // Muestreo en SQL: un punto de cada n/60, más el último. Bajar la curva
+    // entera (cientos de puntos) para un dibujo de 100px no tiene sentido.
+    pool.query(
+      `WITH last AS (
+         SELECT report_json->'versions'->$1->'equity_curve' AS curve
+         FROM portfolio_reports ORDER BY created_at DESC LIMIT 1
+       ), pts AS (
+         SELECT (e->>'balance')::float8 AS balance, i, count(*) OVER () AS n
+         FROM last, jsonb_array_elements(CASE WHEN jsonb_typeof(curve) = 'array' THEN curve ELSE '[]'::jsonb END) WITH ORDINALITY AS t(e, i)
+       )
+       SELECT coalesce(array_agg(balance ORDER BY i), '{}') AS spark
+       FROM pts WHERE (i - 1) % greatest(1, n / 60) = 0 OR i = n`,
+      [version]
+    ),
   ]);
   const p = portfolio.rows[0];
   const v = validation.rows[0];
@@ -833,6 +850,7 @@ export async function getHomeSummary(version: StrategyVersion): Promise<HomeSumm
       : null,
     validation: v?.best_decision ? { best_version: asVersion(v.best_version), best_decision: v.best_decision } : null,
     open_paper_positions: pp && pp.n_open !== null ? Number(pp.n_open) : null,
+    equity_spark: ((spark.rows[0]?.spark ?? []) as (number | string)[]).map(Number).filter((n) => Number.isFinite(n)),
   };
 }
 
