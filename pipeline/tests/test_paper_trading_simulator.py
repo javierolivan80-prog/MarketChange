@@ -2,7 +2,7 @@
 con cálculo a mano, y selección de semana. Los tests de integración contra
 Postgres real (fetch_events_for_week, simulate_paper_trading_week de
 extremo a extremo) viven en test_paper_trading_simulator_integration.py."""
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 

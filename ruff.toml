@@ -1,0 +1,16 @@
+# ruff.toml — lint del pipeline en la CI (BUGS_REPORT.md H-36).
+#
+# Reglas fijadas a mano: las versiones nuevas de ruff amplían el conjunto por
+# defecto, y una CI que cambia de criterio al actualizarse no es una CI. Solo
+# errores reales (sintaxis, nombres sin definir, imports y variables sin usar),
+# no estilo: el estilo no rompe nada y llenaría la CI de ruido.
+target-version = "py311"
+line-length = 200
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# En los tests, los imports por sección (cerca de los tests que los usan) y
+# `l` como nombre corto en comprensiones son deliberados y no esconden fallos.
+"pipeline/tests/**" = ["E402", "E741"]

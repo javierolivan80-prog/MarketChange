@@ -2,7 +2,6 @@
 (Fase 1) y analyze/enrichment.py (Fase 2). Ver docstring del módulo para por
 qué se extrajo: evitar que la ventana de estimación diverja entre los dos
 sitios que la usan."""
-from datetime import date
 
 import numpy as np
 import pandas as pd

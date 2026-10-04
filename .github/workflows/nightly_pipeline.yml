@@ -97,7 +97,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
       - name: Diagnóstico (solo lectura)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -154,7 +154,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
       - name: Aplicar schema (idempotente)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -177,7 +177,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
       - name: Aplicar schema (idempotente — borra índices duplicados)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -266,7 +266,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
       - name: Run test suite (incluye T1 placebo y T2 réplica — bloqueantes)
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/money_poc_test
@@ -311,7 +311,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
 
       - name: Aplicar schema (idempotente)
         env:
@@ -660,7 +660,7 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
       - name: Backfill de precios (universo desde la tabla universe)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

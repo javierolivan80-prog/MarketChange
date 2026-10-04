@@ -26,7 +26,7 @@ from pipeline.backtest.portfolio_simulator import (
     open_position,
     step_position_forward,
 )
-from pipeline.backtest.portfolio_strategies import STRATEGIES, generate_trailing_stop_tiers
+from pipeline.backtest.portfolio_strategies import generate_trailing_stop_tiers
 
 D0 = date(2024, 1, 2)
 

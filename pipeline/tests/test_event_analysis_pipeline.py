@@ -11,7 +11,7 @@ saltándose una segunda llamada al LLM para el mismo (ticker, event_class).
 """
 import json
 import os
-from datetime import date, timedelta
+from datetime import date
 from types import SimpleNamespace
 
 import numpy as np
@@ -665,7 +665,7 @@ def test_process_chunk_bull_bear_prompt_contains_real_filing_text(conn):
 
 
 def test_process_chunk_without_filing_text_falls_back_gracefully(conn):
-    from pipeline.analyze.event_analysis_pipeline import _FALLBACK_FILING_EXCERPT, fetch_events_needing_analysis
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis
 
     _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
     dates = pd.date_range("2021-01-04", periods=320, freq="B")

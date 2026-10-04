@@ -137,6 +137,26 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal(detail?.company_name, "DDD Inc");
     assert.equal(await getSignalDetail(999999), null);
     assert.equal(await getSignalDetail(-1), null);
+    assert.equal(detail?.ai_skipped_reason, null);
+  });
+
+  test("contrato con el pipeline: un descarte previo a la IA llega como tal, no como veredicto", async () => {
+    // Forma exacta que escribe pipeline/analyze/event_analysis_pipeline.py
+    // cuando una regla objetiva ya garantiza NO_TRADE. Con ella, la ficha
+    // leía judge.net_conviction (inexistente) y la página se caía (#71).
+    const id = await seedEvent({ ticker: "EEE", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"] });
+    const marker = JSON.stringify({ skipped_no_llm_needed: true, reason: "ADV < 1M$ — NO_TRADE garantizado, no se invoca el debate de IA" });
+    await getPool().query(
+      `UPDATE event_analyses SET bull_analyst_output = $2, bear_analyst_output = $2, judge_output = $2,
+         model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE', model_version_judge = 'SKIPPED_OBJECTIVE_NO_TRADE'
+       WHERE event_id = $1`,
+      [id, marker]
+    );
+    const detail = await getSignalDetail(id, "BALANCED");
+    assert.equal(detail?.ai_skipped_reason, "ADV < 1M$ — NO_TRADE garantizado, no se invoca el debate de IA");
+    assert.equal(detail?.bull_output, null);
+    assert.equal(detail?.bear_output, null);
+    assert.equal(detail?.judge_output, null);
   });
 
   test("versión recomendada: la del último informe de validación, o BALANCED", async () => {

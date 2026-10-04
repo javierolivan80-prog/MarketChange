@@ -105,7 +105,7 @@ def test_populate_skips_events_without_enough_price_history(conn):
         )
     conn.commit()
     # Sin ninguna fila en `prices` para SHORTCO -> debe saltarse sin crashear.
-    n = populate_missing_car_results(conn)
+    populate_missing_car_results(conn)
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM car_results cr JOIN events e ON e.event_id=cr.event_id WHERE e.ticker='SHORTCO'")
         assert cur.fetchone()["n"] == 0

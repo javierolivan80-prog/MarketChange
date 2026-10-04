@@ -7,7 +7,7 @@ del SDK, y la caché de 24h contra Postgres real.
 """
 import json
 import os
-from datetime import date, datetime
+from datetime import date
 from types import SimpleNamespace
 
 import pytest

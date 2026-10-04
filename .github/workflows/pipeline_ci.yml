@@ -42,7 +42,14 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-      - run: pip install -r pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
+      # Lint de errores reales (nombres sin definir, imports y variables sin
+      # usar...), con las reglas fijadas en ruff.toml (BUGS_REPORT.md H-36).
+      # Versión fijada: una versión nueva de ruff no debe cambiar el criterio.
+      - name: Lint (ruff)
+        run: |
+          pip install ruff==0.16.10
+          ruff check pipeline
       - name: Suite completa (incluye T1 placebo y T2 réplica)
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/money_poc_test
