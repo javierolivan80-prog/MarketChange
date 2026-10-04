@@ -20,7 +20,12 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
 - 126 se quedaron sin barra de D0 al analizarse (H-39) y quedan fuera de la cola para siempre.
 - 58 cayeron en el proxy de spread (H-08, confirmado).
 
-**Estado (2026-10-04):** H-39, H-38 y H-08 (opción a: liquidez solo por ADV) **arreglados** en la rama `claude/great-allen-nv7mdd` (commits `cf29f9a` y siguiente). El resto sigue pendiente de aprobación.
+**Estado (2026-10-04):**
+- **Arreglados:**
+  - H-39, H-38 y H-08 (opción a: liquidez solo por ADV): PR #66, fusionado.
+  - H-01, H-02, H-12 y H-13: rama `claude/great-allen-nv7mdd`, PR siguiente.
+- **Pendientes de aprobación:** el resto.
+- **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 
 ## 2. Tabla de hallazgos
 
