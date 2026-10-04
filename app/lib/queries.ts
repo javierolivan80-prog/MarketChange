@@ -10,6 +10,7 @@
 // por tipo de evento, etc.) — reimplementar esas fórmulas aquí sería
 // mantener dos fuentes de verdad para el mismo número.
 import { getPool } from "./db";
+import { splitAiOutputs } from "./aiOutputs";
 
 export type StrategyVersion = "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE";
 
@@ -594,6 +595,10 @@ export interface SignalDetailData extends SignalFeedRow {
   bull_output: BullOutput | null;
   bear_output: BearOutput | null;
   judge_output: JudgeOutput | null;
+  /** No hubo debate de IA: una regla objetiva ya garantizaba NO_TRADE. El
+   * motivo (texto del pipeline) o "" si no lo trae; null si sí hubo debate.
+   * En ese caso bull/bear/judge llegan a null (ver lib/aiOutputs.ts). */
+  ai_skipped_reason: string | null;
   impact_estimation: ImpactEstimation | null;
   n_historical_analogues: number | null;
   ev_calculation: EvCalculation | null;
@@ -743,9 +748,7 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
     model_version_bull_bear: r.model_version_bull_bear,
     model_version_judge: r.model_version_judge,
     novelty_reasoning: r.novelty_reasoning,
-    bull_output: r.bull_output,
-    bear_output: r.bear_output,
-    judge_output: r.judge_output,
+    ...splitAiOutputs(r.bull_output, r.bear_output, r.judge_output),
     impact_estimation: r.impact_estimation,
     n_historical_analogues: r.n_historical_analogues,
     ev_calculation: r.ev_calculation,
