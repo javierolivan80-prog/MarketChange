@@ -49,7 +49,7 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
           />
           <Bar {...seriesMotion} dataKey="count">
             {bins.map((b, i) => (
-              <Cell key={i} fill={b.hi <= 0 ? "#dc2626" : b.lo >= 0 ? "#16a34a" : "var(--border-strong)"} />
+              <Cell key={i} fill={b.hi <= 0 ? "var(--loss)" : b.lo >= 0 ? "var(--gain)" : "var(--border-strong)"} />
             ))}
           </Bar>
         </BarChart>

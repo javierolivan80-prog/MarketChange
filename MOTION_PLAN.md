@@ -175,7 +175,7 @@ navegar; *interacción* significa que lo provoca el usuario.
 | 5 | Tooltips de Recharts | 400 ms de deslizamiento por defecto: el tooltip va detrás del cursor | `animationDuration={motion.duration.micro}` |
 | 6 | `loading.tsx`: `animate-pulse` | Pulso de 2 s con opacidad que baja a 0,5: demasiada amplitud para un skeleton institucional | Un `@keyframes` propio más suave (§2.A); se mantiene `motion-reduce:animate-none` |
 | 7 | `Button.tsx` (`duration-150`), chip de `SignalsFilterForm` (`transition-colors` sin duración) | Valores sueltos, sin token | Pasar a `duration-(--motion-duration-micro)` y `ease-(--motion-ease-out)` |
-| 8 | Colores fijos en los gráficos (`#16a34a`, `#dc2626`, `#2563eb`) en lugar de `--gain`/`--loss`/acento | *No es de motion*, pero hay que tocar esos mismos archivos | Se anota; se cambia solo si lo apruebas (fuera de alcance) |
+| 8 | Colores fijos en los gráficos (`#16a34a`, `#dc2626`, `#2563eb`, `#9ca3af`) | No seguían el tema ni el par validado para daltonismo | **Hecho:** `--gain`/`--loss` en series, acento y `--border-strong` del tema; la cifra de la curva de equity usa el par de texto de `SignedPct` (rosa/esmeralda 700 en claro y 400 en oscuro), porque en claro `--loss` no llega al contraste de texto |
 
 Se mantiene sin cambios: `scroll-behavior: smooth` con su protección de
 movimiento reducido.

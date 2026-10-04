@@ -36,8 +36,8 @@ export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
           <Tooltip {...chartTooltipMotion}
             formatter={(value, name) => [name === "n" ? value : `${Number(value).toFixed(1)}%`, name === "hit_rate" ? t("Acierto real", "Actual win rate") : name === "confidence" ? t("Confianza media", "Average confidence") : "n"]}
           />
-          <Line isAnimationActive={false} data={diagonal} dataKey="hit_rate" stroke="#9ca3af" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
-          <Scatter {...seriesMotion} data={points} fill="#2563eb" fillOpacity={0.7} line={{ stroke: "#2563eb", strokeWidth: 1.5 }} lineType="joint" />
+          <Line isAnimationActive={false} data={diagonal} dataKey="hit_rate" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
+          <Scatter {...seriesMotion} data={points} fill="var(--color-accent-600)" fillOpacity={0.7} line={{ stroke: "var(--color-accent-600)", strokeWidth: 1.5 }} lineType="joint" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

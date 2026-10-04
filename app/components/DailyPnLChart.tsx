@@ -36,7 +36,7 @@ export function DailyPnLChart({ trades }: { trades: PaperClosedTrade[] }) {
           <Tooltip {...chartTooltipMotion} formatter={(value) => `${Number(value).toFixed(2)}%`} />
           <Bar {...seriesMotion} dataKey="pnl">
             {data.map((d, i) => (
-              <Cell key={i} fill={d.pnl >= 0 ? "#16a34a" : "#dc2626"} />
+              <Cell key={i} fill={d.pnl >= 0 ? "var(--gain)" : "var(--loss)"} />
             ))}
           </Bar>
         </BarChart>
