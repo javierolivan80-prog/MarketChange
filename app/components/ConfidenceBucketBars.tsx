@@ -4,12 +4,14 @@
 // (barras de fondo de la curva de calibración). Reutilizado en ambos tabs:
 // mismo dato (ConfidenceBucket[]), dos contextos.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartSeriesMotion, chartTooltipMotion } from "@/lib/motion";
+import { chartTooltipMotion } from "@/lib/motion";
+import { useChartMotion } from "@/components/viz/useChartMotion";
 import type { ConfidenceBucket } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
 
 export function ConfidenceBucketBars({ buckets, label }: { buckets: ConfidenceBucket[]; label?: string }) {
   const t = useT();
+  const seriesMotion = useChartMotion();
   const seriesLabel = label ?? t("Acierto", "Win rate");
   if (buckets.length === 0) {
     return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">{t("Sin datos suficientes.", "Not enough data.")}</div>;
@@ -29,7 +31,7 @@ export function ConfidenceBucketBars({ buckets, label }: { buckets: ConfidenceBu
               seriesLabel,
             ]}
           />
-          <Bar {...chartSeriesMotion} dataKey="hit_rate_pct" fill="var(--color-accent-600)">
+          <Bar {...seriesMotion} dataKey="hit_rate_pct" fill="var(--color-accent-600)">
             {data.map((d, i) => (
               <Cell key={i} fill={d.n < 5 ? "var(--color-accent-300)" : "var(--color-accent-600)"} />
             ))}
