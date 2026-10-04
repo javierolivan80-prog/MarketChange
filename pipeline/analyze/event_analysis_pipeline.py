@@ -281,8 +281,11 @@ def process_chunk(conn, client, event_rows: list[dict]):
     precomputed_by_id: dict[int, tuple] = {}
     llm_candidates: list[dict] = []
     skipped_ids_with_reason: dict[int, str] = {}
+    # SPY, ETFs sectoriales, ^VIX y Fama-French: una sola lectura por chunk
+    # en vez de una por evento (BUGS_REPORT.md H-27).
+    series_comunes: dict = {}
     for ev in needs_llm:
-        enrichment = fetch_and_compute_enrichment(conn, ev)
+        enrichment = fetch_and_compute_enrichment(conn, ev, series_comunes)
         has_guidance, rumor_flag = compute_novelty_signals(conn, ev["ticker"], ev["d0_close_date"])
         novelty = compute_novelty(
             NoveltyInputs(
@@ -368,6 +371,7 @@ def process_chunk(conn, client, event_rows: list[dict]):
                 conn, ev, cache_hits.get(event_id), bull_bear_results, judge_results, bb_batch_id, judge_batch_id,
                 precomputed=precomputed_by_id.get(event_id),
                 skip_reason=skipped_ids_with_reason.get(event_id),
+                series_comunes=series_comunes,
             )
         except Exception:
             logger.exception("Fallo analizando evento %d — se continúa con el siguiente", ev["event_id"])
@@ -396,6 +400,7 @@ def process_chunk(conn, client, event_rows: list[dict]):
 def _process_single_event(
     conn, ev: dict, cache_hit: dict | None, bull_bear_results: dict, judge_results: dict, bb_batch_id: str | None, judge_batch_id: str | None,
     precomputed: tuple | None = None, skip_reason: str | None = None,
+    series_comunes: dict | None = None,
 ) -> None:
     event_id = ev["event_id"]
 
@@ -410,7 +415,7 @@ def _process_single_event(
     if precomputed is not None:
         enrichment, novelty, is_fda_crl_without_8k = precomputed
     else:
-        enrichment = fetch_and_compute_enrichment(conn, ev)
+        enrichment = fetch_and_compute_enrichment(conn, ev, series_comunes)
         # Fase 3: has_prior_guidance/rumor_flag ya no son siempre None — se
         # calculan sobre filing_text de eventos previos del mismo ticker (ver
         # guidance_detector.py). Si esos filings aún no tienen texto extraído,

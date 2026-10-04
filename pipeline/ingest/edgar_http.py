@@ -27,6 +27,33 @@ _RATE_LIMIT_DELAY = 1.0 / config.EDGAR_RATE_LIMIT_PER_SEC
 # la otra.
 _RETRY_DELAYS = [2, 4, 8, 16]
 
+# Una sola sesión HTTP para toda la corrida (BUGS_REPORT.md H-29): con
+# requests.get suelto, cada petición abría conexión y TLS nuevos con la SEC.
+_SESION = requests.Session()
+_SESION.headers.update(HEADERS)
+
+
+def _get(url: str, **kwargs) -> requests.Response:
+    """Único punto de salida hacia EDGAR (los tests lo sustituyen)."""
+    return _SESION.get(url, **kwargs)
+
+
+# Throttle por intervalo entre INICIOS de petición, no un sleep fijo antes de
+# cada una (H-29): el sleep fijo se sumaba a la latencia de la propia petición
+# y dejaba el ritmo real en ~5 req/s frente a los 8 configurados. Ahora solo
+# se espera lo que falta para cumplir el intervalo, así que el tope de la SEC
+# (10 req/s) se respeta igual y no se pierde tiempo.
+_ultimo_inicio = 0.0
+_reloj = time.monotonic  # inyectable en tests sin tocar el módulo time global
+
+
+def _esperar_turno() -> None:
+    global _ultimo_inicio
+    falta = _ultimo_inicio + _RATE_LIMIT_DELAY - _reloj()
+    if falta > 0:
+        time.sleep(falta)
+    _ultimo_inicio = _reloj()
+
 
 class PermanentHTTPError(RuntimeError):
     """4xx que no tiene sentido reintentar (404, 403...).
@@ -88,9 +115,9 @@ def throttled_get(url: str, **kwargs) -> requests.Response:
     for attempt, delay in enumerate(espera):
         if delay:
             time.sleep(delay)
-        time.sleep(_RATE_LIMIT_DELAY)
+        _esperar_turno()
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=30, **kwargs)
+            resp = _get(url, timeout=30, **kwargs)
             if resp.status_code == 429:
                 retry_after = _retry_after_seconds(resp)
                 if retry_after is not None and attempt + 1 < len(espera):
@@ -139,9 +166,9 @@ def throttled_get_header(url: str) -> str:
     for attempt, delay in enumerate(espera):
         if delay:
             time.sleep(delay)
-        time.sleep(_RATE_LIMIT_DELAY)
+        _esperar_turno()
         try:
-            with requests.get(url, headers=HEADERS, timeout=30, stream=True) as resp:
+            with _get(url, timeout=30, stream=True) as resp:
                 if resp.status_code == 429:
                     retry_after = _retry_after_seconds(resp)
                     if retry_after is not None and attempt + 1 < len(espera):

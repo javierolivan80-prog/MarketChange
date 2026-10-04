@@ -24,6 +24,7 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
 - **Arreglados:**
   - H-39, H-38 y H-08 (opción a: liquidez solo por ADV): PR #66, fusionado.
   - H-01, H-02, H-12 y H-13: rama `claude/great-allen-nv7mdd`, PR siguiente.
+  - H-27, H-29 y H-30 (eficiencia): series comunes del enrichment leídas una vez por chunk; sesión HTTP única y throttle por intervalo hacia EDGAR; un 404 del índice diario cuenta como día sin índice, no como fallo (sin usar el calendario bursátil, que perdería los filings de Viernes Santo).
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

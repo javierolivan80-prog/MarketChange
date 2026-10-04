@@ -169,3 +169,47 @@ def test_backfill_range_acumula_el_total_de_eventos_insertados(monkeypatch, capl
         edgar_scraper.backfill_range(date(2024, 3, 15), date(2024, 3, 18))
 
     assert "Backfill completo: 10 eventos insertados/actualizados" in caplog.text
+
+
+# --- Días sin índice de EDGAR (BUGS_REPORT.md H-30) --------------------------
+
+from pipeline.ingest.edgar_http import PermanentHTTPError
+
+
+def test_un_404_del_indice_es_un_dia_sin_indice_no_un_fallo(monkeypatch):
+    def _404(url, **kw):
+        raise PermanentHTTPError(f"404 en {url} — no se reintenta")
+
+    monkeypatch.setattr(edgar_scraper, "throttled_get", _404)
+
+    with pytest.raises(edgar_scraper.SinIndiceDelDia):
+        edgar_scraper.scrape_day(date(2026, 11, 11))  # Veterans Day: SEC cerrada, bolsa abierta
+
+
+def test_otro_error_permanente_del_indice_sigue_siendo_un_fallo(monkeypatch):
+    def _403(url, **kw):
+        raise PermanentHTTPError(f"403 en {url} — no se reintenta")
+
+    monkeypatch.setattr(edgar_scraper, "throttled_get", _403)
+
+    with pytest.raises(PermanentHTTPError) as exc:
+        edgar_scraper.scrape_day(date(2026, 1, 6))
+    assert not isinstance(exc.value, edgar_scraper.SinIndiceDelDia)
+
+
+def test_el_backfill_no_cuenta_los_dias_sin_indice_como_fallidos(monkeypatch, caplog):
+    import logging
+
+    from pipeline.db import connection as db
+
+    monkeypatch.setattr(db, "get_connection", lambda: SimpleNamespace(rollback=lambda: None))
+
+    def _scrape(day):
+        raise edgar_scraper.SinIndiceDelDia(f"Sin índice de EDGAR el {day}")
+
+    monkeypatch.setattr(edgar_scraper, "scrape_day", _scrape)
+
+    with caplog.at_level(logging.INFO, logger=edgar_scraper.logger.name):
+        edgar_scraper.backfill_range(date(2026, 11, 11), date(2026, 11, 11))
+
+    assert "0 días fallidos, 1 días sin índice de EDGAR" in caplog.text
