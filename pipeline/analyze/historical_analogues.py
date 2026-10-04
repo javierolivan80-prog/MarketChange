@@ -128,8 +128,15 @@ def compute_impact_estimate(
 
 
 def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_event_id: int, window_days: int) -> list[dict]:
-    """Recupera CAR de eventos de la misma clase, ANTERIORES a as_of_date
-    (anti-look-ahead — ver docstring del módulo), excluyendo el propio evento.
+    """Recupera CAR de eventos de la misma clase cuyo DESENLACE ya se conocía
+    en as_of_date (anti-look-ahead — ver docstring del módulo), excluyendo el
+    propio evento.
+
+    No basta con D0 < as_of_date (BUGS_REPORT.md H-01): el CAR de un análogo
+    mide (D0, D0 + window_days], así que uno con D0 = as_of - 3 trae retornos
+    de los días POSTERIORES a la decisión. Se exige que esa ventana terminara
+    antes de as_of_date (window_days en días naturales, como en
+    backtester.compute_car).
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -138,7 +145,7 @@ def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_e
             FROM car_results cr
             JOIN events e ON e.event_id = cr.event_id
             WHERE e.event_class = %(event_class)s
-              AND e.d0_close_date < %(as_of_date)s
+              AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
               AND cr.event_id != %(exclude_event_id)s
               AND cr.window_days = %(window_days)s
             """,
@@ -153,8 +160,8 @@ def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_e
 
 
 def get_class_prior_mean(conn, event_class: str, window_days: int, as_of_date: date) -> float:
-    """Media de CAR (%) de la clase usando SOLO eventos anteriores a as_of_date
-    — el prior hacia el que se contrae la estimación cuando hay pocos análogos
+    """Media de CAR (%) de la clase usando SOLO eventos cuyo desenlace ya se
+    conocía en as_of_date (misma condición que get_historical_analogues) — el prior hacia el que se contrae la estimación cuando hay pocos análogos
     (ver SHRINKAGE_K).
 
     El filtro por as_of_date no es opcional ni cosmético: el prior pesa
@@ -177,7 +184,7 @@ def get_class_prior_mean(conn, event_class: str, window_days: int, as_of_date: d
             JOIN events e ON e.event_id = cr.event_id
             WHERE e.event_class = %(event_class)s
               AND cr.window_days = %(window_days)s
-              AND e.d0_close_date < %(as_of_date)s
+              AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
             """,
             {"event_class": event_class, "window_days": window_days, "as_of_date": as_of_date},
         )
