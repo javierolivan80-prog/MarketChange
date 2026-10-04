@@ -83,6 +83,20 @@ QUERIES: list[tuple[str, str]] = [
     ("Tickers de referencia (SPY, ^VIX)", """
         SELECT ticker, count(*) AS filas, min(trade_date) AS desde, max(trade_date) AS hasta
         FROM prices WHERE ticker IN ('SPY', '^VIX') GROUP BY 1"""),
+    ("App — análisis de la IA (lo que alimenta Señales e Inicio)", """
+        SELECT count(*) AS total, min(analyzed_at)::date AS primero, max(analyzed_at) AS ultimo,
+               count(*) FILTER (WHERE analyzed_at > now() - interval '7 days') AS ultimos_7_dias,
+               count(*) FILTER (WHERE trade_decision_balanced <> 'NO_TRADE') AS operables_balanced,
+               count(*) FILTER (WHERE trade_decision_conservative <> 'NO_TRADE') AS operables_conservative,
+               count(*) FILTER (WHERE trade_decision_aggressive <> 'NO_TRADE') AS operables_aggressive
+        FROM event_analyses"""),
+    ("App — informes (Cartera, Fiabilidad, Historial, Largo plazo)", """
+        SELECT 'portfolio_reports' AS tabla, count(*) AS n, max(created_at) AS ultimo FROM portfolio_reports
+        UNION ALL SELECT 'validation_reports', count(*), max(created_at) FROM validation_reports
+        UNION ALL SELECT 'paper_trading_reports', count(*), max(created_at) FROM paper_trading_reports
+        UNION ALL SELECT 'paper_trades', count(*), max(updated_at) FROM paper_trades
+        UNION ALL SELECT 'portfolio_trades', count(*), NULL FROM portfolio_trades
+        UNION ALL SELECT 'quality_scores', count(*), max(as_of_date)::timestamptz FROM quality_scores"""),
     ("Análisis técnicos", """
         SELECT count(*) AS total, count(*) FILTER (WHERE passes_filters) AS pasan
         FROM technical_analyses"""),
