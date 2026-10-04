@@ -83,6 +83,49 @@ QUERIES: list[tuple[str, str]] = [
     ("Tickers de referencia (SPY, ^VIX)", """
         SELECT ticker, count(*) AS filas, min(trade_date) AS desde, max(trade_date) AS hasta
         FROM prices WHERE ticker IN ('SPY', '^VIX') GROUP BY 1"""),
+    ("App — análisis de la IA (lo que alimenta Señales e Inicio)", """
+        SELECT count(*) AS total, min(analyzed_at)::date AS primero, max(analyzed_at) AS ultimo,
+               count(*) FILTER (WHERE analyzed_at > now() - interval '7 days') AS ultimos_7_dias,
+               count(*) FILTER (WHERE trade_decision_balanced <> 'NO_TRADE') AS operables_balanced,
+               count(*) FILTER (WHERE trade_decision_conservative <> 'NO_TRADE') AS operables_conservative,
+               count(*) FILTER (WHERE trade_decision_aggressive <> 'NO_TRADE') AS operables_aggressive
+        FROM event_analyses"""),
+    ("App — motivo de NO_TRADE (versión BALANCED; cifras sustituidas por N)", """
+        SELECT regexp_replace(coalesce(abstention_decision->'BALANCED'->>'reason_if_no_trade', '(opera)'),
+                              '[-+]?[0-9][0-9.,]*', 'N', 'g') AS motivo,
+               count(*) AS n
+        FROM event_analyses GROUP BY 1 ORDER BY 2 DESC LIMIT 15"""),
+    ("App — motivo REAL de los descartados antes de la IA (cifras = N)", """
+        SELECT regexp_replace(coalesce(bull_analyst_output->>'reason', '?'), '[-+]?[0-9][0-9.,]*', 'N', 'g') AS motivo,
+               count(*) AS n
+        FROM event_analyses WHERE model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE'
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 15"""),
+    ("App — rango high-low de D0 en los descartados por spread (percentiles, %)", """
+        SELECT count(*) AS n,
+               round(percentile_cont(0.1) WITHIN GROUP (ORDER BY v)::numeric, 2) AS p10,
+               round(percentile_cont(0.5) WITHIN GROUP (ORDER BY v)::numeric, 2) AS mediana,
+               round(percentile_cont(0.9) WITHIN GROUP (ORDER BY v)::numeric, 2) AS p90
+        FROM (SELECT (substring(bull_analyst_output->>'reason' FROM '/close=([0-9.]+)%'))::float AS v
+              FROM event_analyses WHERE bull_analyst_output->>'reason' LIKE '%proxy de spread%') x"""),
+    ("App — cómo se decidió (IA real, caché o descartado antes de la IA)", """
+        SELECT model_version_bull_bear AS modelo, from_cache, count(*) AS n
+        FROM event_analyses GROUP BY 1, 2 ORDER BY 3 DESC"""),
+    ("App — EV e impacto de los eventos que sí pasaron por la IA", """
+        SELECT count(*) AS n,
+               round(avg(n_historical_analogues)) AS media_analogos,
+               round(avg((impact_estimation->>'confidence')::numeric), 1) AS media_conf_impacto,
+               round(avg(confidence_in_conviction), 1) AS media_conf_judge,
+               round(avg(abs(net_conviction)), 2) AS media_abs_conviccion,
+               round(max(abs(ev_aggressive)) * 100, 3) AS max_abs_ev_aggr_pct,
+               round(avg(abs(ev_balanced)) * 100, 3) AS media_abs_ev_bal_pct
+        FROM event_analyses WHERE model_version_bull_bear <> 'SKIPPED_OBJECTIVE_NO_TRADE'"""),
+    ("App — informes (Cartera, Fiabilidad, Historial, Largo plazo)", """
+        SELECT 'portfolio_reports' AS tabla, count(*) AS n, max(created_at) AS ultimo FROM portfolio_reports
+        UNION ALL SELECT 'validation_reports', count(*), max(created_at) FROM validation_reports
+        UNION ALL SELECT 'paper_trading_reports', count(*), max(created_at) FROM paper_trading_reports
+        UNION ALL SELECT 'paper_trades', count(*), max(updated_at) FROM paper_trades
+        UNION ALL SELECT 'portfolio_trades', count(*), NULL FROM portfolio_trades
+        UNION ALL SELECT 'quality_scores', count(*), max(as_of_date)::timestamptz FROM quality_scores"""),
     ("Análisis técnicos", """
         SELECT count(*) AS total, count(*) FILTER (WHERE passes_filters) AS pasan
         FROM technical_analyses"""),
