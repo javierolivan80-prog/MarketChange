@@ -182,31 +182,36 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -c "from pipeline.db.connection import get_connection, init_schema; init_schema(get_connection())"
-      - name: Hacer sitio antes de los precios (plan gratuito ~500 MB)
-        # Borra eventos de símbolos no operables sin nada que los use y el
-        # texto de filings antiguos, y compacta `events` (VACUUM FULL): ver
-        # ops_prune.py. Va ANTES de los precios para que el freno de tamaño
-        # de ops_history_prices tenga margen.
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m pipeline.ops_prune --vacuum-full
-      - name: Precios de los eventos históricos (acotados, con freno de tamaño)
-        # Ventana por ticker alrededor de SUS eventos, no el universo entero
-        # desde el principio: ver la cabecera de ops_history_prices.py.
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          HISTORY_MAX_DB_MB: ${{ vars.HISTORY_MAX_DB_MB || '400' }}
-        run: |
-          BENCH_START=$(date -u -d "${{ github.event.inputs.history_from }} -500 days" +%Y-%m-%d)
-          python -m pipeline.ops_history_prices --benchmark-start "$BENCH_START"
       - name: Factores Fama-French
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.fama_french
       - name: Capitalización, liquidez y universo invertible
+        # Antes de borrar precios: ops_prune conserva siempre los del
+        # universo invertible, así que la lista tiene que estar al día.
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.universe_maintenance --list 25
+      - name: Hacer sitio antes de los precios (plan gratuito ~500 MB)
+        # Borra eventos de símbolos no operables sin nada que los use, el
+        # texto de filings antiguos y los precios antiguos de empresas no
+        # operadas cuyo CAR ya está calculado, y compacta (VACUUM FULL): ver
+        # ops_prune.py. Va ANTES de los precios para que el freno de tamaño
+        # tenga margen.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ops_prune --vacuum-full --prices
+      - name: Precios y CAR del histórico por tandas (con freno de tamaño)
+        # Bajar precios hasta el freno -> calcular CAR -> borrar los precios
+        # que ya no hacen falta -> repetir: ver ops_history_rounds.py. Así
+        # cabe todo el histórico en un plan gratuito. Lo que no termine en
+        # este tiempo lo sigue la próxima corrida con history_finalize_only.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HISTORY_MAX_DB_MB: ${{ vars.HISTORY_MAX_DB_MB || '400' }}
+        run: |
+          BENCH_START=$(date -u -d "${{ github.event.inputs.history_from }} -500 days" +%Y-%m-%d)
+          python -m pipeline.ops_history_rounds --benchmark-start "$BENCH_START" --minutes 180
       - name: Cuentas anuales (XBRL de la SEC)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -403,7 +408,10 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # Freno de tamaño también aquí (yfinance_backfill.MAX_DB_MB): sin él,
           # 3.800 empresas nuevas x 500 días habrían pasado de los 400 MB.
-          HISTORY_MAX_DB_MB: ${{ vars.HISTORY_MAX_DB_MB || '400' }}
+          # Más alto que el de la carga de histórico (400): los precios del
+          # día a día son pocos MB y son los que producen las señales, así
+          # que no deben quedarse sin sitio porque el histórico lo llenó.
+          HISTORY_MAX_DB_MB: ${{ vars.NIGHTLY_MAX_DB_MB || '470' }}
         run: |
           # Universo + series de referencia (ver el paso de backfill).
           python -m pipeline.ingest.universe_maintenance --tickers-file /tmp/tickers.txt

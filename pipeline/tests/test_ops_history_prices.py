@@ -1,4 +1,7 @@
+import os
 from datetime import date
+
+import pytest
 
 from pipeline.ops_history_prices import plan_gaps
 
@@ -39,3 +42,57 @@ def test_simbolos_operables():
         assert is_tradable_symbol(ok), ok
     for no in ["PCG-PB", "BRK.B", "CELG-RI", "ACMRW", "SPACU", "ABCDR", "XYZQQ", "BEIGF", "", "^VIX"]:
         assert not is_tradable_symbol(no), no
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+def test_run_solo_pide_precios_para_eventos_sin_car(monkeypatch):
+    """Un ticker cuyos eventos ya tienen CAR no se vuelve a descargar:
+    ops_prune puede haber borrado sus precios y no deben volver en bucle."""
+    from pipeline import ops_history_prices
+    from pipeline.db.connection import get_connection, init_schema
+
+    conn = get_connection()
+    init_schema(conn)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE universe, events, prices RESTART IDENTITY CASCADE")
+        cur.execute(
+            "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
+            "VALUES ('1','DONE','Done','2024-01-01','2024-01-01'), ('2','TODO','Todo','2024-01-01','2024-01-01')"
+        )
+        for cik, t in (("1", "DONE"), ("2", "TODO")):
+            cur.execute(
+                "INSERT INTO events (cik, ticker, source, event_class, accession_number, source_url, filed_at, "
+                "d0_close_date, classification_method, raw_text_hash) VALUES (%s, %s, 'EDGAR', '8K_2.02_EARNINGS', "
+                "%s, 'u', '2024-03-01', '2024-03-01', 'RULE', 'h') RETURNING event_id",
+                (cik, t, "acc" + t),
+            )
+            eid = cur.fetchone()["event_id"]
+            if t == "DONE":
+                cur.execute(
+                    "INSERT INTO car_results (event_id, window_days, car, n_estimation_days) VALUES (%s, 20, 0, 100)",
+                    (eid,),
+                )
+    conn.commit()
+
+    pedidos = []
+    monkeypatch.setattr(
+        "pipeline.ingest.yfinance_backfill._descargar_grupo",
+        lambda conn, tickers, start, end, expected, **kw: pedidos.extend(tickers) or True,
+    )
+    monkeypatch.setattr("pipeline.analyze.enrichment.BENCHMARK_TICKERS", [])
+    assert ops_history_prices.run(conn, date(2023, 1, 1), max_db_mb=1e9) is True
+    assert pedidos == ["TODO"]
+    conn.close()
+
+
+def test_tandas_paran_cuando_una_no_calcula_ningun_car(monkeypatch):
+    from pipeline import ops_history_rounds
+
+    cars = iter([10, 50, 50, 50])  # antes/después de cada tanda
+    llamadas = []
+    monkeypatch.setattr(ops_history_rounds, "_car_events", lambda conn: next(cars))
+    monkeypatch.setattr("pipeline.ops_history_prices.run", lambda *a: llamadas.append("precios") or False)
+    monkeypatch.setattr("pipeline.backtest.populate_car_results.populate_missing_car_results", lambda conn: 0)
+    monkeypatch.setattr("pipeline.ops_prune.run", lambda conn, **kw: llamadas.append("prune"))
+    ops_history_rounds.run(None, date(2020, 1, 1), 400, minutes=60)
+    assert llamadas == ["precios", "prune", "precios", "prune"]  # 2.ª tanda sin CAR nuevo: para

@@ -5,8 +5,9 @@ POR QUÉ NO SE USA TAL CUAL yfinance_backfill sobre el universo entero:
      empresas; bajar ~7 años de precios de TODAS son millones de filas
      (~200 B/fila con índice) y una base de datos de plan gratuito (~0,5 GB)
      se llenaría y tumbaría la app. Aquí cada ticker baja solo la ventana que
-     sus eventos necesitan: [primer D0 - 400 días, último D0 + 45 días]
-     (estimación de 250 sesiones + CAR a 20 sesiones, con margen).
+     sus eventos necesitan: [primer D0 - 260 días, último D0 + 45 días]
+     (la ventana de estimación de factor_model es D-250..D-30 en días
+     NATURALES, más el CAR a 20 sesiones, con margen).
   2. Huecos HACIA ATRÁS. yfinance_backfill solo pide lo que falta DESPUÉS del
      último día guardado. Un ticker con precios desde 2021 se daría por "al
      día" aunque a un evento de enero de 2021 le falte toda su ventana de
@@ -27,7 +28,7 @@ from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
-PRE_DAYS = 400
+PRE_DAYS = 260
 POST_DAYS = 45
 CHUNK = 100
 
@@ -68,13 +69,20 @@ def _db_mb(conn) -> float:
         return cur.fetchone()["b"] / 1e6
 
 
-def run(conn, benchmark_start: date, max_db_mb: float) -> None:
+def run(conn, benchmark_start: date, max_db_mb: float) -> bool:
+    """Devuelve True si bajó todo lo que faltaba, False si paró por el freno
+    de tamaño. Solo cuenta los eventos SIN CAR todavía: los que ya lo tienen
+    no necesitan precios (y ops_prune puede haber borrado los suyos)."""
     from pipeline.analyze.enrichment import BENCHMARK_TICKERS
     from pipeline.ingest.yfinance_backfill import _descargar_grupo, _trading_days_expected, is_tradable_symbol
 
     today = date.today()
     with conn.cursor() as cur:
-        cur.execute("SELECT ticker, min(d0_close_date) AS a, max(d0_close_date) AS b, count(*) AS n FROM events GROUP BY ticker")
+        cur.execute(
+            "SELECT e.ticker, min(e.d0_close_date) AS a, max(e.d0_close_date) AS b, count(*) AS n FROM events e "
+            "LEFT JOIN car_results cr ON cr.event_id = e.event_id AND cr.window_days = 20 "
+            "WHERE cr.event_id IS NULL GROUP BY e.ticker"
+        )
         rows = [r for r in cur.fetchall() if is_tradable_symbol(r["ticker"])]
         needs = {r["ticker"]: (r["a"] - timedelta(days=PRE_DAYS), min(r["b"] + timedelta(days=POST_DAYS), today)) for r in rows}
         activity = {r["ticker"]: r["n"] for r in rows}
@@ -107,9 +115,10 @@ def run(conn, benchmark_start: date, max_db_mb: float) -> None:
                     "Base de datos en %.0f MB (> %.0f): paro la descarga para no llenarla. "
                     "Sube HISTORY_MAX_DB_MB si el plan lo permite.", size, max_db_mb,
                 )
-                return
+                return False
             _descargar_grupo(conn, tickers[i : i + CHUNK], start, end, expected)
     logger.info("Precios históricos completos. Base de datos: %.0f MB", _db_mb(conn))
+    return True
 
 
 if __name__ == "__main__":
