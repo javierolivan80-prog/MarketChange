@@ -11,28 +11,26 @@ implementan como PROXIES documentados en vez de fingir que existe una señal
 que no existe (mismo principio que el resto del proyecto — AUDIT_LEAN.md):
 
   - "spread > 0.5% (ilíquido)": no hay bid-ask real gratis (sin datos de
-    opciones/microestructura — AUDIT_LEAN.md §2.1). Proxy con DOS
-    componentes (hallazgo de auditoría, añadido después del spread
-    original — mismo patrón que el proxy de "datos contradictorios" de
-    abajo, cualquiera de los dos basta):
-      (a) (high-low)/close del día D0, guardado en
-          event_enrichment.high_low_range_pct — spread intradía.
-      (b) ADV (volumen medio diario en $) de los 60 días de negociación
-          ANTERIORES al evento, guardado en event_enrichment.adv_usd_60d
-          — liquidez de fondo, no solo el ruido de un día concreto.
-          Deliberadamente NO universe.adv_usd_60d: esa columna se
-          recalcula sobre los 60 días MÁS RECIENTES respecto a HOY (el
-          momento en que corre universe_maintenance.py), no respecto a
-          la fecha del evento — usarla aquí evaluaría la liquidez de HOY
-          para decidir si un evento de hace años era operable, el mismo
-          look-ahead sutil que ya se evitó al construir el tope de
-          posición del backtest (portfolio_simulator.compute_trailing_adv_usd,
-          mismo cálculo, aplicado en un punto distinto del pipeline).
-          Umbral: config.MIN_ADV_USD, el MISMO que ya exige
-          universe.in_investable_universe para entrar al universo —
-          aquí simplemente se reevalúa en el momento del evento, no en
-          un snapshot de mantenimiento.
+    opciones/microestructura — AUDIT_LEAN.md §2.1). Proxy: ADV (volumen
+    medio diario en $) de los 60 días de negociación ANTERIORES al evento,
+    guardado en event_enrichment.adv_usd_60d.
+    Deliberadamente NO universe.adv_usd_60d: esa columna se recalcula sobre
+    los 60 días MÁS RECIENTES respecto a HOY (el momento en que corre
+    universe_maintenance.py), no respecto a la fecha del evento — usarla aquí
+    evaluaría la liquidez de HOY para decidir si un evento de hace años era
+    operable, el mismo look-ahead sutil que ya se evitó al construir el tope
+    de posición del backtest (portfolio_simulator.compute_trailing_adv_usd,
+    mismo cálculo, aplicado en un punto distinto del pipeline).
+    Umbral: config.MIN_ADV_USD, el MISMO que ya exige
+    universe.in_investable_universe para entrar al universo — aquí
+    simplemente se reevalúa en el momento del evento.
 
+    Hasta BUGS_REPORT.md H-08 había un segundo componente: el rango diario
+    (high-low)/close de D0 con un techo del 0,5 %. El rango de un día NO es el
+    spread: una acción grande y líquida se mueve un 1-3 % al día, y más en un
+    día de evento. En producción no lo pasaba NINGÚN evento (58 de 58 con
+    barra de D0, mediana 2,8 %), así que el sistema no podía operar nunca.
+    Se eliminó en vez de subir el umbral: no mide lo que dice medir.
   - "datos contradictorios entre fuentes": no hay un verificador de hechos
     cruzados entre EDGAR/FDA/precios. Proxy con DOS componentes, cualquiera
     de los dos basta:
@@ -57,7 +55,6 @@ from pipeline.analyze.ev_engine import EV_THRESHOLDS
 NOVELTY_FLOOR = 20
 CONFIDENCE_FLOOR = 40
 EV_ABSTENTION_BUFFER = 0.0050  # 50 bps, sumados al umbral propio de cada versión — "hasta después de fees"
-SPREAD_CEILING_PCT = 0.5  # % — (high-low)/close
 # Segundo componente del proxy de liquidez (ver docstring del módulo) — MISMO
 # umbral que ya exige universe.in_investable_universe (config.MIN_ADV_USD),
 # reevaluado en el momento del evento en vez de en un snapshot de HOY.
@@ -78,7 +75,6 @@ class AbstentionInputs:
     ev_by_strategy: dict[str, float]      # {"CONSERVATIVE": frac, "BALANCED": frac, "AGGRESSIVE": frac}
     had_survivorship_warning: bool        # de event_enrichment / prices
     beta_available: bool                  # False si el modelo de factores no pudo ajustarse (proxy de contradicción, componente a)
-    high_low_range_pct: float | None      # (high-low)/close en D0, en %; None si no hay datos
     adv_usd_60d: float | None             # ADV en $ de los 60 días ANTERIORES al evento; None si no hay datos suficientes
     is_fda_crl_without_8k: bool           # calculado por el orquestador (cruce EDGAR/FDA)
 
@@ -99,21 +95,14 @@ def _is_contradictory(inputs: AbstentionInputs) -> bool:
     return factor_model_conflict or judge_split_decision
 
 
-def _illiquid_reason(high_low_range_pct: float | None, adv_usd_60d: float | None) -> str | None:
-    """Proxy de liquidez con DOS componentes (ver nota 1 del docstring del
-    módulo) — cualquiera de los dos basta, mismo patrón que
-    _is_contradictory. Devuelve el motivo si es ilíquido, None si pasa
-    ambos componentes.
+def _illiquid_reason(adv_usd_60d: float | None) -> str | None:
+    """Proxy de liquidez (ver nota 1 del docstring del módulo). Devuelve el
+    motivo si es ilíquido, None si pasa.
 
-    Recibe los dos floats directamente (no un AbstentionInputs completo) a
-    propósito: ninguno de los dos depende del Judge, así que
-    objective_no_trade_reason() también la llama, antes de que exista un
-    AbstentionInputs completo (antes de invocar Bull/Bear/Judge siquiera) —
-    ver su docstring."""
-    if high_low_range_pct is None:
-        return "sin datos de high/low para estimar liquidez (proxy de spread no disponible)"
-    if high_low_range_pct > SPREAD_CEILING_PCT:
-        return f"proxy de spread (high-low)/close={high_low_range_pct:.2f}% > {SPREAD_CEILING_PCT}% (ilíquido)"
+    Recibe el float directamente (no un AbstentionInputs completo) a
+    propósito: no depende del Judge, así que objective_no_trade_reason()
+    también la llama, antes de que exista un AbstentionInputs completo (antes
+    de invocar Bull/Bear/Judge siquiera) — ver su docstring."""
     if adv_usd_60d is None:
         return "sin datos de volumen suficientes para estimar ADV (proxy de liquidez no disponible)"
     if adv_usd_60d < LIQUIDITY_ADV_FLOOR_USD:
@@ -125,7 +114,6 @@ def objective_no_trade_reason(
     novelty_score: float,
     had_survivorship_warning: bool,
     beta_available: bool,
-    high_low_range_pct: float | None,
     adv_usd_60d: float | None,
     is_fda_crl_without_8k: bool,
 ) -> str | None:
@@ -161,7 +149,7 @@ def objective_no_trade_reason(
         return "datos contradictorios entre fuentes (proxy): modelo de factores sin datos suficientes para ajustarse"
     if is_fda_crl_without_8k:
         return "CRL de FDA sin 8-K correspondiente — aún no comunicado oficialmente por la empresa"
-    return _illiquid_reason(high_low_range_pct, adv_usd_60d)
+    return _illiquid_reason(adv_usd_60d)
 
 
 def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDecision:
@@ -211,7 +199,7 @@ def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDe
     if inputs.is_fda_crl_without_8k:
         return AbstentionDecision("NO_TRADE", "CRL de FDA sin 8-K correspondiente — aún no comunicado oficialmente por la empresa", inputs.confidence_in_conviction)
 
-    illiquid_reason = _illiquid_reason(inputs.high_low_range_pct, inputs.adv_usd_60d)
+    illiquid_reason = _illiquid_reason(inputs.adv_usd_60d)
     if illiquid_reason is not None:
         return AbstentionDecision("NO_TRADE", illiquid_reason, inputs.confidence_in_conviction)
 

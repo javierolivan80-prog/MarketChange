@@ -85,12 +85,9 @@ def _seed_market_data(conn, tickers_and_bases, n_days=320):
                 cur.execute(
                     "INSERT INTO prices (ticker, trade_date, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning) "
                     "VALUES (%s,%s,%s,%s,%s,1.0,100000,FALSE) ON CONFLICT (ticker, trade_date) DO NOTHING",
-                    # high/low a +-0.1% (spread ~0.2%, bajo SPREAD_CEILING_PCT=0.5%
-                    # de abstention_engine.py) — hallazgo de auditoría (R5): con
-                    # el pre-filtro objetivo ahora extendido a iliquidez (antes
-                    # solo se comprobaba DESPUÉS del Judge), un spread ancho aquí
-                    # saltaría el LLM en TODOS los tests de este fichero, no solo
-                    # en los que de verdad quieren probar ese camino.
+                    # high/low a +-0.1%: la cola de la IA exige que la barra de
+                    # D0 tenga high/low (BUGS_REPORT.md H-39). El rango diario ya
+                    # no decide la liquidez (H-08); la decide el ADV.
                     (ticker, d.date(), price, price * 1.001, price * 0.999),
                 )
         for d in dates:

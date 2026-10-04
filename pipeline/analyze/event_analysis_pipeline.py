@@ -296,7 +296,6 @@ def process_chunk(conn, client, event_rows: list[dict]):
             novelty_score=novelty.score,
             had_survivorship_warning=enrichment.had_survivorship_warning,
             beta_available=enrichment.beta_vs_spy is not None,
-            high_low_range_pct=enrichment.high_low_range_pct,
             adv_usd_60d=enrichment.adv_usd_60d,
             is_fda_crl_without_8k=is_fda_crl_without_8k,
         )
@@ -477,7 +476,6 @@ def _process_single_event(
         ev_by_strategy={"CONSERVATIVE": ev_result.ev_conservative, "BALANCED": ev_result.ev_balanced, "AGGRESSIVE": ev_result.ev_aggressive},
         had_survivorship_warning=enrichment.had_survivorship_warning,
         beta_available=enrichment.beta_vs_spy is not None,
-        high_low_range_pct=enrichment.high_low_range_pct,
         adv_usd_60d=enrichment.adv_usd_60d,
         is_fda_crl_without_8k=is_fda_crl_without_8k,
     )

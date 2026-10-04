@@ -91,7 +91,7 @@ def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, 
         # reintentos del batch, no la de abstención. 290 días cubre de sobra
         # el estimation_window de fit_factor_model ([-250,-30] respecto a
         # cualquier D0 usado en este fichero) con margen. high/low a +-0.1%
-        # (spread ~0.2%, bajo SPREAD_CEILING_PCT=0.5%).
+        # (ya no decide nada: BUGS_REPORT.md H-08).
         for i in range(history_days):
             d = last_day - timedelta(days=i)
             # Oscilación determinista con senoides de frecuencias distintas
@@ -341,34 +341,44 @@ def test_cola_exige_barra_de_d0_para_no_descartar_por_falta_de_datos(conn):
 
 
 @pytestmark_db
-def test_descartes_por_falta_de_datos_vuelven_a_la_cola_y_guardan_el_motivo_real(conn):
+def test_descartes_pre_ia_guardan_el_motivo_real_y_los_obsoletos_vuelven_a_la_cola(conn):
     """H-38: el motivo guardado es el de la regla objetiva, no "confidence=0 < 40".
-    H-39: requeue_obsolete_skips devuelve a la cola los "sin datos de high/low"
-    y deja los demás descartes."""
+    H-39/H-08: requeue_obsolete_skips devuelve a la cola los descartes por
+    "sin datos de high/low" o "proxy de spread" (reglas que ya no existen) y
+    deja los demás."""
     from pipeline.analyze.event_analysis_pipeline import requeue_obsolete_skips, run_pipeline
 
-    _empresa(conn, "1", "MEGA", 100.0, 3e9)
     _empresa(conn, "2", "THIN", 10.0, 1e8, volume=1_000)  # ADV ~10 k$ < 1 M$
-    sin_barra = _evento(conn, "1", "MEGA", date.today() + timedelta(days=1))
     iliquido = _evento(conn, "2", "THIN", date.today() - timedelta(days=3))
     fake = _ClienteQueFalla()
     client = SimpleNamespace(messages=SimpleNamespace(batches=fake))
 
     run_pipeline(conn, client, max_chunks=5)
-    assert fake.creates == 0  # los dos se descartan antes de la IA
+    assert fake.creates == 0  # descartado antes de la IA
 
     with conn.cursor() as cur:
-        cur.execute("SELECT event_id, abstention_decision, bull_analyst_output FROM event_analyses ORDER BY event_id")
-        rows = {r["event_id"]: r for r in cur.fetchall()}
-    for eid in (sin_barra, iliquido):
-        motivo_real = rows[eid]["bull_analyst_output"]["reason"]
-        for version in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE"):
-            guardado = rows[eid]["abstention_decision"][version]["reason_if_no_trade"]
-            assert motivo_real.startswith(guardado) and "confidence" not in guardado
-    assert rows[sin_barra]["bull_analyst_output"]["reason"].startswith("sin datos de high/low")
-    assert rows[iliquido]["bull_analyst_output"]["reason"].startswith("ADV")
+        cur.execute("SELECT abstention_decision, bull_analyst_output FROM event_analyses WHERE event_id = %s", (iliquido,))
+        row = cur.fetchone()
+    motivo_real = row["bull_analyst_output"]["reason"]
+    assert motivo_real.startswith("ADV")
+    for version in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE"):
+        guardado = row["abstention_decision"][version]["reason_if_no_trade"]
+        assert motivo_real.startswith(guardado) and "confidence" not in guardado
 
-    assert requeue_obsolete_skips(conn) == 1
+    # Filas antiguas con motivos que ya no se producen, copiadas de la real.
+    viejos = [_evento(conn, "2", "THIN", date.today() - timedelta(days=d)) for d in (5, 6)]
+    with conn.cursor() as cur:
+        for eid, motivo in zip(viejos, ("sin datos de high/low para estimar liquidez", "proxy de spread (high-low)/close=2.10% > 0.5%")):
+            cur.execute("CREATE TEMP TABLE t AS SELECT * FROM event_analyses WHERE event_id = %s", (iliquido,))
+            cur.execute(
+                "UPDATE t SET event_id = %s, bull_analyst_output = jsonb_build_object('skipped_no_llm_needed', true, 'reason', %s::text)",
+                (eid, motivo),
+            )
+            cur.execute("INSERT INTO event_analyses SELECT * FROM t")
+            cur.execute("DROP TABLE t")
+    conn.commit()
+
+    assert requeue_obsolete_skips(conn) == 2
     with conn.cursor() as cur:
         cur.execute("SELECT event_id FROM event_analyses")
         assert [r["event_id"] for r in cur.fetchall()] == [iliquido]

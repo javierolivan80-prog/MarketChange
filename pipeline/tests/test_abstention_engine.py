@@ -10,7 +10,6 @@ from pipeline.analyze.abstention_engine import (
     CONFIDENCE_FLOOR,
     LIQUIDITY_ADV_FLOOR_USD,
     NOVELTY_FLOOR,
-    SPREAD_CEILING_PCT,
     AbstentionInputs,
     decide_all_strategies,
     decide_for_strategy,
@@ -29,7 +28,6 @@ def _clean_inputs(**overrides) -> AbstentionInputs:
         ev_by_strategy={"CONSERVATIVE": 0.05, "BALANCED": 0.05, "AGGRESSIVE": 0.05},  # muy por encima de todos los umbrales
         had_survivorship_warning=False,
         beta_available=True,
-        high_low_range_pct=0.1,
         adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD * 10,  # muy por encima del suelo
         is_fda_crl_without_8k=False,
     )
@@ -176,17 +174,13 @@ def test_rule_6_fda_crl_without_8k():
     assert "CRL" in decision.reason_if_no_trade
 
 
-def test_rule_7_spread_proxy_above_ceiling():
-    decision = decide_for_strategy(_clean_inputs(high_low_range_pct=SPREAD_CEILING_PCT + 0.1), "BALANCED")
-    assert decision.trade_decision == "NO_TRADE"
-    assert "ilíquido" in decision.reason_if_no_trade
-
-
-def test_rule_7_missing_spread_data_abstains_rather_than_assumes_liquid():
-    """None no debe interpretarse como 'sin problema' — la ausencia de dato
-    es en sí misma un motivo de cautela, no se asume liquidez."""
-    decision = decide_for_strategy(_clean_inputs(high_low_range_pct=None), "BALANCED")
-    assert decision.trade_decision == "NO_TRADE"
+def test_rule_7_wide_daily_range_no_longer_blocks():
+    """BUGS_REPORT.md H-08: el rango diario (high-low)/close ya no se usa
+    como spread. AbstentionInputs ni siquiera lo recibe: un evento líquido por
+    ADV opera aunque D0 se moviera un 3 %."""
+    assert "high_low_range_pct" not in AbstentionInputs.__dataclass_fields__
+    decision = decide_for_strategy(_clean_inputs(), "BALANCED")
+    assert decision.trade_decision != "NO_TRADE"
 
 
 def test_rule_7_adv_proxy_below_floor():
@@ -206,23 +200,10 @@ def test_rule_7_adv_at_floor_does_not_trigger():
 
 
 def test_rule_7_missing_adv_data_abstains_rather_than_assumes_liquid():
-    """Igual que con high_low_range_pct=None: sin dato de ADV, cautela, no
-    se asume liquidez."""
+    """Sin dato de ADV, cautela: no se asume liquidez."""
     decision = decide_for_strategy(_clean_inputs(adv_usd_60d=None), "BALANCED")
     assert decision.trade_decision == "NO_TRADE"
     assert "ADV" in decision.reason_if_no_trade
-
-
-def test_rule_7_bad_spread_reported_before_checking_adv():
-    """Cuando AMBOS componentes fallan, se reporta el spread primero (mismo
-    principio de orden determinista que el resto del módulo — ver docstring
-    de decide_for_strategy)."""
-    decision = decide_for_strategy(
-        _clean_inputs(high_low_range_pct=SPREAD_CEILING_PCT + 0.1, adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD - 1), "BALANCED"
-    )
-    assert decision.trade_decision == "NO_TRADE"
-    assert "spread" in decision.reason_if_no_trade
-    assert "ADV" not in decision.reason_if_no_trade
 
 
 # --- Casos combinados ---
@@ -267,7 +248,6 @@ def _clean_objective_kwargs(**overrides) -> dict:
         novelty_score=80.0,
         had_survivorship_warning=False,
         beta_available=True,
-        high_low_range_pct=0.1,
         adv_usd_60d=LIQUIDITY_ADV_FLOOR_USD * 10,
         is_fda_crl_without_8k=False,
     )
@@ -301,12 +281,6 @@ def test_objective_fda_crl_without_8k():
     reason = objective_no_trade_reason(**_clean_objective_kwargs(is_fda_crl_without_8k=True))
     assert reason is not None
     assert "CRL" in reason
-
-
-def test_objective_illiquid_spread():
-    reason = objective_no_trade_reason(**_clean_objective_kwargs(high_low_range_pct=SPREAD_CEILING_PCT + 0.1))
-    assert reason is not None
-    assert "ilíquido" in reason
 
 
 def test_objective_illiquid_adv():
