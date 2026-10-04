@@ -33,7 +33,14 @@ import logging
 from datetime import date, timedelta
 
 from pipeline import config
-from pipeline.analyze.abstention_engine import AbstentionInputs, as_json as abstention_as_json, decide_all_strategies, objective_no_trade_reason
+from pipeline.analyze.abstention_engine import (
+    STRATEGIES,
+    AbstentionDecision,
+    AbstentionInputs,
+    as_json as abstention_as_json,
+    decide_all_strategies,
+    objective_no_trade_reason,
+)
 from pipeline.analyze.adversarial_analyzer import (
     EventContext,
     build_bull_bear_batch,
@@ -57,7 +64,23 @@ CHUNK_SIZE = 50
 FDA_CRL_8K_WINDOW_DAYS = 10  # ventana de tolerancia para buscar un 8-K correspondiente
 
 
-def _queue_filters(min_market_cap: float | None, require_text: bool, exclude_ids) -> tuple[str, dict]:
+# Barra de precio de D0 con high/low: sin ella, enrichment no puede calcular
+# la liquidez y el evento se descartaba por "sin datos" ANTES de la IA. Ese
+# descarte se guardaba en event_analyses y el evento salía de la cola para
+# siempre (BUGS_REPORT.md H-39: 126 de 200 análisis en producción). Pasaba
+# porque el análisis corre en las 3 pasadas del día y los precios solo se
+# bajan en la nocturna: un 8-K de hoy (o con D0 = mañana, si llegó tras el
+# cierre) se analizaba antes de existir su barra de D0. Además la decisión es
+# "al cierre de D0": analizar antes de ese cierre no tiene sentido.
+_D0_BAR_EXISTS = (
+    "EXISTS (SELECT 1 FROM prices p WHERE p.ticker = e.ticker AND p.trade_date = e.d0_close_date "
+    "AND p.high_raw IS NOT NULL AND p.low_raw IS NOT NULL)"
+)
+
+
+def _queue_filters(
+    min_market_cap: float | None, require_text: bool, exclude_ids, require_d0_bar: bool = False
+) -> tuple[str, dict]:
     where = ["ea.event_id IS NULL"]
     params: dict = {}
     if min_market_cap is not None:
@@ -70,6 +93,8 @@ def _queue_filters(min_market_cap: float | None, require_text: bool, exclude_ids
         # Bull/Bear/Judge sobre el placeholder es pagar por ruido. Se analiza
         # en la pasada siguiente, cuando filing_text.py lo haya descargado.
         where.append("(e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)")
+    if require_d0_bar:
+        where.append(_D0_BAR_EXISTS)
     if exclude_ids:
         where.append("NOT (e.event_id = ANY(%(exclude)s))")
         params["exclude"] = list(exclude_ids)
@@ -82,13 +107,14 @@ def fetch_events_needing_analysis(
     *,
     min_market_cap: float | None = None,
     require_text: bool = False,
+    require_d0_bar: bool = False,
     exclude_ids=(),
 ) -> list[dict]:
     """Siguiente tanda de la cola. Sin filtros (los defaults) devuelve todo lo
     pendiente en orden de event_id; run_pipeline() la llama con los filtros
     de config: más recientes primero y, a igualdad de fecha, las empresas más
     grandes primero."""
-    where, params = _queue_filters(min_market_cap, require_text, exclude_ids)
+    where, params = _queue_filters(min_market_cap, require_text, exclude_ids, require_d0_bar)
     order = (
         "e.d0_close_date DESC, u.market_cap_last_usd DESC NULLS LAST, e.event_id"
         if min_market_cap is not None
@@ -122,7 +148,8 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
             SELECT count(*) AS pendientes,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS en_objetivo,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s
-                                    AND (e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)) AS listos,
+                                    AND (e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)
+                                    AND """ + _D0_BAR_EXISTS + """) AS listos,
                    count(DISTINCT e.cik) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS empresas
             FROM events e
             JOIN universe u ON u.cik = e.cik
@@ -454,7 +481,17 @@ def _process_single_event(
         adv_usd_60d=enrichment.adv_usd_60d,
         is_fda_crl_without_8k=is_fda_crl_without_8k,
     )
-    decisions = decide_all_strategies(abstention_inputs)
+    if skip_reason is not None:
+        # El evento se descartó ANTES de la IA por una regla objetiva. Sin
+        # esto, decide_all_strategies evaluaba la regla 2 (confidence=0 < 40)
+        # antes que la objetiva y guardaba "no sabemos qué pasa" como motivo
+        # en vez del real (BUGS_REPORT.md H-38: 188 de 200 en producción).
+        decisions = {
+            strategy: AbstentionDecision("NO_TRADE", skip_reason, confidence_in_conviction)
+            for strategy in STRATEGIES
+        }
+    else:
+        decisions = decide_all_strategies(abstention_inputs)
 
     _store_event_analysis(
         conn, event_id, novelty, bull_output, bear_output, judge_output,
@@ -534,6 +571,7 @@ def run_pipeline(
     max_events: int | None = None,
     min_market_cap: float | None = None,
     require_text: bool = False,
+    require_d0_bar: bool = False,
 ) -> tuple[int, object]:
     """Bucle principal: procesa hasta que no queden eventos pendientes, o
     hasta el tope de eventos (tope de gasto).
@@ -559,7 +597,8 @@ def run_pipeline(
             logger.info("Tope de %d eventos por corrida alcanzado — el resto queda en cola", max_events)
             break
         batch = fetch_events_needing_analysis(
-            conn, limit, min_market_cap=min_market_cap, require_text=require_text, exclude_ids=attempted,
+            conn, limit, min_market_cap=min_market_cap, require_text=require_text,
+            require_d0_bar=require_d0_bar, exclude_ids=attempted,
         )
         if not batch:
             break
@@ -568,6 +607,37 @@ def run_pipeline(
         total += len(batch)
         chunks_done += 1
     return total, conn
+
+
+# Motivos de descarte pre-IA que ya no se producen o ya no son válidos, y
+# cuyos eventos deben volver a la cola. Prefijos del texto guardado en
+# bull_analyst_output->>'reason' (ver _process_single_event, rama skip_reason):
+#  - "sin datos de high/low": el evento se analizó antes de existir su barra
+#    de D0 (BUGS_REPORT.md H-39). La cola ya exige esa barra.
+#  - "proxy de spread": el rango diario high-low de D0 se usaba como spread
+#    con un techo del 0,5 %, que no pasaba prácticamente ningún evento real
+#    (H-08). La liquidez se mide ahora solo por ADV.
+# Estas filas no costaron nada (no se llamó a la IA): borrarlas solo hace que
+# el evento se vuelva a evaluar con las reglas actuales.
+OBSOLETE_SKIP_REASON_PREFIXES = ("sin datos de high/low", "proxy de spread")
+
+
+def requeue_obsolete_skips(conn) -> int:
+    """Borra de event_analyses los descartes pre-IA con un motivo de
+    OBSOLETE_SKIP_REASON_PREFIXES para que vuelvan a la cola. Idempotente:
+    tras la primera pasada no queda ninguno (la cola ya no los produce)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM event_analyses
+            WHERE model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE'
+              AND bull_analyst_output->>'reason' LIKE ANY(%s)
+            """,
+            ([f"{p}%" for p in OBSOLETE_SKIP_REASON_PREFIXES],),
+        )
+        n = cur.rowcount
+    conn.commit()
+    return n
 
 
 def _is_billing_error(exc: Exception) -> bool:
@@ -642,11 +712,14 @@ if __name__ == "__main__":
         )
 
     conn = get_connection()
+    requeued = requeue_obsolete_skips(conn)
+    if requeued:
+        print(f"Vueltos a la cola: {requeued} eventos descartados antes de la IA por un motivo que ya no aplica")
     cola = analysis_queue_summary(conn)
     print(
         f"Cola de la IA: {cola['pendientes']} eventos sin analizar; {cola['en_objetivo']} de "
         f"{cola['empresas']} empresas >= {cola['min_market_cap_usd'] / 1e6:,.0f} M$; "
-        f"{cola['listos']} con texto y listos (~{cola['coste_estimado_listos_usd']} $). "
+        f"{cola['listos']} con texto y precio de D0, listos (~{cola['coste_estimado_listos_usd']} $). "
         f"Tope por corrida: {config.ANALYSIS_MAX_EVENTS_PER_RUN or 'sin tope'}."
     )
 
@@ -687,6 +760,7 @@ if __name__ == "__main__":
             max_events=max_events,
             min_market_cap=config.ANALYSIS_MIN_MARKET_CAP_USD,
             require_text=True,
+            require_d0_bar=True,
         )
     except Exception as exc:
         if not _is_billing_error(exc):

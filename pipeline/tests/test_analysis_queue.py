@@ -317,3 +317,59 @@ def test_price_tickers_mas_activos_primero_y_sin_simbolos_no_operables(conn):
     tickers = price_tickers(conn)
     assert tickers.index("MUCHO") < tickers.index("POCO")
     assert "PCG-PB" not in tickers
+
+
+# --- BUGS_REPORT.md H-39 / H-38 ---
+
+@pytestmark_db
+def test_cola_exige_barra_de_d0_para_no_descartar_por_falta_de_datos(conn):
+    """H-39: un 8-K tras el cierre de hoy tiene D0 = mañana. Analizarlo antes
+    de que exista la barra de D0 lo descartaba "sin datos" y lo sacaba de la
+    cola para siempre."""
+    from pipeline.analyze.event_analysis_pipeline import analysis_queue_summary, fetch_events_needing_analysis
+    from pipeline.ingest.universe_maintenance import refresh_universe_metrics
+
+    _empresa(conn, "1", "MEGA", 100.0, 3e9)
+    refresh_universe_metrics(conn)
+    con_barra = _evento(conn, "1", "MEGA", date.today() - timedelta(days=3))
+    sin_barra = _evento(conn, "1", "MEGA", date.today() + timedelta(days=1))
+
+    cola = fetch_events_needing_analysis(conn, 50, require_d0_bar=True)
+    assert [ev["event_id"] for ev in cola] == [con_barra]
+    assert {ev["event_id"] for ev in fetch_events_needing_analysis(conn, 50)} == {con_barra, sin_barra}
+    assert analysis_queue_summary(conn, min_market_cap=300e6)["listos"] == 1
+
+
+@pytestmark_db
+def test_descartes_por_falta_de_datos_vuelven_a_la_cola_y_guardan_el_motivo_real(conn):
+    """H-38: el motivo guardado es el de la regla objetiva, no "confidence=0 < 40".
+    H-39: requeue_obsolete_skips devuelve a la cola los "sin datos de high/low"
+    y deja los demás descartes."""
+    from pipeline.analyze.event_analysis_pipeline import requeue_obsolete_skips, run_pipeline
+
+    _empresa(conn, "1", "MEGA", 100.0, 3e9)
+    _empresa(conn, "2", "THIN", 10.0, 1e8, volume=1_000)  # ADV ~10 k$ < 1 M$
+    sin_barra = _evento(conn, "1", "MEGA", date.today() + timedelta(days=1))
+    iliquido = _evento(conn, "2", "THIN", date.today() - timedelta(days=3))
+    fake = _ClienteQueFalla()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=fake))
+
+    run_pipeline(conn, client, max_chunks=5)
+    assert fake.creates == 0  # los dos se descartan antes de la IA
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT event_id, abstention_decision, bull_analyst_output FROM event_analyses ORDER BY event_id")
+        rows = {r["event_id"]: r for r in cur.fetchall()}
+    for eid in (sin_barra, iliquido):
+        motivo_real = rows[eid]["bull_analyst_output"]["reason"]
+        for version in ("CONSERVATIVE", "BALANCED", "AGGRESSIVE"):
+            guardado = rows[eid]["abstention_decision"][version]["reason_if_no_trade"]
+            assert motivo_real.startswith(guardado) and "confidence" not in guardado
+    assert rows[sin_barra]["bull_analyst_output"]["reason"].startswith("sin datos de high/low")
+    assert rows[iliquido]["bull_analyst_output"]["reason"].startswith("ADV")
+
+    assert requeue_obsolete_skips(conn) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT event_id FROM event_analyses")
+        assert [r["event_id"] for r in cur.fetchall()] == [iliquido]
+    assert requeue_obsolete_skips(conn) == 0  # idempotente
