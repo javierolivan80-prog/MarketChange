@@ -40,6 +40,7 @@ from datetime import date, timedelta
 import pandas as pd
 
 from pipeline import config
+from pipeline.ingest.ticker_map import is_tradable_symbol  # noqa: F401 — también se usa desde fuera
 
 logger = logging.getLogger(__name__)
 
@@ -53,26 +54,6 @@ DOWNLOAD_THREADS = 8       # descargas en paralelo dentro de un lote (ver _desca
 # gratuito de Neon/Supabase ronda los 500 MB). Mismo valor y variable que la
 # carga de histórico (ops_history_prices.py).
 MAX_DB_MB = float(os.environ.get("HISTORY_MAX_DB_MB", "400"))
-
-# Sufijos de 5 letras que en EE. UU. marcan algo que no es la acción ordinaria
-# o que no cotiza en un mercado principal: W/WS warrant, U unidad (SPAC),
-# R derecho, Q en concurso, F extranjera en OTC. Yahoo los devuelve casi
-# siempre vacíos o con huecos, y la app nunca los va a operar.
-_NON_COMMON_SUFFIXES = ("W", "U", "R", "Q", "F")
-
-
-def is_tradable_symbol(ticker: str) -> bool:
-    """¿Merece la pena bajar precios de este símbolo? Las series de
-    referencia (^VIX) se tratan aparte; aquí se descartan preferentes y
-    clases con guion o punto (PCG-PB, BRK.B en formato SEC) y los sufijos de
-    arriba en símbolos de 5 letras."""
-    t = (ticker or "").strip().upper()
-    if not t or "-" in t or "." in t or "^" in t or "/" in t:
-        return False
-    if len(t) == 5 and t.endswith(_NON_COMMON_SUFFIXES):
-        return False
-    return True
-
 
 def database_mb(conn) -> float:
     with conn.cursor() as cur:

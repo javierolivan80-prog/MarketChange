@@ -68,3 +68,23 @@ def resolve(cik: str) -> str | None:
     de emisores sin acciones cotizadas — fondos, insiders individuales, etc.,
     que de todas formas no pertenecen al universo invertible)."""
     return get_ticker_map().get(normalize_cik(cik))
+
+
+# Sufijos de 5 letras que en EE. UU. marcan algo que no es la acción ordinaria
+# o que no cotiza en un mercado principal: W/WS warrant, U unidad (SPAC),
+# R derecho, Q en concurso, F extranjera en OTC. Yahoo los devuelve casi
+# siempre vacíos o con huecos, y la app nunca los va a operar.
+_NON_COMMON_SUFFIXES = ("W", "U", "R", "Q", "F")
+
+
+def is_tradable_symbol(ticker: str) -> bool:
+    """¿Merece la pena bajar precios de este símbolo? Las series de
+    referencia (^VIX) se tratan aparte; aquí se descartan preferentes y
+    clases con guion o punto (PCG-PB, BRK.B en formato SEC) y los sufijos de
+    arriba en símbolos de 5 letras."""
+    t = (ticker or "").strip().upper()
+    if not t or "-" in t or "." in t or "^" in t or "/" in t:
+        return False
+    if len(t) == 5 and t.endswith(_NON_COMMON_SUFFIXES):
+        return False
+    return True
