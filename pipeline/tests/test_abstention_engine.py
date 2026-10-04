@@ -306,3 +306,38 @@ def test_objective_reason_matches_decide_for_strategy_for_shared_rules():
     full_inputs = _clean_inputs(had_survivorship_warning=True)
     full_decision = decide_for_strategy(full_inputs, "BALANCED")
     assert objective_reason == full_decision.reason_if_no_trade
+
+
+# --- Techo de EV (BUGS_REPORT.md H-13) ---
+
+
+def test_ev_ceiling_skips_when_even_the_best_judge_cannot_reach_any_threshold():
+    from pipeline.analyze.abstention_engine import ev_ceiling_no_trade_reason
+
+    # Aggressive, el más fácil: 1,8 × 0,5 % × 0,70 = 0,63 % < 0,8 % + 0,5 %.
+    reason = ev_ceiling_no_trade_reason(expected_magnitude_pct=0.5, impact_confidence=70)
+    assert reason is not None and reason.startswith("techo de EV")
+
+
+def test_ev_ceiling_lets_through_events_that_could_trade():
+    from pipeline.analyze.abstention_engine import ev_ceiling_no_trade_reason
+
+    assert ev_ceiling_no_trade_reason(expected_magnitude_pct=5.0, impact_confidence=80) is None
+    assert ev_ceiling_no_trade_reason(expected_magnitude_pct=-5.0, impact_confidence=80) is None  # SHORT, simétrico
+
+
+def test_ev_ceiling_matches_rule_3_of_decide_for_strategy():
+    """Coherencia: si el techo dice NO_TRADE, decide_for_strategy con el mejor
+    Judge posible también da NO_TRADE en las 3 versiones, y viceversa."""
+    from pipeline.analyze.abstention_engine import ev_ceiling_no_trade_reason
+    from pipeline.analyze.ev_engine import compute_ev
+
+    for magnitude, conf in [(0.3, 50), (0.72, 100), (0.73, 100), (1.0, 72), (2.0, 90), (8.0, 30)]:
+        best = compute_ev(1.0, 100.0, magnitude, conf)
+        evs = {"CONSERVATIVE": best.ev_conservative, "BALANCED": best.ev_balanced, "AGGRESSIVE": best.ev_aggressive}
+        decisions = [
+            decide_for_strategy(_clean_inputs(net_conviction=1.0, confidence_in_conviction=100.0, ev_by_strategy=evs), s)
+            for s in evs
+        ]
+        all_no_trade = all(d.trade_decision == "NO_TRADE" for d in decisions)
+        assert (ev_ceiling_no_trade_reason(magnitude, conf) is not None) == all_no_trade, (magnitude, conf)

@@ -72,6 +72,15 @@ def conn():
     yield c
     c.close()
 
+@pytest.fixture
+def sin_techo_de_ev(monkeypatch):
+    """Para los tests que prueban la MECÁNICA de llamada a la IA (batch,
+    caché, reconexión...) sin sembrar análogos: el techo de EV
+    (BUGS_REPORT.md H-13) los descartaría antes, porque sin análogos el EV
+    máximo es 0. El techo tiene sus propios tests."""
+    monkeypatch.setattr("pipeline.analyze.event_analysis_pipeline.ev_ceiling_no_trade_reason", lambda *a, **k: None)
+
+
 
 def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, history_days=290):
     last_day = last_day or date.today()
@@ -257,7 +266,7 @@ class _ClienteQueFalla:
 
 
 @pytestmark_db
-def test_run_pipeline_no_entra_en_bucle_si_la_ia_falla(conn):
+def test_run_pipeline_no_entra_en_bucle_si_la_ia_falla(conn, sin_techo_de_ev):
     from pipeline.analyze.event_analysis_pipeline import run_pipeline
 
     _empresa(conn, "1", "MEGA", 100.0, 3e9)
@@ -272,7 +281,7 @@ def test_run_pipeline_no_entra_en_bucle_si_la_ia_falla(conn):
 
 
 @pytestmark_db
-def test_run_pipeline_respeta_el_tope_de_eventos(conn):
+def test_run_pipeline_respeta_el_tope_de_eventos(conn, sin_techo_de_ev):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, run_pipeline
 
     _empresa(conn, "1", "MEGA", 100.0, 3e9)
@@ -383,3 +392,44 @@ def test_descartes_pre_ia_guardan_el_motivo_real_y_los_obsoletos_vuelven_a_la_co
         cur.execute("SELECT event_id FROM event_analyses")
         assert [r["event_id"] for r in cur.fetchall()] == [iliquido]
     assert requeue_obsolete_skips(conn) == 0  # idempotente
+
+
+@pytestmark_db
+def test_techo_de_ev_evita_pagar_la_ia_cuando_ningun_judge_podria_hacerla_operar(conn):
+    """BUGS_REPORT.md H-13: sin análogos (o con magnitud histórica pequeña) el
+    EV máximo no llega al umbral de ninguna versión: NO_TRADE sin llamar a la
+    IA. Con análogos de magnitud suficiente, sí se llama."""
+    from pipeline.analyze.event_analysis_pipeline import run_pipeline
+
+    _empresa(conn, "1", "MEGA", 100.0, 3e9)
+    sin_analogos = _evento(conn, "1", "MEGA", date.today() - timedelta(days=3))
+    fake = _ClienteQueFalla()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=fake))
+
+    run_pipeline(conn, client, max_chunks=5)
+    assert fake.creates == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT abstention_decision FROM event_analyses WHERE event_id = %s", (sin_analogos,))
+        motivo = cur.fetchone()["abstention_decision"]["BALANCED"]["reason_if_no_trade"]
+    assert motivo.startswith("techo de EV")
+
+    # 60 análogos de la misma clase, +5 % cada uno y con el desenlace ya conocido.
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
+            "VALUES ('9','ANLG','Analogos','2024-01-01','2024-01-01')"
+        )
+    conn.commit()
+    for i in range(60):
+        eid = _evento(conn, "9", "ANLG", date.today() - timedelta(days=60 + i))
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO car_results (event_id, window_days, car, n_estimation_days) VALUES (%s, 20, 0.05, 150)",
+                (eid,),
+            )
+    conn.commit()
+    con_analogos = _evento(conn, "1", "MEGA", date.today() - timedelta(days=2))
+
+    run_pipeline(conn, client, max_chunks=5)
+    assert fake.creates == 1  # solo el evento con análogos fuertes llega a la IA
+    assert any(r["custom_id"].startswith(f"{con_analogos}_") for r in fake._reqs)
