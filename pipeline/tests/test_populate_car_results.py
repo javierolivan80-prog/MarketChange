@@ -185,3 +185,40 @@ def test_eventos_sin_car_posible_no_bloquean_a_los_nuevos(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM car_results WHERE event_id = %s", (event_id,))
         assert cur.fetchone()["n"] == 2
+
+
+def test_purge_borra_los_car_calculados_con_la_ventana_a_medias(conn):
+    """BUGS_REPORT.md H-02: los CAR guardados antes de que terminara su
+    ventana (o con los factores aún sin publicar) se borran para recalcularlos;
+    los completos se quedan."""
+    from pipeline.backtest.populate_car_results import populate_missing_car_results, purge_incomplete_car_results
+
+    completo = _seed(conn)
+    assert populate_missing_car_results(conn) == 2
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO events (cik, ticker, source, is_satellite, event_class, item_codes,
+                accession_number, source_url, filed_at, d0_close_date, classification_method,
+                classification_confidence, raw_text_hash)
+            SELECT cik, ticker, source, is_satellite, event_class, item_codes, 'acc2', source_url,
+                   filed_at, d0_close_date + 5, classification_method, classification_confidence, 'h2'
+            FROM events WHERE event_id = %s
+            RETURNING event_id, d0_close_date
+            """,
+            (completo,),
+        )
+        truncado = cur.fetchone()
+        # Como lo habría guardado el código viejo: dos días después de D0.
+        cur.execute(
+            "INSERT INTO car_results (event_id, window_days, car, n_estimation_days, computed_at) "
+            "VALUES (%s, 20, 0.01, 150, %s)",
+            (truncado["event_id"], truncado["d0_close_date"] + pd.Timedelta(days=2)),
+        )
+    conn.commit()
+
+    assert purge_incomplete_car_results(conn) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT event_id FROM car_results")
+        assert [r["event_id"] for r in cur.fetchall()] == [completo]
+    assert purge_incomplete_car_results(conn) == 0

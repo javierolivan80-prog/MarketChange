@@ -104,6 +104,33 @@ def _pending_page(conn, after_event_id: int, limit: int) -> list[dict]:
         return cur.fetchall()
 
 
+def purge_incomplete_car_results(conn) -> int:
+    """Borra los CAR guardados con la ventana de evento a medias, de antes de
+    que compute_car lo impidiera (BUGS_REPORT.md H-02), para que se vuelvan a
+    calcular cuando la ventana esté completa. Una fila es sospechosa si:
+      - se calculó antes de que terminara su ventana (computed_at <= D0+window), o
+      - su ventana termina después del último día con factores Fama-French
+        (publicados con retraso): el join con los factores la habría cortado.
+    Idempotente: lo que compute_car guarda ahora nunca cumple ninguna de las
+    dos condiciones. Son eventos recientes, cuyos precios se conservan
+    (ops_prune guarda siempre los últimos 400 días)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM car_results cr
+            USING events e
+            WHERE e.event_id = cr.event_id
+              AND (cr.computed_at::date <= e.d0_close_date + cr.window_days
+                   OR e.d0_close_date + cr.window_days > (SELECT max(trade_date) FROM fama_french_factors))
+            """
+        )
+        n = cur.rowcount
+    conn.commit()
+    if n:
+        logger.info("%d CAR con la ventana incompleta borrados para recalcularlos", n)
+    return n
+
+
 def populate_missing_car_results(conn, limit: int = 1000) -> int:
     """Recorre TODOS los eventos sin CAR, en páginas de `limit`.
 
@@ -168,5 +195,8 @@ if __name__ == "__main__":
     from pipeline.db.connection import get_connection
 
     conn = get_connection()
+    purged = purge_incomplete_car_results(conn)
+    if purged:
+        print(f"{purged} CAR con la ventana incompleta borrados (se recalculan cuando la ventana esté completa)")
     n = populate_missing_car_results(conn)
     print(f"{n} filas de car_results calculadas/actualizadas")

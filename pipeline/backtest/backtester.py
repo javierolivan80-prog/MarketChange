@@ -26,16 +26,22 @@ de forma independiente) y se conservan tal cual.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
 from pipeline.backtest.factor_model import fit_factor_model
+from pipeline.ingest.market_calendar import dias_de_negociacion
 
 logger = logging.getLogger(__name__)
+
+# Fracción mínima de las sesiones de bolsa esperadas en (D0, D0+window] que
+# tiene que tener precio para que el CAR cuente (ver compute_car).
+MIN_EVENT_WINDOW_COVERAGE = 0.8
 
 
 @dataclass
@@ -68,7 +74,8 @@ def compute_car(
       4. CAR = suma de retornos anormales en [D+1, D+window_days].
 
     Devuelve None si no hay suficientes días de estimación (mínimo 60, umbral
-    conservador para que la regresión no sea puro ruido) — un None debe
+    conservador para que la regresión no sea puro ruido) o si la ventana de
+    evento no está completa (ver el comentario del cuerpo) — un None debe
     tratarse como "no evaluable", NUNCA como CAR=0.
     """
     merged = event_prices.join(factor_returns, how="inner")
@@ -77,8 +84,19 @@ def compute_car(
         return None
 
     event_end = pd.Timestamp(d0_close_date) + pd.Timedelta(days=window_days)
+    # Ventana COMPLETA o nada (BUGS_REPORT.md H-02). Antes bastaba con un solo
+    # día de datos: el CAR de un evento de hace 3 días (o con Fama-French aún
+    # sin publicar para esas fechas) se guardaba como "CAR a 20 días" y
+    # populate_car_results ya no lo volvía a mirar nunca.
+    #  - La serie (precios Y factores, tras el join) tiene que llegar al final
+    #    de la ventana: si no, la ventana sigue abierta o el ticker se cortó.
+    #  - Y cubrir al menos MIN_EVENT_WINDOW_COVERAGE de las sesiones de bolsa
+    #    esperadas: un hueco grande (deslistado, suspensión) no es un CAR.
+    if merged.index.max() < event_end:
+        return None
     event_data = merged[(merged.index > pd.Timestamp(d0_close_date)) & (merged.index <= event_end)]
-    if event_data.empty:
+    expected = len(dias_de_negociacion(d0_close_date + timedelta(days=1), event_end.date()))
+    if event_data.empty or len(event_data) < max(1, math.ceil(MIN_EVENT_WINDOW_COVERAGE * expected)):
         return None
 
     X_event = sm.add_constant(event_data[["mkt_rf", "smb", "hml"]], has_constant="add")
