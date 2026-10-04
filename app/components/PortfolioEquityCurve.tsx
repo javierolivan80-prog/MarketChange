@@ -71,9 +71,12 @@ export function PortfolioEquityCurve({
         <text x={baseX1} y={Math.max(baseY - 3, 9)} fontSize={8} fill="currentColor" opacity={0.5}>
           0%
         </text>
-        <path d={pathD} fill="none" stroke={strokeColor} strokeWidth={1.5} />
-        <circle cx={endX} cy={endY} r={2.5} fill={strokeColor} />
+        {/* La curva se dibuja de izquierda a derecha y la cifra final aparece
+            al terminar: es la conclusión del recorrido. */}
+        <path d={pathD} pathLength={1} className="m-draw" fill="none" stroke={strokeColor} strokeWidth={1.5} />
+        <circle className="m-fade m-after-data" cx={endX} cy={endY} r={2.5} fill={strokeColor} />
         <text
+          className="m-fade m-after-data"
           x={endX - 4}
           y={endY < 14 ? endY + 12 : endY - 5}
           textAnchor="end"

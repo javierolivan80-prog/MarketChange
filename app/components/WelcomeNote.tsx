@@ -5,6 +5,11 @@
 // siempre. Sustituye a tener que descubrir "Cómo funciona" por cuenta propia.
 // Se recuerda en localStorage (por navegador): si no está disponible, la
 // nota simplemente vuelve a salir, sin romper nada.
+//
+// Se pinta ya en el servidor (si estaba cerrada, la oculta el script de
+// layout.tsx antes del primer pintado) para no desplazar la página al
+// hidratar. Al cerrarla se desvanece (ease-in) y después se desmonta; con
+// movimiento reducido desaparece en el acto.
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -13,19 +18,22 @@ import { useT } from "@/components/i18n/LocaleProvider";
 const KEY = "welcome-dismissed-v1";
 
 export function WelcomeNote() {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(true);
+  const [leaving, setLeaving] = useState(false);
   const t = useT();
 
   useEffect(() => {
     try {
-      setVisible(localStorage.getItem(KEY) !== "1");
+      if (localStorage.getItem(KEY) === "1") setVisible(false);
     } catch {
-      setVisible(true);
+      // sin localStorage: se queda visible
     }
   }, []);
 
   function dismiss() {
-    setVisible(false);
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) setVisible(false);
+    else setLeaving(true);
     try {
       localStorage.setItem(KEY, "1");
     } catch {
@@ -36,7 +44,14 @@ export function WelcomeNote() {
   if (!visible) return null;
 
   return (
-    <aside aria-label={t("Qué es MarketChange", "What MarketChange is")} className="mb-5 border border-accent-500/50 bg-surface p-4 text-sm">
+    <aside
+      data-welcome-note
+      aria-label={t("Qué es MarketChange", "What MarketChange is")}
+      className={`mb-5 border border-accent-500/50 bg-surface p-4 text-sm ${leaving ? "m-exit" : "m-fade"}`}
+      onAnimationEnd={(e) => {
+        if (leaving && e.target === e.currentTarget) setVisible(false);
+      }}
+    >
       <p className="mb-1 font-medium text-foreground">{t("Qué es esto", "What this is")}</p>
       <p className="mb-2 text-text-secondary">
         {t(

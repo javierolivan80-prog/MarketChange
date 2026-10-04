@@ -4,6 +4,7 @@
 // (barras de fondo de la curva de calibración). Reutilizado en ambos tabs:
 // mismo dato (ConfidenceBucket[]), dos contextos.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { chartSeriesMotion, chartTooltipMotion } from "@/lib/motion";
 import type { ConfidenceBucket } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
 
@@ -22,13 +23,13 @@ export function ConfidenceBucketBars({ buckets, label }: { buckets: ConfidenceBu
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
           <YAxis tick={{ fontSize: 10 }} unit="%" width={40} domain={[0, 100]} />
-          <Tooltip
+          <Tooltip {...chartTooltipMotion}
             formatter={(value, name, item) => [
               name === "hit_rate_pct" ? `${Number(value).toFixed(1)}% (n=${item.payload.n})` : value,
               seriesLabel,
             ]}
           />
-          <Bar dataKey="hit_rate_pct" fill="var(--color-accent-600)">
+          <Bar {...chartSeriesMotion} dataKey="hit_rate_pct" fill="var(--color-accent-600)">
             {data.map((d, i) => (
               <Cell key={i} fill={d.n < 5 ? "var(--color-accent-300)" : "var(--color-accent-600)"} />
             ))}

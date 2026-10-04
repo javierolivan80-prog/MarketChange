@@ -7,6 +7,7 @@
 // diagram" (Guo et al. 2017, la misma referencia que ya cita el docstring
 // de compute_calibration_diagnostics para ECE).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { chartSeriesMotion, chartTooltipMotion, motion } from "@/lib/motion";
 import type { ConfidenceBucket } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
 
@@ -30,11 +31,11 @@ export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
           <XAxis dataKey="confidence" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} name={t("Confianza declarada", "Stated confidence")} />
           <YAxis dataKey="hit_rate" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} width={44} name={t("Acierto real", "Actual win rate")} />
           <ZAxis dataKey="n" range={[30, 300]} name="n" />
-          <Tooltip
+          <Tooltip {...chartTooltipMotion}
             formatter={(value, name) => [name === "n" ? value : `${Number(value).toFixed(1)}%`, name === "hit_rate" ? t("Acierto real", "Actual win rate") : name === "confidence" ? t("Confianza media", "Average confidence") : "n"]}
           />
-          <Line data={diagonal} dataKey="hit_rate" stroke="#9ca3af" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
-          <Scatter data={points} fill="#2563eb" fillOpacity={0.7} line={{ stroke: "#2563eb", strokeWidth: 1.5 }} lineType="joint" />
+          <Line isAnimationActive={false} data={diagonal} dataKey="hit_rate" stroke="#9ca3af" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
+          <Scatter {...chartSeriesMotion} animationDuration={motion.duration.base} data={points} fill="#2563eb" fillOpacity={0.7} line={{ stroke: "#2563eb", strokeWidth: 1.5 }} lineType="joint" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

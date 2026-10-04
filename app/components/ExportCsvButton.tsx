@@ -58,7 +58,10 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
   return (
     // aria-live: la confirmación "Descargado" también llega a lectores de pantalla.
     <Button onClick={handleExport} aria-live="polite">
-      {done ? `${t("Descargado", "Downloaded")} (${rows.length})` : t("Exportar (CSV)", "Export (CSV)")}
+      {/* Crossfade solo al confirmar: la etiqueta de reposo no se anima al cargar la página. */}
+      <span key={String(done)} className={done ? "m-fade" : undefined}>
+        {done ? `${t("Descargado", "Downloaded")} (${rows.length})` : t("Exportar (CSV)", "Export (CSV)")}
+      </span>
     </Button>
   );
 }

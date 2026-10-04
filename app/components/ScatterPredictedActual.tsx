@@ -9,6 +9,7 @@
 // solo para esta línea sería más ingeniería de la que pide el spec (que
 // solo pide ver el R², no una ecuación).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { chartSeriesMotion, chartTooltipMotion, motion } from "@/lib/motion";
 import { useT } from "@/components/i18n/LocaleProvider";
 
 export function ScatterPredictedActual({ points, rSquared }: { points: { predicted: number; actual: number }[]; rSquared: number | null }) {
@@ -51,12 +52,12 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               tickFormatter={(v: number) => v.toFixed(1)}
             />
             <ZAxis range={[20, 20]} />
-            <Tooltip
+            <Tooltip {...chartTooltipMotion}
               formatter={(value) => `${Number(value).toFixed(2)}%`}
               cursor={{ strokeDasharray: "3 3" }}
             />
-            <Line data={diagonal} dataKey="actual" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
-            <Scatter data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name={t("operaciones", "trades")} />
+            <Line isAnimationActive={false} data={diagonal} dataKey="actual" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
+            <Scatter {...chartSeriesMotion} animationDuration={motion.duration.base} data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name={t("operaciones", "trades")} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
