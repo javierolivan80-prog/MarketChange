@@ -222,7 +222,7 @@ def test_generate_full_validation_report_in_sample_excludes_2024_events(conn, tm
     assert "8K_2.02_EARNINGS" not in content.split("PARTE 2")[0]
 
     if result["n_trades_exported"] > 0:
-        csv_path = tmp_path / f"trades_validation-test-1.csv"
+        csv_path = tmp_path / "trades_validation-test-1.csv"
         assert csv_path.exists()
         csv_content = csv_path.read_text()
         assert "ticker" in csv_content

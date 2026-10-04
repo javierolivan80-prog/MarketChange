@@ -263,10 +263,10 @@ class TestEventStudyIntegration:
 
         result = run_event_study(conn, window_days=20)
 
-        for event_class, stats in result.items():
-            if stats["p_value"] is not None:
-                assert stats["p_value_bh_adjusted"] is not None
-                assert isinstance(stats["significant_bh"], bool)
+        for event_class, st in result.items():
+            if st["p_value"] is not None:
+                assert st["p_value_bh_adjusted"] is not None
+                assert isinstance(st["significant_bh"], bool)
             else:
-                assert stats["p_value_bh_adjusted"] is None
-                assert stats["significant_bh"] is None
+                assert st["p_value_bh_adjusted"] is None
+                assert st["significant_bh"] is None

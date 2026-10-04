@@ -6,8 +6,6 @@ trailing_stop) y verificar la reconciliación de caja/equity.
 import os
 from datetime import date, timedelta
 
-import numpy as np
-import pandas as pd
 import pytest
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")

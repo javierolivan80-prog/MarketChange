@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 
 from pipeline import config
 from pipeline.analyze.historical_analogues import estimate_impact_for_event, get_historical_analogues

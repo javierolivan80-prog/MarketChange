@@ -6,8 +6,7 @@ importante a probar es que el filtro anti-look-ahead por fecha funciona de
 verdad contra SQL real, no solo en la firma de la función.
 """
 import os
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -156,15 +155,17 @@ class TestAgainstRealPostgres:
     def test_analogues_exclude_events_on_or_after_as_of_date(self):
         from pipeline.analyze.historical_analogues import get_historical_analogues
 
-        past_id = self._insert_event("1", date(2023, 1, 10))
-        future_id = self._insert_event("2", date(2024, 6, 1))
+        # CAR distinto en cada uno para saber CUÁL entra (antes solo se contaba
+        # uno, y pasaría igual si se colara el futuro y no el pasado).
+        self._insert_event("1", date(2023, 1, 10), car=0.05)
+        self._insert_event("2", date(2024, 6, 1), car=0.30)
         target_date = date(2024, 1, 1)
 
         analogues = get_historical_analogues(
             self.conn, "8K_2.02_EARNINGS", as_of_date=target_date, exclude_event_id=999999, window_days=20
         )
         # Solo el evento pasado debe aparecer; el futuro (2024-06-01) queda excluido.
-        assert len(analogues) == 1
+        assert [float(a["car"]) for a in analogues] == [pytest.approx(0.05)]
 
     def test_analogues_exclude_the_event_itself(self):
         from pipeline.analyze.historical_analogues import get_historical_analogues

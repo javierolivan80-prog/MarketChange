@@ -1,5 +1,4 @@
 """test_decision.py — Fase 6 PARTE 6. generate_decision es puro."""
-import pytest
 
 from pipeline.validation.decision import generate_decision
 
