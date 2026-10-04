@@ -44,6 +44,27 @@ logger = logging.getLogger(__name__)
 MIN_EVENT_WINDOW_COVERAGE = 0.8
 
 
+# Ventana de la volatilidad base, en días naturales antes de D0: termina un
+# mes antes para que la deriva previa al anuncio (filtraciones, rumores) no la
+# infle, igual que la ventana de estimación del modelo de factores.
+BASELINE_VOL_WINDOW = (90, 30)
+MIN_BASELINE_VOL_DAYS = 20
+
+
+def baseline_volatility(prices: pd.DataFrame, d0_close_date: date, window: tuple[int, int] = BASELINE_VOL_WINDOW) -> float:
+    """Desviación típica de los retornos diarios en (D0-90, D0-30]: solo con
+    datos anteriores a la decisión. NaN si no hay columna 'ret' o hay menos
+    de MIN_BASELINE_VOL_DAYS sesiones."""
+    if "ret" not in prices:
+        return np.nan
+    d0 = pd.Timestamp(d0_close_date)
+    desde, hasta = d0 - pd.Timedelta(days=window[0]), d0 - pd.Timedelta(days=window[1])
+    rets = prices.loc[(prices.index > desde) & (prices.index <= hasta), "ret"].dropna()
+    if len(rets) < MIN_BASELINE_VOL_DAYS:
+        return np.nan
+    return float(rets.std())
+
+
 @dataclass
 class CAREstimate:
     event_id: int
@@ -104,7 +125,11 @@ def compute_car(
     abnormal_ret = event_data["ret"] - expected_ret
     car = abnormal_ret.sum()
 
-    baseline_vol = merged["ret"].rolling(60).std().iloc[-1] if "ret" in merged else np.nan
+    # Volatilidad base PREVIA a D0 (BUGS_REPORT.md H-11). Antes era la de las
+    # últimas 60 filas de toda la serie (que podía llegar a hoy): el ratio
+    # dependía del futuro. Ojo al nombre heredado: abnormal_volume_ratio es
+    # una ratio de VOLATILIDAD de retornos (evento / base), no de volumen.
+    baseline_vol = baseline_volatility(merged, d0_close_date)
     event_vol = event_data["ret"].std() if len(event_data) > 1 else np.nan
     abnormal_volume_ratio = (event_vol / baseline_vol) if baseline_vol and baseline_vol > 0 else np.nan
 

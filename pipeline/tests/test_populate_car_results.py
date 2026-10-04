@@ -222,3 +222,35 @@ def test_purge_borra_los_car_calculados_con_la_ventana_a_medias(conn):
         cur.execute("SELECT DISTINCT event_id FROM car_results")
         assert [r["event_id"] for r in cur.fetchall()] == [completo]
     assert purge_incomplete_car_results(conn) == 0
+
+
+def test_reset_anula_las_ratios_de_volatilidad_calculadas_con_datos_futuros(conn):
+    """BUGS_REPORT.md H-11: las ratios guardadas antes del arreglo usaban la
+    volatilidad de los últimos 60 días de toda la serie. Se anulan sin borrar
+    el CAR (recalcularlo podría ser imposible si ops_prune borró los precios);
+    las nuevas se quedan."""
+    from pipeline.backtest.populate_car_results import populate_missing_car_results, reset_lookahead_volume_ratios
+
+    event_id = _seed(conn)
+    assert populate_missing_car_results(conn) == 2
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE car_results SET abnormal_volume_ratio = 1.7, computed_at = '2026-09-01' "
+            "WHERE event_id = %s AND window_days = 20",
+            (event_id,),
+        )
+        cur.execute(
+            "UPDATE car_results SET abnormal_volume_ratio = 1.2, computed_at = '2026-10-06' "
+            "WHERE event_id = %s AND window_days <> 20",
+            (event_id,),
+        )
+    conn.commit()
+
+    assert reset_lookahead_volume_ratios(conn) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT window_days, car, abnormal_volume_ratio FROM car_results WHERE event_id = %s ORDER BY window_days", (event_id,))
+        filas = {r["window_days"]: r for r in cur.fetchall()}
+    assert filas[20]["abnormal_volume_ratio"] is None
+    assert filas[20]["car"] is not None  # el CAR se conserva
+    assert [float(r["abnormal_volume_ratio"]) for w, r in filas.items() if w != 20] == [pytest.approx(1.2)]
+    assert reset_lookahead_volume_ratios(conn) == 0

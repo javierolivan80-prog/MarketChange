@@ -14,6 +14,7 @@ eliminaron junto con el código que probaban.
 """
 import numpy as np
 import pandas as pd
+import pytest
 
 from pipeline.backtest.backtester import compute_car
 
@@ -139,3 +140,40 @@ def test_compute_car_still_computes_a_complete_window():
     dates, prices, factors = _synthetic()
     result = compute_car(prices, factors, dates[280].date(), window_days=20)
     assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# BUGS_REPORT.md H-11 — volatilidad base solo con datos anteriores a D0
+# ---------------------------------------------------------------------------
+
+
+def test_la_ratio_de_volatilidad_no_depende_de_lo_que_pasa_despues():
+    """Antes la base era la volatilidad de las últimas 60 filas de TODA la
+    serie: una crisis meses después del evento cambiaba su ratio."""
+    dates, prices, factors = _synthetic()
+    d0 = dates[250].date()  # ventana de 20 días cerrada; quedan ~50 sesiones después
+    antes = compute_car(prices, factors, d0, window_days=20)
+
+    turbulento = prices.copy()
+    turbulento.loc[dates[290]:, "ret"] = turbulento.loc[dates[290]:, "ret"] * 10  # mucho después del evento
+    despues = compute_car(turbulento, factors, d0, window_days=20)
+
+    assert antes is not None and despues is not None
+    assert antes.abnormal_volume_ratio is not None
+    assert despues.abnormal_volume_ratio == pytest.approx(antes.abnormal_volume_ratio)
+
+
+def test_la_volatilidad_base_usa_la_ventana_previa_a_d0():
+    from pipeline.backtest.backtester import baseline_volatility
+
+    dates, prices, _ = _synthetic()
+    d0 = dates[250]
+    esperada = prices.loc[(prices.index > d0 - pd.Timedelta(days=90)) & (prices.index <= d0 - pd.Timedelta(days=30)), "ret"].std()
+    assert baseline_volatility(prices, d0.date()) == pytest.approx(esperada)
+
+
+def test_sin_historia_previa_suficiente_no_hay_volatilidad_base():
+    from pipeline.backtest.backtester import baseline_volatility
+
+    dates, prices, _ = _synthetic()
+    assert np.isnan(baseline_volatility(prices, dates[10].date()))

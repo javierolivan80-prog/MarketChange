@@ -79,3 +79,28 @@ def test_fetch_and_build_map_usa_throttled_get_no_requests_desnudo(monkeypatch):
 
     assert llamado["url"] == ticker_map.SOURCE_URL
     assert mapping["320193"] == "AAPL"
+
+
+# --- Varias acciones por CIK (BUGS_REPORT.md H-15) ---------------------------
+
+
+def test_con_varios_simbolos_gana_la_accion_ordinaria_no_el_ultimo():
+    from pipeline.ingest.ticker_map import build_map
+
+    raw = {
+        "0": {"cik_str": 1, "ticker": "ACME", "title": "Acme"},
+        "1": {"cik_str": 1, "ticker": "ACMEW", "title": "Acme"},  # warrant, antes ganaba por ser el último
+        "2": {"cik_str": 2, "ticker": "BETA-PA", "title": "Beta"},  # preferente antes que la común
+        "3": {"cik_str": 2, "ticker": "BETA", "title": "Beta"},
+    }
+    assert build_map(raw) == {"1": "ACME", "2": "BETA"}
+
+
+def test_si_ningun_simbolo_es_operable_se_queda_el_primero():
+    from pipeline.ingest.ticker_map import build_map
+
+    raw = {
+        "0": {"cik_str": 3, "ticker": "GAMMU", "title": "Gamma SPAC"},
+        "1": {"cik_str": 3, "ticker": "GAMMW", "title": "Gamma SPAC"},
+    }
+    assert build_map(raw) == {"3": "GAMMU"}
