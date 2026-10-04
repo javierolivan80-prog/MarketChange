@@ -6,13 +6,15 @@
 // trivial sobre datos ya presentes en all_trades, a diferencia de las
 // fórmulas financieras (Sharpe, calibración) que sí viven en Python.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartSeriesMotion, chartTooltipMotion } from "@/lib/motion";
+import { chartTooltipMotion } from "@/lib/motion";
+import { useChartMotion } from "@/components/viz/useChartMotion";
 import { useT } from "@/components/i18n/LocaleProvider";
 
 const N_BINS = 10;
 
 export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
   const t = useT();
+  const seriesMotion = useChartMotion();
   if (pnlPcts.length === 0) {
     return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">{t("Sin trades todavía.", "No trades yet.")}</div>;
   }
@@ -45,7 +47,7 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
               `${item.payload.lo.toFixed(1)}% ${t("a", "to")} ${item.payload.hi.toFixed(1)}%`,
             ]}
           />
-          <Bar {...chartSeriesMotion} dataKey="count">
+          <Bar {...seriesMotion} dataKey="count">
             {bins.map((b, i) => (
               <Cell key={i} fill={b.hi <= 0 ? "#dc2626" : b.lo >= 0 ? "#16a34a" : "var(--border-strong)"} />
             ))}

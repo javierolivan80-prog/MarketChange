@@ -7,12 +7,14 @@
 // diagram" (Guo et al. 2017, la misma referencia que ya cita el docstring
 // de compute_calibration_diagnostics para ECE).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
-import { chartSeriesMotion, chartTooltipMotion, motion } from "@/lib/motion";
+import { chartTooltipMotion, motion } from "@/lib/motion";
+import { useChartMotion } from "@/components/viz/useChartMotion";
 import type { ConfidenceBucket } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
 
 export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
   const t = useT();
+  const seriesMotion = useChartMotion(motion.duration.base);
   if (buckets.length === 0) {
     return <div className="flex h-56 items-center justify-center text-sm italic text-text-tertiary">{t("Sin datos suficientes.", "Not enough data.")}</div>;
   }
@@ -35,7 +37,7 @@ export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
             formatter={(value, name) => [name === "n" ? value : `${Number(value).toFixed(1)}%`, name === "hit_rate" ? t("Acierto real", "Actual win rate") : name === "confidence" ? t("Confianza media", "Average confidence") : "n"]}
           />
           <Line isAnimationActive={false} data={diagonal} dataKey="hit_rate" stroke="#9ca3af" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
-          <Scatter {...chartSeriesMotion} animationDuration={motion.duration.base} data={points} fill="#2563eb" fillOpacity={0.7} line={{ stroke: "#2563eb", strokeWidth: 1.5 }} lineType="joint" />
+          <Scatter {...seriesMotion} data={points} fill="#2563eb" fillOpacity={0.7} line={{ stroke: "#2563eb", strokeWidth: 1.5 }} lineType="joint" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

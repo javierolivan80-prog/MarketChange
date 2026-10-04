@@ -1,6 +1,6 @@
 # MOTION_PLAN — animación de datos en MarketChange
 
-Estado: **implementado** (PR 1-4). Las preguntas de producto del §5 están decididas; el PR 5 queda descartado.
+Estado: **implementado y verificado** (PR 1-4, #68 y siguiente). Las preguntas de producto del §5 están decididas; el PR 5 queda descartado.
 
 Referencias aplicadas: skills `animate` (Emil Kowalski) y `motion-design`
 (arquetipo **Corporate**: 200-400 ms, `cubic-bezier(0.2,0,0,1)`, 0 % de
@@ -223,7 +223,7 @@ Performance para comprobar que no hay tareas largas ni *layout thrashing*.
 - **QualityCard sin `grid-template-rows 0fr→1fr`:** eso anima el layout. El panel entra con `.m-enter` (opacidad + 4 px) como el resto de desplegables.
 - **El count-up de KPIs se quita del inventario** (decisión 1).
 - **Nota de bienvenida:** se pinta en el servidor y el script anterior al primer pintado (`layout.tsx`) la oculta si ya se cerró, así que ya no desplaza la página al hidratar.
-- **Pendiente sin verificar:** si los gráficos se vuelven a animar al cambiar de idioma (punto 4 del §3). Sin base de datos local no se pudo reproducir; queda por comprobar en el entorno de despliegue.
+- **Reanimación al cambiar de idioma (punto 4 del §3): confirmada y corregida.** Recharts relanza la animación cada vez que los datos llegan con otra referencia, aunque los valores sean iguales, y eso pasa en cada `router.refresh()`: el área de drawdown se aplanaba unos 600 ms y volvía a crecer. Ahora `components/viz/useChartMotion.ts` anima cada serie solo la primera vez y la desactiva en `onAnimationEnd`. No se hace con un temporizador desde el montaje porque cortaba la entrada a medias: el gráfico no se dibuja hasta que `ResponsiveContainer` mide su caja.
 
 ## Verificación
 
