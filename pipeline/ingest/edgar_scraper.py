@@ -356,10 +356,25 @@ def parse_acceptance_datetime(header_text: str) -> datetime | None:
         return None
 
 
+class SinIndiceDelDia(PermanentHTTPError):
+    """EDGAR no publicó índice ese día (404): festivo federal o día sin
+    actividad. No es un fallo de la ingesta (BUGS_REPORT.md H-30).
+
+    Se detecta por el 404 y no saltando los festivos de la BOLSA: la SEC sigue
+    su propio calendario (publica en Viernes Santo, con la bolsa cerrada, y
+    cierra en Columbus Day con la bolsa abierta), así que usar el calendario
+    bursátil perdería los filings de esos días."""
+
+
 def scrape_day(day: date) -> list[RawFiling]:
     """Descarga y normaliza todos los 8-K relevantes de un día concreto."""
     logger.info("Descargando daily-index de %s", day.isoformat())
-    resp = throttled_get(daily_index_url(day))
+    try:
+        resp = throttled_get(daily_index_url(day))
+    except PermanentHTTPError as exc:
+        if str(exc).startswith("404"):
+            raise SinIndiceDelDia(f"Sin índice de EDGAR el {day.isoformat()} (festivo o día sin actividad)") from exc
+        raise
     rows = parse_daily_index(resp.text)
     logger.info("%d formularios 8-K encontrados el %s", len(rows), day.isoformat())
 
@@ -470,6 +485,7 @@ def backfill_range(start: date, end: date) -> None:
     conn = get_connection()
     total = 0
     fallidos = 0
+    sin_indice = 0
     primer_error: str | None = None
     while day <= end:
         if day.weekday() < 5:  # solo días hábiles; EDGAR no publica índice en fin de semana
@@ -477,6 +493,11 @@ def backfill_range(start: date, end: date) -> None:
                 filings = scrape_day(day)
                 upsert_universe_entries(conn, filings)
                 total += upsert_events(conn, filings, classify_event_classes, compute_d0_close_date)
+            except SinIndiceDelDia as exc:
+                # Antes contaba como "día fallido": ruido en cada festivo que
+                # escondía los fallos reales (H-30).
+                sin_indice += 1
+                logger.info("%s", exc)
             except Exception as exc:
                 fallidos += 1
                 if primer_error is None:
@@ -494,7 +515,10 @@ def backfill_range(start: date, end: date) -> None:
         day += timedelta(days=1)
     if fallidos:
         logger.warning("Primer fallo del backfill — %s", primer_error)
-    logger.info("Backfill completo: %d eventos insertados/actualizados, %d días fallidos", total, fallidos)
+    logger.info(
+        "Backfill completo: %d eventos insertados/actualizados, %d días fallidos, %d días sin índice de EDGAR",
+        total, fallidos, sin_indice,
+    )
 
 
 if __name__ == "__main__":

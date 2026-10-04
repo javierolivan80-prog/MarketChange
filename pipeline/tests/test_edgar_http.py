@@ -70,7 +70,7 @@ def test_corta_la_descarga_al_acabar_la_cabecera(monkeypatch):
     """EL test que justifica la función: con 5 MB de anexos detrás, no se
     deben transferir 5 MB para leer 4 líneas."""
     resp = _FakeStreamResponse(_fake_submission("ITEM INFORMATION:\t\t2.02\n", cuerpo_kb=5000))
-    monkeypatch.setattr(edgar_http.requests, "get", lambda *a, **kw: resp)
+    monkeypatch.setattr(edgar_http, "_get", lambda *a, **kw: resp)
 
     texto = edgar_http.throttled_get_header("https://sec.gov/x.txt")
 
@@ -87,7 +87,7 @@ def test_devuelve_la_cabecera_entera_aunque_quepa_en_varios_trozos(monkeypatch):
         "ITEM INFORMATION:\t\t2.02\nITEM INFORMATION:\t\t9.01\n", cuerpo_kb=100
     )
     resp = _FakeStreamResponse(cuerpo, chunk_size_out=16)
-    monkeypatch.setattr(edgar_http.requests, "get", lambda *a, **kw: resp)
+    monkeypatch.setattr(edgar_http, "_get", lambda *a, **kw: resp)
 
     texto = edgar_http.throttled_get_header("https://sec.gov/x.txt")
 
@@ -100,7 +100,7 @@ def test_detecta_el_marcador_partido_entre_dos_trozos(monkeypatch):
     partido justo en la frontera pasa desapercibido y la descarga sigue hasta
     el tope de bytes. Con trozos de 5 bytes el marcador se parte seguro."""
     resp = _FakeStreamResponse(_fake_submission("ITEM INFORMATION:\t\t2.02\n", cuerpo_kb=300), chunk_size_out=5)
-    monkeypatch.setattr(edgar_http.requests, "get", lambda *a, **kw: resp)
+    monkeypatch.setattr(edgar_http, "_get", lambda *a, **kw: resp)
 
     edgar_http.throttled_get_header("https://sec.gov/x.txt")
 
@@ -114,7 +114,7 @@ def test_sin_marcador_corta_por_tope_de_bytes_en_vez_de_fallar(monkeypatch):
     Items, scrape_day vuelca la cabecera al log)."""
     sin_marcador = "ACCESSION NUMBER:\t\t0001234567-26-000123\n" + ("Y" * 1024 + "\n") * 2000
     resp = _FakeStreamResponse(sin_marcador)
-    monkeypatch.setattr(edgar_http.requests, "get", lambda *a, **kw: resp)
+    monkeypatch.setattr(edgar_http, "_get", lambda *a, **kw: resp)
 
     texto = edgar_http.throttled_get_header("https://sec.gov/x.txt")
 
@@ -132,7 +132,7 @@ def test_reintenta_ante_fallo_de_red_y_acaba_devolviendo_la_cabecera(monkeypatch
             raise edgar_http.requests.RequestException("conexión cortada")
         return _FakeStreamResponse(_fake_submission("ITEM INFORMATION:\t\t2.02\n", cuerpo_kb=10))
 
-    monkeypatch.setattr(edgar_http.requests, "get", _get)
+    monkeypatch.setattr(edgar_http, "_get", _get)
 
     texto = edgar_http.throttled_get_header("https://sec.gov/x.txt")
 
@@ -144,7 +144,7 @@ def test_falla_ruidosamente_si_no_hay_manera(monkeypatch):
     def _get(*a, **kw):
         raise edgar_http.requests.RequestException("caída")
 
-    monkeypatch.setattr(edgar_http.requests, "get", _get)
+    monkeypatch.setattr(edgar_http, "_get", _get)
 
     with pytest.raises(RuntimeError, match="No se pudo descargar la cabecera"):
         edgar_http.throttled_get_header("https://sec.gov/x.txt")
@@ -168,7 +168,7 @@ def test_no_reintenta_un_error_permanente(monkeypatch, status):
         intentos["n"] += 1
         return _FakeStreamResponse("", status_code=status)
 
-    monkeypatch.setattr(edgar_http.requests, "get", _get)
+    monkeypatch.setattr(edgar_http, "_get", _get)
 
     with pytest.raises(edgar_http.PermanentHTTPError, match=str(status)):
         edgar_http.throttled_get("https://sec.gov/edgar/data/1/x.txt")
@@ -188,7 +188,7 @@ def test_si_reintenta_los_4xx_que_son_transitorios(monkeypatch, status):
             return _FakeStreamResponse("", status_code=status)
         return _FakeStreamResponse(_fake_submission("ITEM INFORMATION:\t\t2.02\n", cuerpo_kb=1))
 
-    monkeypatch.setattr(edgar_http.requests, "get", _get)
+    monkeypatch.setattr(edgar_http, "_get", _get)
 
     texto = edgar_http.throttled_get_header("https://sec.gov/x.txt")
 
@@ -200,7 +200,7 @@ def test_el_error_permanente_lo_sigue_cazando_el_caller(monkeypatch):
     """scrape_day captura RuntimeError para saltarse un filing suelto; el nuevo
     error tiene que seguir cayendo ahí y no reventar la ingesta entera."""
     monkeypatch.setattr(
-        edgar_http.requests, "get", lambda *a, **kw: _FakeStreamResponse("", status_code=404)
+        edgar_http, "_get", lambda *a, **kw: _FakeStreamResponse("", status_code=404)
     )
 
     with pytest.raises(RuntimeError):
@@ -246,7 +246,7 @@ def test_throttled_get_respeta_retry_after_de_un_429(monkeypatch):
             return _FakeStreamResponse("ok", headers={"Retry-After": "3"}, status_code=429)
         return _FakeStreamResponse("ok", status_code=200)
 
-    monkeypatch.setattr(edgar_http.requests, "get", _get)
+    monkeypatch.setattr(edgar_http, "_get", _get)
 
     edgar_http.throttled_get("https://sec.gov/edgar/data/1/x.txt")
 
@@ -266,9 +266,42 @@ def test_throttled_get_sin_retry_after_usa_el_backoff_fijo(monkeypatch):
             return _FakeStreamResponse("", status_code=429)
         return _FakeStreamResponse("ok", status_code=200)
 
-    monkeypatch.setattr(edgar_http.requests, "get", _get)
+    monkeypatch.setattr(edgar_http, "_get", _get)
 
     edgar_http.throttled_get("https://sec.gov/edgar/data/1/x.txt")
 
     assert llamadas["n"] == 2
     assert 2 in esperas
+
+# --- Sesión y throttle por intervalo (BUGS_REPORT.md H-29) -------------------
+
+
+def test_la_sesion_lleva_el_user_agent_de_la_sec():
+    assert edgar_http._SESION.headers["User-Agent"] == edgar_http.HEADERS["User-Agent"]
+
+
+def test_solo_se_espera_lo_que_falta_del_intervalo(monkeypatch):
+    """La petición anterior empezó hace 0,05 s: con un intervalo de 0,125 s
+    solo hay que esperar 0,075 s, no el intervalo entero encima de la latencia."""
+    esperas: list[float] = []
+    monkeypatch.setattr(edgar_http.time, "sleep", lambda s: esperas.append(s))
+    monkeypatch.setattr(edgar_http, "_RATE_LIMIT_DELAY", 0.125)
+    monkeypatch.setattr(edgar_http, "_reloj", lambda: 10.05)
+    monkeypatch.setattr(edgar_http, "_ultimo_inicio", 10.0)
+
+    edgar_http._esperar_turno()
+
+    assert esperas == [pytest.approx(0.075)]
+
+
+def test_si_ya_paso_el_intervalo_no_se_espera(monkeypatch):
+    esperas: list[float] = []
+    monkeypatch.setattr(edgar_http.time, "sleep", lambda s: esperas.append(s))
+    monkeypatch.setattr(edgar_http, "_RATE_LIMIT_DELAY", 0.125)
+    monkeypatch.setattr(edgar_http, "_reloj", lambda: 11.0)
+    monkeypatch.setattr(edgar_http, "_ultimo_inicio", 10.0)
+
+    edgar_http._esperar_turno()
+
+    assert esperas == []
+    assert edgar_http._ultimo_inicio == 11.0
