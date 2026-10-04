@@ -29,6 +29,7 @@ test("la caída máxima nunca lleva signo de ganancia", () => {
 test("formatDate no depende de la zona horaria", () => {
   assert.equal(formatDate("2026-09-01"), "01/09/2026");
   assert.equal(formatDate(null), "—");
+  assert.equal(formatDate("2026-09-01", "en"), "Sep 1, 2026");
 });
 
 test("formatShare no pone signo a una proporción", () => {

@@ -8,10 +8,12 @@
 // de compute_calibration_diagnostics para ECE).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import type { ConfidenceBucket } from "@/lib/queries";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
+  const t = useT();
   if (buckets.length === 0) {
-    return <div className="flex h-56 items-center justify-center text-sm italic text-text-tertiary">Sin datos suficientes.</div>;
+    return <div className="flex h-56 items-center justify-center text-sm italic text-text-tertiary">{t("Sin datos suficientes.", "Not enough data.")}</div>;
   }
 
   const points = buckets.map((b) => ({ confidence: b.mean_confidence, hit_rate: b.hit_rate * 100, n: b.n }));
@@ -25,11 +27,11 @@ export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="confidence" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} name="Confianza declarada" />
-          <YAxis dataKey="hit_rate" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} width={44} name="Acierto real" />
+          <XAxis dataKey="confidence" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} name={t("Confianza declarada", "Stated confidence")} />
+          <YAxis dataKey="hit_rate" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} width={44} name={t("Acierto real", "Actual win rate")} />
           <ZAxis dataKey="n" range={[30, 300]} name="n" />
           <Tooltip
-            formatter={(value, name) => [name === "n" ? value : `${Number(value).toFixed(1)}%`, name === "hit_rate" ? "Acierto real" : name === "confidence" ? "Confianza media" : "n"]}
+            formatter={(value, name) => [name === "n" ? value : `${Number(value).toFixed(1)}%`, name === "hit_rate" ? t("Acierto real", "Actual win rate") : name === "confidence" ? t("Confianza media", "Average confidence") : "n"]}
           />
           <Line data={diagonal} dataKey="hit_rate" stroke="#9ca3af" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
           <Scatter data={points} fill="#2563eb" fillOpacity={0.7} line={{ stroke: "#2563eb", strokeWidth: 1.5 }} lineType="joint" />

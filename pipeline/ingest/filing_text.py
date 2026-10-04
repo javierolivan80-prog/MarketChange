@@ -49,6 +49,12 @@ _PRESS_RELEASE_EXHIBIT_PREFIX = "EX-99"
 
 MAX_ATTEMPTS = 3  # intentos fallidos antes de dejar un evento sin texto para siempre
 MAX_TEXT_CHARS = 8000  # tope de longitud guardada — controla coste de prompt en Bull/Bear/Judge
+# Solo se extrae texto de eventos recientes: la IA analiza lo más nuevo
+# primero y novelty.py mira como mucho 180 días atrás. Sin este tope, la
+# pasada nocturna (más recientes primero) acabaría recorriendo hacia atrás
+# los ~220k eventos del histórico a 1000/noche, ~3 MB comprimidos por noche,
+# y llenaría una base de datos de plan gratuito en pocos meses.
+MAX_EVENT_AGE_DAYS = 200
 
 # Bajo este umbral (fracción de MAX_TEXT_CHARS), el corte por frase se
 # descarta y se cae al corte duro de siempre (IMPROVEMENT_PLAN.md M8): un
@@ -176,10 +182,15 @@ def populate_missing_filing_text(conn, limit: int = 200) -> int:
     # YA; el histórico se completa en las pasadas siguientes.
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT event_id, source_url, event_class FROM events "
-            "WHERE source = 'EDGAR' AND filing_text IS NULL AND filing_text_attempts < %s "
-            "ORDER BY d0_close_date DESC, event_id DESC LIMIT %s",
-            (MAX_ATTEMPTS, limit),
+            "SELECT e.event_id, e.source_url, e.event_class FROM events e "
+            "LEFT JOIN universe u ON u.cik = e.cik "
+            "WHERE e.source = 'EDGAR' AND e.filing_text IS NULL AND e.filing_text_attempts < %s "
+            "AND e.d0_close_date >= current_date - %s "
+            # Fuera del universo invertible la IA no analiza: no hace falta texto
+            # (las empresas aún sin evaluar, sin capitalización, sí entran).
+            "AND (u.in_investable_universe OR u.market_cap_last_usd IS NULL) "
+            "ORDER BY e.d0_close_date DESC, e.event_id DESC LIMIT %s",
+            (MAX_ATTEMPTS, MAX_EVENT_AGE_DAYS, limit),
         )
         pending = cur.fetchall()
 

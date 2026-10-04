@@ -33,12 +33,14 @@ no se ha podido correr contra el servidor real desde aquí. Lanzar contra
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import date, timedelta
 
 import pandas as pd
 
 from pipeline import config
+from pipeline.ingest.ticker_map import is_tradable_symbol  # noqa: F401 — también se usa desde fuera
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,17 @@ PAUSE_BETWEEN_BATCHES_S = 5
 MAX_RETRIES = 4
 BACKOFF_BASE_S = 2         # 2, 4, 8, 16 — misma política que el resto del proyecto
 DOWNLOAD_THREADS = 8       # descargas en paralelo dentro de un lote (ver _descargar_lote_con_reintentos)
+# Tope de tamaño de la base de datos (MB) por encima del cual se deja de
+# descargar: mejor precios incompletos que una base de datos llena (el plan
+# gratuito de Neon/Supabase ronda los 500 MB). Mismo valor y variable que la
+# carga de histórico (ops_history_prices.py).
+MAX_DB_MB = float(os.environ.get("HISTORY_MAX_DB_MB", "400"))
+
+def database_mb(conn) -> float:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_database_size(current_database()) AS b")
+        row = cur.fetchone()
+    return (row["b"] if isinstance(row, dict) else row[0]) / 1e6
 
 
 def _retry_with_backoff(func, description: str):
@@ -277,6 +290,10 @@ def backfill_tickers(tickers: list[str], start: date, end: date, forzar: bool = 
 
     conn = get_connection()
     expected_days = _trading_days_expected(start, end)
+    descartados = [t for t in tickers if not t.startswith("^") and not is_tradable_symbol(t)]
+    if descartados:
+        logger.info("%d símbolos que no son acciones ordinarias operables, sin descargar (p. ej. %s)", len(descartados), ", ".join(descartados[:8]))
+        tickers = [t for t in tickers if t.startswith("^") or is_tradable_symbol(t)]
 
     if forzar:
         a_pedir, al_dia = [(t, start) for t in tickers], []
@@ -298,7 +315,8 @@ def backfill_tickers(tickers: list[str], start: date, end: date, forzar: bool = 
 
     for desde, tickers_desde in sorted(por_fecha.items()):
         logger.info("%d tickers a descargar desde %s", len(tickers_desde), desde)
-        _descargar_grupo(conn, tickers_desde, desde, end, expected_days)
+        if not _descargar_grupo(conn, tickers_desde, desde, end, expected_days, max_db_mb=MAX_DB_MB):
+            return
     logger.info("Backfill de precios completo para %d tickers", len(tickers))
 
 
@@ -322,8 +340,18 @@ def confirmar_forzar(n_tickers: int, start: date, end: date, *, leer_respuesta=i
     return respuesta.strip().lower() == "si"
 
 
-def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_days: set[date]) -> None:
+def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_days: set[date], max_db_mb: float | None = None) -> bool:
+    """Descarga por lotes. Devuelve False si se paró por el tope de tamaño de
+    la base de datos (max_db_mb), True si terminó."""
     for i in range(0, len(tickers), BATCH_SIZE):
+        if max_db_mb is not None:
+            size = database_mb(conn)
+            if size > max_db_mb:
+                logger.warning(
+                    "Base de datos en %.0f MB (> %.0f): paro la descarga de precios para no llenarla. "
+                    "Sube HISTORY_MAX_DB_MB si el plan lo permite.", size, max_db_mb,
+                )
+                return False
         batch = tickers[i : i + BATCH_SIZE]
         logger.info("Lote %d-%d de %d tickers", i, i + len(batch), len(tickers))
 
@@ -357,6 +385,7 @@ def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_
             _store_with_gap_detection(conn, ticker, df, expected_days)
 
         time.sleep(PAUSE_BETWEEN_BATCHES_S)
+    return True
 
 
 def _flag_full_gap(conn, ticker: str, start: date, end: date) -> None:
@@ -376,28 +405,32 @@ def _flag_full_gap(conn, ticker: str, start: date, end: date) -> None:
 
 
 def _store_with_gap_detection(conn, ticker: str, df: pd.DataFrame, expected_days: set[date]) -> None:
+    """Guarda las filas de un ticker de una vez (executemany) en vez de un
+    INSERT por fila: contra una base de datos remota cada viaje cuesta
+    decenas de milisegundos, y fila a fila un lote de 50 tickers x 350 días
+    tardaba ~15 minutos (run 37119212595 se quedó sin tiempo con 3.831
+    tickers). Los huecos (días esperados que no vinieron) se marcan igual que
+    antes, sin inventar precios."""
     df = aplanar_columnas(df, ticker)  # idempotente: no-op si ya viene plano
     _validar_columnas(df, ticker)
     present_days = {d.date() for d in df.index}
+    rows = []
+    for idx, row in df.iterrows():
+        close_raw = float(row["Close"])
+        adj_close = float(row["Adj Close"])
+        adj_factor = adj_close / close_raw if close_raw else None
+        # high/low: proxy de spread (abstention_engine.py); open: entrada
+        # "apertura D+1" del backtest de cartera (portfolio_simulator.py).
+        rows.append(
+            (ticker, idx.date(), float(row["Open"]), close_raw, float(row["High"]), float(row["Low"]), adj_factor, int(row["Volume"]))
+        )
+    # Días esperados dentro del rango de ESTE ticker que no vinieron en absoluto:
+    # se marcan como huecos sin inventar una fila de precio.
+    ticker_range_expected = {d for d in expected_days if min(present_days, default=d) <= d <= max(present_days, default=d)}
+    missing = sorted(ticker_range_expected - present_days)
     with conn.cursor() as cur:
-        for idx, row in df.iterrows():
-            d = idx.date()
-            close_raw = float(row["Close"])
-            adj_close = float(row["Adj Close"])
-            adj_factor = adj_close / close_raw if close_raw else None
-            # high_raw/low_raw añadidos en Fase 2: los usa
-            # analyze/abstention_engine.py como proxy de spread/liquidez
-            # ((high-low)/close) — no hay bid-ask real gratis (AUDIT_LEAN.md
-            # §2.1). yf.download con auto_adjust=False ya trae High/Low sin
-            # petición adicional.
-            high_raw = float(row["High"])
-            low_raw = float(row["Low"])
-            # open_raw añadido para el backtest de cartera
-            # (backtest/portfolio_simulator.py): la entrada real es "apertura
-            # D+1" — ningún backfill anterior había pedido este precio porque
-            # compute_car() y el backtest simple de la Fase 1 solo usan cierres.
-            open_raw = float(row["Open"])
-            cur.execute(
+        if rows:
+            cur.executemany(
                 """
                 INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE)
@@ -410,22 +443,17 @@ def _store_with_gap_detection(conn, ticker: str, df: pd.DataFrame, expected_days
                     volume = EXCLUDED.volume,
                     captured_at = now()
                 """,
-                (ticker, d, open_raw, close_raw, high_raw, low_raw, adj_factor, int(row["Volume"])),
+                rows,
             )
-        # Días esperados dentro del rango de ESTE ticker que no vinieron en absoluto:
-        # se marcan como huecos sin inventar una fila de precio.
-        ticker_range_expected = {d for d in expected_days if min(present_days, default=d) <= d <= max(present_days, default=d)}
-        missing = ticker_range_expected - present_days
-        for d in missing:
-            cur.execute(
+        if missing:
+            cur.executemany(
                 """
                 INSERT INTO prices (ticker, trade_date, close_raw, adj_factor, volume, survivorship_warning)
                 VALUES (%s, %s, NULL, NULL, NULL, TRUE)
                 ON CONFLICT (ticker, trade_date) DO UPDATE SET survivorship_warning = TRUE
                 """,
-                (ticker, d),
+                [(ticker, d) for d in missing],
             )
-        if missing:
             logger.warning("WARNING — posible data gap: %s tiene %d días faltantes dentro de su rango", ticker, len(missing))
     conn.commit()
 

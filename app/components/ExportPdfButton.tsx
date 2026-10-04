@@ -17,11 +17,18 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 import type { PortfolioReport, StrategyVersion } from "@/lib/queries";
+import { intlTag } from "@/lib/i18n";
+import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 
 const VERSIONS: StrategyVersion[] = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"];
 
 export function ExportPdfButton({ report }: { report: PortfolioReport }) {
   const [busy, setBusy] = useState(false);
+  const t = useT();
+  const locale = useLocale();
+  const vl = (v: StrategyVersion) => versionLabel(v, locale);
+  const ecl = (c: string | null | undefined) => eventClassLabel(c, locale);
+  const erl = (r: string | null | undefined) => exitReasonLabel(r, locale);
 
   async function handleExport() {
     setBusy(true);
@@ -38,11 +45,18 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
     let y = 15;
 
     doc.setFontSize(16);
-    doc.text("MarketChange — Informe de resultados", 14, y);
+    doc.text(t("MarketChange — Informe de resultados", "MarketChange — Performance report"), 14, y);
     y += 7;
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text(`Generado el ${new Date().toLocaleDateString("es-ES")} · Rentabilidades pasadas no garantizan resultados futuros.`, 14, y);
+    doc.text(
+      `${t("Generado el", "Generated on")} ${new Date().toLocaleDateString(intlTag(locale))} · ${t(
+        "Rentabilidades pasadas no garantizan resultados futuros.",
+        "Past performance does not guarantee future results.",
+      )}`,
+      14,
+      y,
+    );
     y += 8;
 
     // El veredicto interno de go/no-go del motor (report.recommendation) no
@@ -51,15 +65,15 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
 
     autoTable(doc, {
       startY: y,
-      head: [["Métrica", ...VERSIONS.map(versionLabel)]],
+      head: [[t("Métrica", "Metric"), ...VERSIONS.map(vl)]],
       body: [
-        ["Operaciones", ...VERSIONS.map((v) => String(report.versions[v].trade_metrics.total_trades))],
-        ["Acierto", ...VERSIONS.map((v) => fmtPct(report.versions[v].trade_metrics.win_rate))],
-        ["Resultado total", ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.total_return))],
+        [t("Operaciones", "Trades"), ...VERSIONS.map((v) => String(report.versions[v].trade_metrics.total_trades))],
+        [t("Acierto", "Win rate"), ...VERSIONS.map((v) => fmtPct(report.versions[v].trade_metrics.win_rate))],
+        [t("Resultado total", "Total return"), ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.total_return))],
         ["Sharpe", ...VERSIONS.map((v) => fmtNum(report.versions[v].equity_metrics.sharpe_ratio))],
-        ["Peor caída", ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.max_drawdown))],
-        ["Calibración", ...VERSIONS.map((v) => fmtNum(report.versions[v].calibration.calibration_score))],
-        ["Calibración (correl.)", ...VERSIONS.map((v) => fmtNum(report.versions[v].confidence_calibration.correlation))],
+        [t("Peor caída", "Max drawdown"), ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.max_drawdown))],
+        [t("Calibración", "Calibration"), ...VERSIONS.map((v) => fmtNum(report.versions[v].calibration.calibration_score))],
+        [t("Calibración (correl.)", "Calibration (correl.)"), ...VERSIONS.map((v) => fmtNum(report.versions[v].confidence_calibration.correlation))],
       ],
       styles: { fontSize: 8 },
       headStyles: { fillColor: [30, 41, 59] },
@@ -74,7 +88,7 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
         y = 15;
       }
       doc.setFontSize(11);
-      doc.text(`${versionLabel(version)} — evolución de la rentabilidad`, 14, y);
+      doc.text(`${vl(version)} — ${t("evolución de la rentabilidad", "performance over time")}`, 14, y);
       y += 2;
       const curve = v.equity_curve;
       const balances = curve.map((p) => p.balance);
@@ -85,7 +99,7 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
         startY: y + 2,
         // En % sobre el punto de partida, no en dólares: el capital del
         // backtest es una base de cálculo, no dinero de nadie.
-        head: [["Rentabilidad final", "Máximo alcanzado", "Mínimo alcanzado"]],
+        head: [[t("Rentabilidad final", "Final return"), t("Máximo alcanzado", "Highest point"), t("Mínimo alcanzado", "Lowest point")]],
         body: [[
           fmtPct(v.equity_metrics.total_return),
           start && peak !== null ? fmtPct(peak / start - 1) : "—",
@@ -98,24 +112,24 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
       y = (doc as any).lastAutoTable.finalY + 4;
 
       doc.setFontSize(9);
-      doc.text(`Top 5 ganadores (${versionLabel(version)})`, 14, y);
+      doc.text(`${t("Top 5 ganadores", "Top 5 winners")} (${vl(version)})`, 14, y);
       y += 2;
       autoTable(doc, {
         startY: y + 2,
-        head: [["Ticker", "Tipo", "Salida", "Resultado %"]],
-        body: v.top_10_winners.slice(0, 5).map((t) => [t.ticker ?? "—", eventClassLabel(t.event_class), exitReasonLabel(t.exit_reason), `${t.pnl_pct.toFixed(2)}%`]),
+        head: [["Ticker", t("Tipo", "Type"), t("Salida", "Exit"), t("Resultado %", "Result %")]],
+        body: v.top_10_winners.slice(0, 5).map((tr) => [tr.ticker ?? "—", ecl(tr.event_class), erl(tr.exit_reason), `${tr.pnl_pct.toFixed(2)}%`]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [22, 101, 52] },
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       y = (doc as any).lastAutoTable.finalY + 4;
 
-      doc.text(`Top 5 perdedores (${versionLabel(version)})`, 14, y);
+      doc.text(`${t("Top 5 perdedores", "Top 5 losers")} (${vl(version)})`, 14, y);
       y += 2;
       autoTable(doc, {
         startY: y + 2,
-        head: [["Ticker", "Tipo", "Salida", "Resultado %"]],
-        body: v.top_10_losers.slice(0, 5).map((t) => [t.ticker ?? "—", eventClassLabel(t.event_class), exitReasonLabel(t.exit_reason), `${t.pnl_pct.toFixed(2)}%`]),
+        head: [["Ticker", t("Tipo", "Type"), t("Salida", "Exit"), t("Resultado %", "Result %")]],
+        body: v.top_10_losers.slice(0, 5).map((tr) => [tr.ticker ?? "—", ecl(tr.event_class), erl(tr.exit_reason), `${tr.pnl_pct.toFixed(2)}%`]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [153, 27, 27] },
       });
@@ -124,17 +138,17 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
 
       const eventTypeRows = Object.values(v.metrics_by_event_type);
       if (eventTypeRows.length > 0) {
-        doc.text(`Resultado por tipo de evento (${versionLabel(version)})`, 14, y);
+        doc.text(`${t("Resultado por tipo de evento", "Results by event type")} (${vl(version)})`, 14, y);
         y += 2;
         autoTable(doc, {
           startY: y + 2,
-          head: [["Tipo", "N", "Acierto", "Retorno medio", "n<20"]],
+          head: [[t("Tipo", "Type"), "N", t("Acierto", "Win rate"), t("Retorno medio", "Average return"), "n<20"]],
           body: eventTypeRows.map((r) => [
-            eventClassLabel(r.event_type),
+            ecl(r.event_type),
             String(r.n_trades),
             fmtPct(r.win_rate),
             `${r.avg_return.toFixed(2)}%`,
-            r.insufficient_sample ? "sí" : "no",
+            r.insufficient_sample ? t("sí", "yes") : "no",
           ]),
           styles: { fontSize: 8 },
           headStyles: { fillColor: [30, 41, 59] },
@@ -144,12 +158,12 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
       }
     }
 
-    doc.save(`marketchange-resultados-${new Date().toISOString().slice(0, 10)}.pdf`);
+    doc.save(`marketchange-${t("resultados", "results")}-${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
   return (
     <Button onClick={handleExport} disabled={busy} aria-live="polite">
-      {busy ? "Generando…" : "Exportar informe (PDF)"}
+      {busy ? t("Generando…", "Generating…") : t("Exportar informe (PDF)", "Export report (PDF)")}
     </Button>
   );
 }

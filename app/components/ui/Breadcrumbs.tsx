@@ -1,11 +1,15 @@
+"use client";
+
 // Breadcrumbs.tsx — ruta de navegación en las páginas de detalle. La barra de
 // pestañas dice en qué sección estás; esto dice en qué punto DENTRO de ella
 // (Señales › STARK) y da un camino de vuelta a cada nivel.
 import Link from "next/link";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function Breadcrumbs({ items }: { items: { label: string; href?: string }[] }) {
+  const t = useT();
   return (
-    <nav aria-label="Ruta" className="mb-3 text-sm">
+    <nav aria-label={t("Ruta", "Breadcrumb")} className="mb-3 text-sm">
       <ol className="flex flex-wrap items-center gap-1.5 text-text-secondary">
         {items.map((item, i) => (
           <li key={`${item.label}-${i}`} className="flex items-center gap-1.5">

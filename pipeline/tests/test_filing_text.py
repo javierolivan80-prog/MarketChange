@@ -203,7 +203,7 @@ class TestPopulateAgainstRealPostgres:
         yield
         self.conn.close()
 
-    def _seed_event(self, event_class="8K_2.02_EARNINGS", source="EDGAR"):
+    def _seed_event(self, event_class="8K_2.02_EARNINGS", source="EDGAR", days_ago=30):
         with self.conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
@@ -214,10 +214,11 @@ class TestPopulateAgainstRealPostgres:
                 INSERT INTO events (cik, ticker, source, is_satellite, event_class, item_codes,
                     accession_number, source_url, filed_at, d0_close_date, classification_method,
                     classification_confidence, raw_text_hash)
-                VALUES ('1','ACME',%s,FALSE,%s,ARRAY['2.02'],'acc1','https://www.sec.gov/x','2024-03-15','2024-03-15','RULE',1.0,'h1')
+                VALUES ('1','ACME',%s,FALSE,%s,ARRAY['2.02'],'acc1','https://www.sec.gov/x',
+                        current_date - %s, current_date - %s,'RULE',1.0,'h1')
                 RETURNING event_id
                 """,
-                (source, event_class),
+                (source, event_class, days_ago, days_ago),
             )
             event_id = cur.fetchone()["event_id"]
         self.conn.commit()
@@ -267,7 +268,7 @@ class TestPopulateAgainstRealPostgres:
                     accession_number, source_url, filed_at, d0_close_date, classification_method,
                     classification_confidence, raw_text_hash)
                 VALUES ('1','ACME','EDGAR',FALSE,'8K_2.02_EARNINGS',ARRAY['2.02'],'acc2','https://www.sec.gov/ok',
-                        '2024-06-14','2024-06-14','RULE',1.0,'h2')
+                        current_date - 10, current_date - 10,'RULE',1.0,'h2')
                 RETURNING event_id
                 """
             )
@@ -338,6 +339,23 @@ class TestPopulateAgainstRealPostgres:
         assert row["filing_text"] is None
         assert row["filing_text_attempts"] == 1
 
+    def test_populate_ignora_eventos_antiguos(self):
+        """Más allá de MAX_EVENT_AGE_DAYS no se descarga texto: la IA no los
+        analiza y llenarían una base de datos de plan gratuito."""
+        from pipeline.ingest.filing_text import MAX_EVENT_AGE_DAYS, populate_missing_filing_text
+
+        self._seed_event(days_ago=MAX_EVENT_AGE_DAYS + 30)
+        assert populate_missing_filing_text(self.conn) == 0
+
+    def test_populate_ignora_empresas_fuera_del_universo_invertible(self):
+        from pipeline.ingest.filing_text import populate_missing_filing_text
+
+        self._seed_event()
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE universe SET in_investable_universe = FALSE, market_cap_last_usd = 1e8 WHERE cik = '1'")
+        self.conn.commit()
+        assert populate_missing_filing_text(self.conn) == 0
+
     def test_populate_procesa_los_mas_recientes_primero(self):
         """ORDER BY d0_close_date DESC: con limit=1 debe tocar siempre el
         evento con la fecha más reciente, no el que se insertó primero."""
@@ -351,7 +369,7 @@ class TestPopulateAgainstRealPostgres:
                     accession_number, source_url, filed_at, d0_close_date, classification_method,
                     classification_confidence, raw_text_hash)
                 VALUES ('1','ACME','EDGAR',FALSE,'8K_2.02_EARNINGS',ARRAY['2.02'],'acc2','https://www.sec.gov/x',
-                        '2026-01-10','2026-01-10','RULE',1.0,'h2')
+                        current_date - 5, current_date - 5,'RULE',1.0,'h2')
                 RETURNING event_id
                 """
             )

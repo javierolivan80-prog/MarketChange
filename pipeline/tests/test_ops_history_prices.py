@@ -30,3 +30,12 @@ def test_ticker_al_dia_no_pide_nada():
 def test_fin_nunca_pasa_de_hoy():
     gaps = plan_gaps({"X": (date(2026, 8, 10), date(2026, 10, 2))}, {}, TODAY)
     assert gaps == [("X", date(2026, 8, 1), TODAY)]
+
+
+def test_simbolos_operables():
+    from pipeline.ingest.yfinance_backfill import is_tradable_symbol
+
+    for ok in ["AAPL", "GOOGL", "MRNA", "F", "BRKB"]:
+        assert is_tradable_symbol(ok), ok
+    for no in ["PCG-PB", "BRK.B", "CELG-RI", "ACMRW", "SPACU", "ABCDR", "XYZQQ", "BEIGF", "", "^VIX"]:
+        assert not is_tradable_symbol(no), no

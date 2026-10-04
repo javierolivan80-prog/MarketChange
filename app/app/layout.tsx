@@ -1,13 +1,21 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Disclaimer } from "@/components/ui/Disclaimer";
+import { LocaleProvider } from "@/components/i18n/LocaleProvider";
+import { getLocale, getT } from "@/lib/locale";
 
-export const metadata: Metadata = {
-  title: { default: "MarketChange", template: "%s · MarketChange" },
-  description: "Señales sobre filings de la SEC y decisiones de la FDA: qué ha pasado, si el mercado ya lo sabía y si merece la pena operarlo.",
-  // Panel privado de un sistema en validación: no tiene sentido que lo indexen.
-  robots: { index: false, follow: false },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT();
+  return {
+    title: { default: "MarketChange", template: "%s · MarketChange" },
+    description: t(
+      "Señales sobre filings de la SEC y decisiones de la FDA: qué ha pasado, si el mercado ya lo sabía y si merece la pena operarlo.",
+      "Signals from SEC filings and FDA decisions: what happened, whether the market already knew, and whether it is worth trading.",
+    ),
+    // Panel privado de un sistema en validación: no tiene sentido que lo indexen.
+    robots: { index: false, follow: false },
+  };
+}
 
 // Script sin-flash: fija la clase .dark en <html> ANTES del primer pintado,
 // a partir de la preferencia guardada o, si no hay ninguna, oscuro por
@@ -26,19 +34,22 @@ const THEME_INIT_SCRIPT = `
 })();
 `;
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
   return (
-    <html lang="es" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="antialiased font-sans">
-        {children}
-        <Disclaimer />
+        <LocaleProvider locale={locale}>
+          {children}
+          <Disclaimer />
+        </LocaleProvider>
       </body>
     </html>
   );

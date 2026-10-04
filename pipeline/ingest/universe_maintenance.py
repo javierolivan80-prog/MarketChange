@@ -157,14 +157,19 @@ def price_tickers(conn) -> list[str]:
     días de precio cada noche llenaría la base de datos sin servir a ningún
     evento; sus precios históricos los baja, acotados, ops_history_prices."""
     from pipeline.analyze.enrichment import BENCHMARK_TICKERS
+    from pipeline.ingest.yfinance_backfill import is_tradable_symbol
 
     with conn.cursor() as cur:
+        # Los más activos primero: si el tope de tamaño de la base de datos
+        # corta la descarga, que se queden fuera las empresas con menos eventos.
         cur.execute(
-            "SELECT DISTINCT ticker FROM events WHERE ticker IS NOT NULL AND d0_close_date >= %s",
+            "SELECT ticker, count(*) AS n FROM events WHERE ticker IS NOT NULL AND d0_close_date >= %s "
+            "GROUP BY ticker ORDER BY count(*) DESC, ticker",
             (date.today() - timedelta(days=PRICE_RECENT_EVENT_DAYS),),
         )
-        tickers = {r["ticker"] for r in cur.fetchall()}
-    return sorted(tickers | set(BENCHMARK_TICKERS))
+        tickers = [r["ticker"] for r in cur.fetchall() if is_tradable_symbol(r["ticker"])]
+    refs = [t for t in BENCHMARK_TICKERS if t not in tickers]
+    return refs + tickers
 
 
 def _fmt_usd(v) -> str:

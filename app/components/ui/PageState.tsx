@@ -6,6 +6,7 @@
 // que ve alguien nuevo — merece ser igual de cuidado en todas partes y decir
 // siempre lo mismo: qué pasa, si es normal, y qué hacer.
 import { Nav } from "@/components/Nav";
+import { getT } from "@/lib/locale";
 
 export function StatePage({ active, title, children }: { active: string; title: string; children: React.ReactNode }) {
   return (
@@ -28,22 +29,24 @@ export function StateBox({ title, children }: { title: string; children?: React.
 
 /** Falta DATABASE_URL: es un problema de despliegue, no del usuario — por eso
  * el mensaje no le habla de variables de entorno (ver RUNBOOK.md §4). */
-export function NotConfigured({ active, title }: { active: string; title: string }) {
+export async function NotConfigured({ active, title }: { active: string; title: string }) {
+  const { t } = await getT();
   return (
     <StatePage active={active} title={title}>
-      <StateBox title="El servicio no está disponible en este momento.">
-        Estamos trabajando en ello. Vuelve a intentarlo en unos minutos.
+      <StateBox title={t("El servicio no está disponible en este momento.", "The service is not available right now.")}>
+        {t("Estamos trabajando en ello. Vuelve a intentarlo en unos minutos.", "We are working on it. Please try again in a few minutes.")}
       </StateBox>
     </StatePage>
   );
 }
 
 /** El pipeline todavía no ha producido el dato que esta pantalla necesita. */
-export function NoDataYet({ active, title, what }: { active: string; title: string; what: string }) {
+export async function NoDataYet({ active, title, what }: { active: string; title: string; what: string }) {
+  const { t } = await getT();
   return (
     <StatePage active={active} title={title}>
       <StateBox title={what}>
-        Los datos se actualizan varias veces al día. Vuelve a consultarlo más tarde.
+        {t("Los datos se actualizan varias veces al día. Vuelve a consultarlo más tarde.", "Data is updated several times a day. Check back later.")}
       </StateBox>
     </StatePage>
   );

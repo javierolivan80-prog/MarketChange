@@ -1,3 +1,5 @@
+"use client";
+
 // Callout.tsx — aviso/nota en línea, con etiqueta de texto en vez de un
 // icono o emoji. "Cero emojis" del brief no es solo estética: en una tabla
 // financiera un glifo de emoji renderiza distinto según SO/fuente y no dice
@@ -10,12 +12,7 @@ const STYLES: Record<string, string> = {
   neutral: "border-border-subtle bg-surface-raised text-text-secondary",
 };
 
-const LABELS: Record<string, string> = {
-  warning: "Aviso",
-  positive: "Resultado",
-  critical: "Crítico",
-  neutral: "Nota",
-};
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function Callout({
   kind,
@@ -26,6 +23,13 @@ export function Callout({
   children: React.ReactNode;
   className?: string;
 }) {
+  const t = useT();
+  const LABELS: Record<string, string> = {
+    warning: t("Aviso", "Warning"),
+    positive: t("Resultado", "Result"),
+    critical: t("Crítico", "Critical"),
+    neutral: t("Nota", "Note"),
+  };
   return (
     <div className={`border px-2 py-1.5 text-xs ${STYLES[kind]} ${className}`}>
       <span className="mr-1 font-semibold uppercase tracking-wide">{LABELS[kind]}:</span>

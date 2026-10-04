@@ -19,3 +19,11 @@ test("motivos de salida y fuentes legibles", () => {
   assert.equal(sourceLabel("FDA_OPENFDA"), "FDA");
   assert.equal(sourceLabel("EDGAR"), "SEC");
 });
+
+test("las etiquetas existen también en inglés", async () => {
+  const { reliability } = await import("./labels");
+  assert.equal(versionLabel("BALANCED", "en"), "Balanced");
+  assert.equal(eventClassLabel("8K_2.02_EARNINGS", "en"), "Earnings");
+  assert.equal(exitReasonLabel("TAKE_PROFIT", "en"), "Target reached");
+  assert.equal(reliability("en").A.title, "High reliability");
+});

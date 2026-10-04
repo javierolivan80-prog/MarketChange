@@ -68,8 +68,13 @@ CREATE TABLE IF NOT EXISTS events (
     UNIQUE (source, accession_number, event_class)
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_class_date ON events (event_class, d0_close_date);
-CREATE INDEX IF NOT EXISTS idx_events_ticker ON events (ticker);
+-- idx_events_class_date (event_class, d0_close_date) e idx_events_ticker
+-- (ticker) eran prefijos exactos de idx_car_results_class_lookup y de
+-- idx_events_ticker_class_for_cache (más abajo): el planificador usa esos
+-- para las mismas consultas. Con ~220k eventos cada índice ocupa varios MB
+-- de un plan gratuito de ~500 MB, así que se borran.
+DROP INDEX IF EXISTS idx_events_class_date;
+DROP INDEX IF EXISTS idx_events_ticker;
 CREATE INDEX IF NOT EXISTS idx_events_hash ON events (raw_text_hash);
 
 -- Columnas de Fase 3 (ingest/filing_text.py), vía ALTER — CREATE TABLE
@@ -105,7 +110,9 @@ CREATE TABLE IF NOT EXISTS prices (
     PRIMARY KEY (ticker, trade_date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_prices_ticker_date ON prices (ticker, trade_date);
+-- Duplicaba la PRIMARY KEY (ticker, trade_date), que ya es un índice
+-- idéntico: solo ocupaba sitio (~1/3 del tamaño de la tabla).
+DROP INDEX IF EXISTS idx_prices_ticker_date;
 
 -- Columnas añadidas en Fase 2, vía ALTER en vez de en el CREATE TABLE de
 -- arriba: `CREATE TABLE IF NOT EXISTS` es un no-op silencioso sobre una tabla

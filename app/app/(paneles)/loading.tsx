@@ -6,10 +6,13 @@
 // raíz envuelve también /senales/[id], y con él la respuesta empieza a
 // enviarse (con estado 200) antes de saber si la señal existe — una señal
 // inexistente devolvía 200 en vez de 404.
-export default function Loading() {
+import { getT } from "@/lib/locale";
+
+export default async function Loading() {
+  const { t } = await getT();
   return (
     <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6" aria-busy="true">
-      <p className="sr-only">Cargando…</p>
+      <p className="sr-only">{t("Cargando…", "Loading…")}</p>
       <div className="mb-6 h-14 border-b border-border-subtle" />
       <div className="mb-3 h-7 w-48 animate-pulse bg-surface-raised motion-reduce:animate-none" />
       <div className="mb-6 h-4 w-80 max-w-full animate-pulse bg-surface-raised motion-reduce:animate-none" />

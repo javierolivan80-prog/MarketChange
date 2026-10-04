@@ -5,10 +5,20 @@
 // que no comparten componente: forzar una unión hubiera significado una
 // prop de "modo" innecesaria para dos usos que no cambian de forma.
 import type { PortfolioEquityPoint } from "@/lib/queries";
+import { makeT, type Locale } from "@/lib/i18n";
 
-export function PortfolioEquityCurve({ points, startingCapital }: { points: PortfolioEquityPoint[]; startingCapital: number }) {
+export function PortfolioEquityCurve({
+  points,
+  startingCapital,
+  locale = "es",
+}: {
+  points: PortfolioEquityPoint[];
+  startingCapital: number;
+  locale?: Locale;
+}) {
+  const t = makeT(locale);
   if (points.length === 0) {
-    return <div className="text-sm italic text-text-tertiary">Sin curva de equity todavía.</div>;
+    return <div className="text-sm italic text-text-tertiary">{t("Sin curva de equity todavía.", "No equity curve yet.")}</div>;
   }
 
   const width = 320;
@@ -52,7 +62,10 @@ export function PortfolioEquityCurve({ points, startingCapital }: { points: Port
         viewBox={`0 0 ${width} ${height}`}
         className="h-auto w-full"
         role="img"
-        aria-label={`Evolución de la rentabilidad acumulada: ${label} al final del periodo`}
+        aria-label={t(
+          `Evolución de la rentabilidad acumulada: ${label} al final del periodo`,
+          `Cumulative return over time: ${label} at the end of the period`,
+        )}
       >
         <line x1={baseX1} y1={baseY} x2={baseX2} y2={baseY} stroke="currentColor" strokeOpacity={0.2} strokeDasharray="4 3" />
         <text x={baseX1} y={Math.max(baseY - 3, 9)} fontSize={8} fill="currentColor" opacity={0.5}>

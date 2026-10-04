@@ -118,6 +118,28 @@ def test_upsert_events_is_idempotent_on_rerun(conn, monkeypatch):
         assert cur.fetchone()["n"] == 1
 
 
+def test_upsert_events_skips_untradable_symbols(conn, monkeypatch):
+    """Un warrant (5 letras acabado en W) no se guarda: sin precios en Yahoo
+    nunca tendría CAR ni análisis, y solo restaría sitio en la base de datos."""
+    monkeypatch.setattr("pipeline.db.connection.resolve_ticker", lambda cik: "ACMEW")
+
+    from pipeline.db.connection import upsert_events, upsert_universe_entries
+    from pipeline.ingest.edgar_scraper import classify_event_classes, compute_d0_close_date
+
+    filing = FakeFiling(
+        accession_number="0001234567-24-000124",
+        cik="1234567",
+        company_name="ACME WIDGETS CORP",
+        form_type="8-K",
+        filed_at=datetime(2024, 3, 15, 9, 0),
+        item_codes=["2.02"],
+        source_url="https://example.com",
+        raw_text_hash="deadbeef",
+    )
+    upsert_universe_entries(conn, [filing])
+    assert upsert_events(conn, [filing], classify_event_classes, compute_d0_close_date) == 0
+
+
 def test_backtest_runs_no_lookahead_constraint_is_enforced(conn, monkeypatch):
     """El CHECK constraint chk_no_lookahead_5d/20d debe rechazar a nivel de BD
     cualquier intento de registrar una salida en o antes de la entrada — defensa

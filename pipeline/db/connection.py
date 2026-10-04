@@ -13,7 +13,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from pipeline import config
-from pipeline.ingest.ticker_map import resolve as resolve_ticker
+from pipeline.ingest.ticker_map import is_tradable_symbol, resolve as resolve_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,11 @@ def upsert_events(
             ticker = resolve_ticker(f.cik)
             if ticker is None:
                 continue  # ver nota en upsert_universe_entries: fuera del universo invertible
+            if not is_tradable_symbol(ticker):
+                # Warrants, unidades, preferentes...: sin precios en Yahoo no
+                # hay CAR ni análisis, y en un plan gratuito de base de datos
+                # (~500 MB) cada fila inútil resta sitio a los precios.
+                continue
             for event_class in classify_fn(f.item_codes):
                 cur.execute(
                     """

@@ -8,10 +8,12 @@
 // la SERIE completa punto a punto, que ese resumen no expone).
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PortfolioEquityPoint } from "@/lib/queries";
+import { useT } from "@/components/i18n/LocaleProvider";
 
 export function DrawdownChart({ equityCurve }: { equityCurve: PortfolioEquityPoint[] }) {
+  const t = useT();
   if (equityCurve.length === 0) {
-    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">Sin datos todavía.</div>;
+    return <div className="flex h-40 items-center justify-center text-sm italic text-text-tertiary">{t("Sin datos todavía.", "No data yet.")}</div>;
   }
 
   let peak = equityCurve[0].balance;
@@ -28,7 +30,7 @@ export function DrawdownChart({ equityCurve }: { equityCurve: PortfolioEquityPoi
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="seq" type="number" domain={["dataMin", "dataMax"]} tick={{ fontSize: 10 }} tickFormatter={(seq: number) => dateBySeq.get(seq) ?? ""} minTickGap={40} />
           <YAxis tick={{ fontSize: 10 }} unit="%" width={40} />
-          <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} labelFormatter={(seq) => `Fecha: ${dateBySeq.get(Number(seq)) ?? seq}`} />
+          <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} labelFormatter={(seq) => `${t("Fecha", "Date")}: ${dateBySeq.get(Number(seq)) ?? seq}`} />
           <Area type="monotone" dataKey="drawdown" stroke="#dc2626" fill="#dc2626" fillOpacity={0.2} strokeWidth={1.5} />
         </AreaChart>
       </ResponsiveContainer>

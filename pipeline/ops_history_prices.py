@@ -70,15 +70,14 @@ def _db_mb(conn) -> float:
 
 def run(conn, benchmark_start: date, max_db_mb: float) -> None:
     from pipeline.analyze.enrichment import BENCHMARK_TICKERS
-    from pipeline.ingest.yfinance_backfill import _descargar_grupo, _trading_days_expected
+    from pipeline.ingest.yfinance_backfill import _descargar_grupo, _trading_days_expected, is_tradable_symbol
 
     today = date.today()
     with conn.cursor() as cur:
-        cur.execute("SELECT ticker, min(d0_close_date) AS a, max(d0_close_date) AS b FROM events GROUP BY ticker")
-        needs = {
-            r["ticker"]: (r["a"] - timedelta(days=PRE_DAYS), min(r["b"] + timedelta(days=POST_DAYS), today))
-            for r in cur.fetchall()
-        }
+        cur.execute("SELECT ticker, min(d0_close_date) AS a, max(d0_close_date) AS b, count(*) AS n FROM events GROUP BY ticker")
+        rows = [r for r in cur.fetchall() if is_tradable_symbol(r["ticker"])]
+        needs = {r["ticker"]: (r["a"] - timedelta(days=PRE_DAYS), min(r["b"] + timedelta(days=POST_DAYS), today)) for r in rows}
+        activity = {r["ticker"]: r["n"] for r in rows}
         cur.execute(
             "SELECT ticker, min(trade_date) AS a, max(trade_date) AS b FROM prices "
             "WHERE close_raw IS NOT NULL GROUP BY ticker"
@@ -97,6 +96,9 @@ def run(conn, benchmark_start: date, max_db_mb: float) -> None:
     # luego del hueco más reciente al más antiguo.
     order = sorted(groups.items(), key=lambda kv: (not any(t in BENCHMARK_TICKERS for t in kv[1]), -kv[0][0].toordinal()))
     for (start, end), tickers in order:
+        # Dentro de cada grupo, los tickers con más eventos primero: si el
+        # freno de tamaño corta, se pierden los menos útiles.
+        tickers.sort(key=lambda t: -activity.get(t, 0))
         expected = _trading_days_expected(start, end)
         for i in range(0, len(tickers), CHUNK):
             size = _db_mb(conn)
