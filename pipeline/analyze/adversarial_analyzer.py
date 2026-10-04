@@ -228,6 +228,17 @@ def custom_id_de(event_id: int, side: str) -> str:
     return f"{event_id}_{side}"
 
 
+# Tope de salida de cada respuesta (BUGS_REPORT.md H-25). Con 1024 algunas
+# respuestas se cortaban, salían como "JSON inválido" y el evento se volvía a
+# pagar la noche siguiente. Las respuestas típicas rondan 300-500 tokens y
+# solo se paga lo que se genera, así que subir el tope no encarece nada.
+#
+# Sin cache_control en el system prompt (H-26): estos prompts tienen unos 150
+# tokens, muy por debajo del mínimo cacheable del modelo, así que marcarlos
+# era un no-op que solo daba una falsa sensación de ahorro.
+MAX_OUTPUT_TOKENS = 2048
+
+
 def build_bull_bear_batch(events: list[EventContext]):
     """2N requests por N eventos: una Bull, una Bear, cada una con su propio
     esquema JSON y su propio system prompt — ver docstring del módulo."""
@@ -245,8 +256,8 @@ def build_bull_bear_batch(events: list[EventContext]):
                     custom_id=custom_id_de(ctx.event_id, side),
                     params=MessageCreateParamsNonStreaming(
                         model=config.ANALYZER_MODEL,
-                        max_tokens=1024,
-                        system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+                        max_tokens=MAX_OUTPUT_TOKENS,
+                        system=system_prompt,
                         messages=[{"role": "user", "content": _event_prompt(ctx)}],
                         output_config={"format": {"type": "json_schema", "schema": schema}},
                     ),
@@ -284,8 +295,8 @@ def build_judge_batch(events: list[EventContext], bull_bear_results: dict[str, d
                 custom_id=custom_id_de(ctx.event_id, "judge"),
                 params=MessageCreateParamsNonStreaming(
                     model=config.JUDGE_MODEL,
-                    max_tokens=1024,
-                    system=[{"type": "text", "text": SYSTEM_PROMPT_JUDGE, "cache_control": {"type": "ephemeral"}}],
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    system=SYSTEM_PROMPT_JUDGE,
                     messages=[{"role": "user", "content": prompt}],
                     output_config={"format": {"type": "json_schema", "schema": JUDGE_SCHEMA}},
                 ),
@@ -309,10 +320,13 @@ def _is_transient_api_error(exc: Exception) -> bool:
     return False
 
 
-def run_batch_and_collect(client, requests_) -> tuple[dict[str, dict], str | None]:
+def run_batch_and_collect(client, requests_, on_submitted=None) -> tuple[dict[str, dict], str | None]:
     """Envía un batch, espera a que termine, y devuelve ({custom_id: parsed_json}, batch_id).
     Errores de validación o servidor se registran y se omiten (no abortan el
-    batch entero)."""
+    batch entero).
+
+    on_submitted(batch_id, n_requests): se llama nada más crear el batch,
+    antes de esperar, para apuntar el gasto aunque luego algo falle (H-24)."""
     if not requests_:
         # Pasa cuando TODOS los Bull/Bear de un chunk fallan: el Judge se
         # queda sin nada que arbitrar. La API rechaza un batch vacío con un
@@ -320,6 +334,8 @@ def run_batch_and_collect(client, requests_) -> tuple[dict[str, dict], str | Non
         return {}, None
     batch = client.messages.batches.create(requests=requests_)
     logger.info("Batch creado: %s (%d requests)", batch.id, len(requests_))
+    if on_submitted is not None:
+        on_submitted(batch.id, len(requests_))
 
     # Hallazgo de auditoría (IMPROVEMENT_PLAN.md R6 + M1): antes este bucle
     # era `while True`, sin cota — un incidente del lado de Anthropic que
@@ -375,6 +391,11 @@ def run_batch_and_collect(client, requests_) -> tuple[dict[str, dict], str | Non
             # (era el minimum/maximum del esquema — ver JUDGE_SCHEMA).
             detalle = getattr(result.result, "error", None)
             logger.warning("Request %s: %s%s", result.custom_id, result.result.type, f" — {detalle}" if detalle else "")
+            continue
+        if getattr(result.result.message, "stop_reason", None) == "max_tokens":
+            # Cortada a mitad: el JSON no se puede leer. Se dice por su nombre
+            # (antes salía como "JSON inválido") para poder ajustar el tope.
+            logger.warning("Request %s: respuesta cortada por max_tokens (%d)", result.custom_id, MAX_OUTPUT_TOKENS)
             continue
         text = next((b.text for b in result.result.message.content if b.type == "text"), None)
         if text is None:

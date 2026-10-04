@@ -820,3 +820,14 @@ CREATE TABLE IF NOT EXISTS technical_analyses (
     timeframe_days      INT,
     details             JSONB NOT NULL
 );
+
+-- Libro de batches enviados a la Batch API (BUGS_REPORT.md H-24). El tope de
+-- gasto diario contaba solo los eventos GUARDADOS: un Bull/Bear pagado cuyo
+-- Judge fallaba (o cuyo guardado fallaba) no contaba y se volvía a pagar al
+-- día siguiente. Se escribe nada más crear el batch, antes de esperar.
+CREATE TABLE IF NOT EXISTS ai_batches (
+    batch_id      TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL,          -- 'bull_bear' | 'judge'
+    n_requests    INT NOT NULL,
+    submitted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

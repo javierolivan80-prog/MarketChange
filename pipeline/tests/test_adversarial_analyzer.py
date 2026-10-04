@@ -589,3 +589,53 @@ def test_run_batch_and_collect_se_rinde_tras_demasiados_fallos_seguidos(monkeypa
     with pytest.raises(anthropic.APIStatusError):
         run_batch_and_collect(client, requests_=[{"custom_id": custom_id_de(1, "judge")}])
     assert fake.retrieves == aa.BATCH_POLL_MAX_CONSECUTIVE_FAILURES + 1
+
+
+# ---------------------------------------------------------------------------
+# Gasto de IA (BUGS_REPORT.md H-24, H-25, H-26)
+# ---------------------------------------------------------------------------
+
+
+def test_run_batch_and_collect_avisa_del_envio_antes_de_esperar():
+    """H-24: el batch se apunta al crearlo, aunque luego algo falle."""
+    apuntados = []
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_FakeBatchesClient()))
+    run_batch_and_collect(
+        client,
+        requests_=[{"custom_id": custom_id_de(1, "judge")}, {"custom_id": custom_id_de(2, "judge")}],
+        on_submitted=lambda batch_id, n: apuntados.append((batch_id, n)),
+    )
+    assert apuntados == [("batch_test123", 2)]
+
+
+def test_una_respuesta_cortada_por_max_tokens_se_descarta_por_su_nombre(caplog):
+    """H-25: antes salía como "JSON inválido" y no había forma de saber que el
+    problema era el tope de salida."""
+    cortada = SimpleNamespace(
+        custom_id=custom_id_de(1, "judge"),
+        result=SimpleNamespace(
+            type="succeeded",
+            message=SimpleNamespace(stop_reason="max_tokens", content=[SimpleNamespace(type="text", text='{"net_conv')]),
+        ),
+    )
+
+    class _Cortado(_FakeBatchesClient):
+        def results(self, batch_id):
+            return [cortada]
+
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_Cortado()))
+    results, _ = run_batch_and_collect(client, requests_=[{"custom_id": custom_id_de(1, "judge")}])
+    assert results == {}
+    assert "max_tokens" in caplog.text
+
+
+def test_los_batches_no_marcan_cache_control_y_suben_el_tope_de_salida():
+    """H-26: los system prompts (~150 tokens) no llegan al mínimo cacheable;
+    H-25: tope de salida suficiente para no cortar respuestas."""
+    from pipeline.analyze.adversarial_analyzer import MAX_OUTPUT_TOKENS, EventContext, build_bull_bear_batch
+
+    ctx = EventContext(event_id=1, ticker="ACME", event_class="8K_2.02_EARNINGS", company_name="Acme", filing_excerpt="texto")
+    for req in build_bull_bear_batch([ctx]):
+        params = req["params"]
+        assert "cache_control" not in str(params["system"])
+        assert params["max_tokens"] == MAX_OUTPUT_TOKENS >= 2048
