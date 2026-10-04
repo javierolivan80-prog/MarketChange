@@ -94,67 +94,92 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
           orden de aparición repite el del razonamiento. La decisión de arriba
           no se anima: es la respuesta y tiene que estar ya ahí. */}
       <div id="analisis" className="m-stagger grid scroll-mt-4 grid-cols-1 gap-3 lg:grid-cols-2">
-        <Section title={t("A favor (Bull)", "The case for (Bull)")} accent="long">
-          {bull ? (
-            <>
-              <p>{bull.thesis}</p>
-              {bull.upside_drivers?.length > 0 && (
-                <>
-                  <p className="mt-1 font-medium text-foreground">{t("Motores:", "Drivers:")}</p>
-                  <BulletList items={bull.upside_drivers} />
-                </>
-              )}
-              {bull.catalysts_forward?.length > 0 && (
-                <>
-                  <p className="mt-1 font-medium text-foreground">{t("Próximos catalizadores:", "Upcoming catalysts:")}</p>
-                  <BulletList items={bull.catalysts_forward} />
-                </>
-              )}
-              {bull.addressable_market && <p className="mt-1 text-text-tertiary">{t("Mercado", "Market")}: {bull.addressable_market}</p>}
-              {bull.comparable_events && <p className="text-text-tertiary">{t("Comparables", "Comparables")}: {bull.comparable_events}</p>}
-            </>
-          ) : (
-            <Empty locale={locale} />
-          )}
-        </Section>
-
-        <Section title={t("En contra (Bear)", "The case against (Bear)")} accent="short">
-          {bear ? (
-            <>
-              <p>{bear.counter_thesis}</p>
-              {bear.downside_risks?.length > 0 && (
-                <>
-                  <p className="mt-1 font-medium text-foreground">{t("Riesgos:", "Risks:")}</p>
-                  <BulletList items={bear.downside_risks} />
-                </>
-              )}
-              {bear.negative_catalysts?.length > 0 && (
-                <>
-                  <p className="mt-1 font-medium text-foreground">{t("Catalizadores negativos:", "Negative catalysts:")}</p>
-                  <BulletList items={bear.negative_catalysts} />
-                </>
-              )}
-              {bear.valuation_concern && <p className="mt-1 text-text-tertiary">{t("¿Ya en el precio?", "Already priced in?")}: {bear.valuation_concern}</p>}
-              {bear.historical_precedent && <p className="text-text-tertiary">{t("Precedente", "Precedent")}: {bear.historical_precedent}</p>}
-            </>
-          ) : (
-            <Empty locale={locale} />
-          )}
-        </Section>
-
-        <Section title={t("Veredicto (Judge)", "Verdict (Judge)")}>
-          {judge ? (
-            <>
-              <p className="num">
-                {t("Convicción neta", "Net conviction")} {judge.net_conviction.toFixed(2)} · {t("confianza", "confidence")}{" "}
-                {judge.confidence_in_conviction.toFixed(0)}%
+        {detail.ai_skipped_reason !== null ? (
+          // Sin debate: una regla objetiva ya garantizaba no operar y el
+          // pipeline no llamó a la IA. Se dice así, con su motivo, en vez de
+          // pintar tres secciones vacías como si la IA no hubiera opinado.
+          <div className="lg:col-span-2">
+            <Section title={t("Debate de IA (Bull, Bear y Judge)", "AI debate (Bull, Bear and Judge)")}>
+              <p>
+                {t(
+                  "No se hizo: una regla objetiva ya descartaba operar, así que no se gastó IA en este evento.",
+                  "Not run: an objective rule already ruled out trading, so no AI was spent on this event.",
+                )}
               </p>
-              {judge.overriding_concern && <p className="text-text-tertiary">{t("Preocupación dominante", "Overriding concern")}: {judge.overriding_concern}</p>}
-            </>
-          ) : (
-            <Empty locale={locale} />
-          )}
-        </Section>
+              {detail.ai_skipped_reason && (
+                <p className="text-text-tertiary">
+                  {t("Motivo", "Reason")}: {detail.ai_skipped_reason}
+                </p>
+              )}
+            </Section>
+          </div>
+        ) : (
+          <>
+            <Section title={t("A favor (Bull)", "The case for (Bull)")} accent="long">
+              {bull ? (
+                <>
+                  <p>{bull.thesis}</p>
+                  {bull.upside_drivers?.length > 0 && (
+                    <>
+                      <p className="mt-1 font-medium text-foreground">{t("Motores:", "Drivers:")}</p>
+                      <BulletList items={bull.upside_drivers} />
+                    </>
+                  )}
+                  {bull.catalysts_forward?.length > 0 && (
+                    <>
+                      <p className="mt-1 font-medium text-foreground">{t("Próximos catalizadores:", "Upcoming catalysts:")}</p>
+                      <BulletList items={bull.catalysts_forward} />
+                    </>
+                  )}
+                  {bull.addressable_market && <p className="mt-1 text-text-tertiary">{t("Mercado", "Market")}: {bull.addressable_market}</p>}
+                  {bull.comparable_events && <p className="text-text-tertiary">{t("Comparables", "Comparables")}: {bull.comparable_events}</p>}
+                </>
+              ) : (
+                <Empty locale={locale} />
+              )}
+            </Section>
+
+            <Section title={t("En contra (Bear)", "The case against (Bear)")} accent="short">
+              {bear ? (
+                <>
+                  <p>{bear.counter_thesis}</p>
+                  {bear.downside_risks?.length > 0 && (
+                    <>
+                      <p className="mt-1 font-medium text-foreground">{t("Riesgos:", "Risks:")}</p>
+                      <BulletList items={bear.downside_risks} />
+                    </>
+                  )}
+                  {bear.negative_catalysts?.length > 0 && (
+                    <>
+                      <p className="mt-1 font-medium text-foreground">{t("Catalizadores negativos:", "Negative catalysts:")}</p>
+                      <BulletList items={bear.negative_catalysts} />
+                    </>
+                  )}
+                  {bear.valuation_concern && <p className="mt-1 text-text-tertiary">{t("¿Ya en el precio?", "Already priced in?")}: {bear.valuation_concern}</p>}
+                  {bear.historical_precedent && <p className="text-text-tertiary">{t("Precedente", "Precedent")}: {bear.historical_precedent}</p>}
+                </>
+              ) : (
+                <Empty locale={locale} />
+              )}
+            </Section>
+
+            <Section title={t("Veredicto (Judge)", "Verdict (Judge)")}>
+              {judge ? (
+                <>
+                  {typeof judge.net_conviction === "number" && typeof judge.confidence_in_conviction === "number" && (
+                    <p className="num">
+                      {t("Convicción neta", "Net conviction")} {judge.net_conviction.toFixed(2)} · {t("confianza", "confidence")}{" "}
+                      {judge.confidence_in_conviction.toFixed(0)}%
+                    </p>
+                  )}
+                  {judge.overriding_concern && <p className="text-text-tertiary">{t("Preocupación dominante", "Overriding concern")}: {judge.overriding_concern}</p>}
+                </>
+              ) : (
+                <Empty locale={locale} />
+              )}
+            </Section>
+          </>
+        )}
 
         <Section title={t("¿Era una sorpresa?", "Was it a surprise?")}>
           {novelty ? (
@@ -267,7 +292,10 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
           {t("Analizado", "Analysed")}: {formatDateTime(detail.analyzed_at, locale)}
         </span>
         <span>
-          {t("Modelos", "Models")}: {detail.model_version_bull_bear} ({t("debate", "debate")}) · {detail.model_version_judge} ({t("veredicto", "verdict")})
+          {t("Modelos", "Models")}:{" "}
+          {detail.ai_skipped_reason !== null
+            ? t("ninguno (descartado por regla, sin IA)", "none (ruled out, no AI)")
+            : `${detail.model_version_bull_bear} (${t("debate", "debate")}) · ${detail.model_version_judge} (${t("veredicto", "verdict")})`}
         </span>
       </div>
     </div>
