@@ -68,7 +68,7 @@ def conn():
     with c.cursor() as cur:
         cur.execute(
             "TRUNCATE car_results, backtest_runs, event_analyses, event_enrichment, events, prices, "
-            "fama_french_factors, universe RESTART IDENTITY CASCADE"
+            "fama_french_factors, universe, ai_batches RESTART IDENTITY CASCADE"
         )
     c.commit()
     yield c
@@ -722,3 +722,26 @@ def test_judge_fuera_de_rango_no_se_guarda(conn, sin_techo_de_ev):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM event_analyses")
         assert cur.fetchone()["n"] == 0
+
+
+def test_spend_today_usd_cuenta_los_batches_enviados_aunque_no_se_guarde_nada(conn):
+    """BUGS_REPORT.md H-24: un Bull/Bear pagado cuyo Judge falla no deja fila
+    en event_analyses, pero sí se pagó. El libro ai_batches lo cuenta."""
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import registrar_batch, spend_today_usd
+
+    assert spend_today_usd(conn) == 0
+    registrar_batch(conn, "bull_bear")("batch_bb", 10)
+    registrar_batch(conn, "judge")("batch_j", 3)
+    registrar_batch(conn, "judge")("batch_j", 3)  # repetido: no se cuenta dos veces
+
+    esperado = 10 * config.EST_COST_BULL_BEAR_REQUEST_USD + 3 * config.EST_COST_JUDGE_REQUEST_USD
+    assert spend_today_usd(conn) == pytest.approx(esperado)
+
+
+def test_el_desglose_por_request_cuadra_con_el_coste_por_evento():
+    from pipeline import config
+
+    assert 2 * config.EST_COST_BULL_BEAR_REQUEST_USD + config.EST_COST_JUDGE_REQUEST_USD == pytest.approx(
+        config.ANALYSIS_EST_COST_PER_EVENT_USD
+    )

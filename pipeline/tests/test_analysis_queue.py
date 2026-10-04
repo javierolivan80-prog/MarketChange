@@ -66,7 +66,7 @@ def conn():
     with c.cursor() as cur:
         cur.execute(
             "TRUNCATE car_results, event_analyses, event_enrichment, events, prices, fundamentals, "
-            "quality_scores, universe, fama_french_factors RESTART IDENTITY CASCADE"
+            "quality_scores, universe, fama_french_factors, ai_batches RESTART IDENTITY CASCADE"
         )
     c.commit()
     yield c
