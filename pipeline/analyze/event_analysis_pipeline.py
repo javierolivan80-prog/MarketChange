@@ -193,7 +193,44 @@ def spend_today_usd(conn) -> float:
             """
         )
         n = cur.fetchone()["n"]
-    return round(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, 4)
+        # BUGS_REPORT.md H-24: lo de arriba solo cuenta eventos GUARDADOS. Un
+        # Bull/Bear pagado cuyo Judge falla no aparece ahí, y el tope diario
+        # se quedaba corto. El libro de batches (ai_batches) cuenta lo que se
+        # ENVIÓ; se toma el mayor de los dos, así un día con corridas previas
+        # al libro tampoco se infravalora.
+        cur.execute(
+            """
+            SELECT coalesce(sum(n_requests * CASE kind WHEN 'judge' THEN %s ELSE %s END), 0) AS usd
+            FROM ai_batches
+            WHERE submitted_at::date = CURRENT_DATE
+            """,
+            (config.EST_COST_JUDGE_REQUEST_USD, config.EST_COST_BULL_BEAR_REQUEST_USD),
+        )
+        enviado = float(cur.fetchone()["usd"])
+    return round(max(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, enviado), 4)
+
+
+def registrar_batch(conn, kind: str):
+    """Callback para run_batch_and_collect: apunta el batch en ai_batches nada
+    más crearlo (H-24). Si apuntarlo falla, se avisa y se sigue: perder una
+    línea del libro no debe tirar un batch ya pagado."""
+
+    def _registrar(batch_id: str, n_requests: int) -> None:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ai_batches (batch_id, kind, n_requests) VALUES (%s, %s, %s) ON CONFLICT (batch_id) DO NOTHING",
+                    (batch_id, kind, n_requests),
+                )
+            conn.commit()
+        except Exception:
+            logger.warning("No se pudo apuntar el batch %s en ai_batches", batch_id, exc_info=True)
+            try:
+                conn.rollback()
+            except Exception:
+                pass  # conexión muerta: process_chunk ya reconecta más abajo
+
+    return _registrar
 
 
 def remaining_daily_budget_events(conn) -> int | None:
@@ -338,8 +375,12 @@ def process_chunk(conn, client, event_rows: list[dict]):
             )
             for ev in llm_candidates
         ]
-        bull_bear_results, bb_batch_id = run_batch_and_collect(client, build_bull_bear_batch(contexts))
-        judge_results, judge_batch_id = run_batch_and_collect(client, build_judge_batch(contexts, bull_bear_results))
+        bull_bear_results, bb_batch_id = run_batch_and_collect(
+            client, build_bull_bear_batch(contexts), on_submitted=registrar_batch(conn, "bull_bear")
+        )
+        judge_results, judge_batch_id = run_batch_and_collect(
+            client, build_judge_batch(contexts, bull_bear_results), on_submitted=registrar_batch(conn, "judge")
+        )
 
         # BUG REAL (2026-09-15, run 34964242549): cada run_batch_and_collect
         # espera a la Batch API con un `while ... time.sleep(30)` que puede

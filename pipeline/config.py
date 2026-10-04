@@ -127,6 +127,11 @@ ANALYSIS_MIN_MARKET_CAP_USD = _env_float("ANALYSIS_MIN_MARKET_CAP_USD", MIN_MARK
 # Vacío o 0 = sin tope.
 ANALYSIS_MAX_EVENTS_PER_RUN = _env_int("ANALYSIS_MAX_EVENTS_PER_RUN", 500) or None
 ANALYSIS_EST_COST_PER_EVENT_USD = 0.011
+# Desglose por request, para contar el gasto por batch ENVIADO (H-24): un
+# Bull/Bear (Haiku 4.5) ~0,0024 $ y un Judge (Sonnet 4.6) ~0,0062 $, que
+# suman los 0,011 $ por evento de arriba (2 x 0,0024 + 0,0062).
+EST_COST_BULL_BEAR_REQUEST_USD = 0.0024
+EST_COST_JUDGE_REQUEST_USD = 0.0062
 
 # Cota máxima de espera al polling de la Batch API (IMPROVEMENT_PLAN.md R6 +
 # M1) — sin esto, adversarial_analyzer.run_batch_and_collect hacía
