@@ -39,6 +39,7 @@ from pipeline.analyze.abstention_engine import (
     AbstentionInputs,
     as_json as abstention_as_json,
     decide_all_strategies,
+    ev_ceiling_no_trade_reason,
     objective_no_trade_reason,
 )
 from pipeline.analyze.adversarial_analyzer import (
@@ -299,6 +300,11 @@ def process_chunk(conn, client, event_rows: list[dict]):
             adv_usd_60d=enrichment.adv_usd_60d,
             is_fda_crl_without_8k=is_fda_crl_without_8k,
         )
+        if skip_reason is None:
+            # Techo de EV (BUGS_REPORT.md H-13): la Etapa 6 no cuesta nada y
+            # basta para saber si el evento podría operar en el mejor caso.
+            impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], ev["event_id"], window_days=20)
+            skip_reason = ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence)
         if skip_reason is not None:
             skipped_ids_with_reason[ev["event_id"]] = skip_reason
         else:

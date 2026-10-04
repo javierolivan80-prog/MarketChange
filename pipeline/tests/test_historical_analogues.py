@@ -7,7 +7,7 @@ verdad contra SQL real, no solo en la firma de la función.
 """
 import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -241,3 +241,33 @@ class TestAgainstRealPostgres:
         assert result.n_analogues == 2
         # 2 análogos al +1% con prior +1% => magnitud ~1%, lejos del +50% futuro.
         assert result.expected_magnitude_pct == pytest.approx(1.0, abs=0.2)
+
+    def test_analogues_require_their_outcome_window_to_be_closed(self):
+        """BUGS_REPORT.md H-01: un análogo con D0 anterior a as_of pero cuya
+        ventana de CAR (D0, D0+window] todavía no había terminado en as_of
+        aporta retornos POSTERIORES a la decisión. Solo cuentan los que ya
+        tenían el desenlace conocido."""
+        from pipeline.analyze.historical_analogues import get_historical_analogues
+
+        as_of = date(2024, 3, 1)
+        cerrado = self._insert_event("600", as_of - timedelta(days=21))
+        self._insert_event("601", as_of - timedelta(days=5))   # ventana abierta en as_of
+        self._insert_event("602", as_of - timedelta(days=20))  # termina justo en as_of
+
+        analogues = get_historical_analogues(
+            self.conn, "8K_2.02_EARNINGS", as_of_date=as_of, exclude_event_id=999999, window_days=20
+        )
+        assert len(analogues) == 1
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT car FROM car_results WHERE event_id = %s", (cerrado,))
+            assert float(analogues[0]["car"]) == float(cur.fetchone()["car"])
+
+    def test_class_prior_requires_outcome_window_to_be_closed(self):
+        from pipeline.analyze.historical_analogues import get_class_prior_mean
+
+        as_of = date(2024, 3, 1)
+        self._insert_event("700", as_of - timedelta(days=30), car=0.01)
+        self._insert_event("701", as_of - timedelta(days=3), car=0.90)  # ventana abierta: no cuenta
+
+        prior = get_class_prior_mean(self.conn, "8K_2.02_EARNINGS", 20, as_of_date=as_of)
+        assert prior == pytest.approx(1.0, abs=0.01)

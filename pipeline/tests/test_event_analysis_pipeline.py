@@ -74,6 +74,15 @@ def conn():
     yield c
     c.close()
 
+@pytest.fixture
+def sin_techo_de_ev(monkeypatch):
+    """Para los tests que prueban la MECÁNICA de llamada a la IA (batch,
+    caché, reconexión...) sin sembrar análogos: el techo de EV
+    (BUGS_REPORT.md H-13) los descartaría antes, porque sin análogos el EV
+    máximo es 0. El techo tiene sus propios tests."""
+    monkeypatch.setattr("pipeline.analyze.event_analysis_pipeline.ev_ceiling_no_trade_reason", lambda *a, **k: None)
+
+
 
 def _seed_market_data(conn, tickers_and_bases, n_days=320):
     rng = np.random.default_rng(7)
@@ -348,7 +357,7 @@ class _ClientQueMataLaConexion:
         return out
 
 
-def test_process_chunk_reconecta_si_la_conexion_muere_durante_la_espera_del_batch(conn):
+def test_process_chunk_reconecta_si_la_conexion_muere_durante_la_espera_del_batch(conn, sin_techo_de_ev):
     """EL bug real: 20 minutos esperando la Batch API dejaban la conexión
     ociosa hasta que Postgres la cortaba. El síntoma no salía en el batch —
     salía en el primer INSERT de después, con "the connection is lost", y el
@@ -379,7 +388,7 @@ def test_process_chunk_reconecta_si_la_conexion_muere_durante_la_espera_del_batc
 
 
 
-def test_process_chunk_end_to_end_writes_full_event_analyses_row(conn):
+def test_process_chunk_end_to_end_writes_full_event_analyses_row(conn, sin_techo_de_ev):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
@@ -404,7 +413,7 @@ def test_process_chunk_end_to_end_writes_full_event_analyses_row(conn):
     assert json.loads(row["bull_analyst_output"])["thesis"] == "bull thesis" if isinstance(row["bull_analyst_output"], str) else row["bull_analyst_output"]["thesis"] == "bull thesis"
 
 
-def test_process_chunk_second_event_same_ticker_class_uses_cache_not_llm(conn):
+def test_process_chunk_second_event_same_ticker_class_uses_cache_not_llm(conn, sin_techo_de_ev):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
@@ -431,7 +440,7 @@ def test_process_chunk_second_event_same_ticker_class_uses_cache_not_llm(conn):
     assert float(rows[1]["net_conviction"]) == pytest.approx(float(rows[0]["net_conviction"]))
 
 
-def test_process_chunk_otro_trimestre_del_mismo_ticker_no_usa_cache(conn):
+def test_process_chunk_otro_trimestre_del_mismo_ticker_no_usa_cache(conn, sin_techo_de_ev):
     """Dos semanas después ya es otro filing: reutilizar el veredicto del
     anterior daría a todos los trimestres de una empresa la misma opinión."""
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
@@ -606,7 +615,7 @@ def test_process_chunk_skips_llm_for_illiquid_low_adv_event(conn):
     assert "ADV" in bull_output["reason"]
 
 
-def test_process_chunk_high_novelty_event_still_calls_llm_as_before(conn):
+def test_process_chunk_high_novelty_event_still_calls_llm_as_before(conn, sin_techo_de_ev):
     """Contraprueba de la anterior: un evento con novelty normal (el drift
     plano que ya seedeaba _seed_market_data, sin el salto de precio forzado)
     tiene que seguir llamando a Bull/Bear/Judge exactamente igual que antes
@@ -689,7 +698,7 @@ def test_process_chunk_novelty_reasoning_reflects_prior_guidance_detection(conn)
     assert reasoning["has_prior_guidance"] is True
 
 
-def test_judge_fuera_de_rango_no_se_guarda(conn):
+def test_judge_fuera_de_rango_no_se_guarda(conn, sin_techo_de_ev):
     """P0-2: sin minimum/maximum en el esquema, el rango se valida en Python.
     Un Judge con net_conviction=3 no debe llegar a event_analyses (ni recortado
     a 1: sería la convicción máxima inventada)."""

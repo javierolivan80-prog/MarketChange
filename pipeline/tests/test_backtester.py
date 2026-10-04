@@ -88,3 +88,54 @@ def test_compute_car_returns_none_when_estimation_window_too_short():
     event_prices = pd.DataFrame({"ret": [0.001] * 20}, index=dates)
     result = compute_car(event_prices, factor_returns, dates[-1].date(), window_days=5)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# BUGS_REPORT.md H-02 — ventana de evento incompleta = no evaluable
+# ---------------------------------------------------------------------------
+
+
+def _synthetic(n_days=320, seed=11):
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2021-01-04", periods=n_days, freq="B")
+    factors = pd.DataFrame(
+        {
+            "mkt_rf": rng.normal(0.0003, 0.01, n_days),
+            "smb": rng.normal(0.0, 0.005, n_days),
+            "hml": rng.normal(0.0, 0.005, n_days),
+            "rf": np.full(n_days, 0.00005),
+        },
+        index=dates,
+    )
+    prices = pd.DataFrame({"ret": factors["rf"] + 1.1 * factors["mkt_rf"] + rng.normal(0, 0.008, n_days)}, index=dates)
+    return dates, prices, factors
+
+
+def test_compute_car_returns_none_while_the_event_window_is_still_open():
+    """Antes, 3 sesiones de datos se guardaban como "CAR a 20 días" y nunca se
+    recalculaban (populate solo mira eventos sin fila)."""
+    dates, prices, factors = _synthetic()
+    d0 = dates[-4].date()  # solo quedan 3 sesiones después de D0
+    assert compute_car(prices, factors, d0, window_days=20) is None
+
+
+def test_compute_car_returns_none_when_factors_lag_behind_the_window():
+    """Fama-French se publica con ~1-2 meses de retraso: sin factores para toda
+    la ventana, el CAR tampoco está completo."""
+    dates, prices, factors = _synthetic()
+    d0 = dates[280].date()
+    assert compute_car(prices, factors.loc[: dates[284]], d0, window_days=20) is None
+
+
+def test_compute_car_returns_none_with_large_gaps_inside_the_window():
+    dates, prices, factors = _synthetic()
+    d0 = dates[280].date()
+    window = (dates > pd.Timestamp(d0)) & (dates <= pd.Timestamp(d0) + pd.Timedelta(days=20))
+    hueco = dates[window][2:9]  # 7 de ~14 sesiones sin precio (deslistado, halt...)
+    assert compute_car(prices.drop(hueco), factors, d0, window_days=20) is None
+
+
+def test_compute_car_still_computes_a_complete_window():
+    dates, prices, factors = _synthetic()
+    result = compute_car(prices, factors, dates[280].date(), window_days=20)
+    assert result is not None

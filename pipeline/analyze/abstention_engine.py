@@ -50,7 +50,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pipeline import config
-from pipeline.analyze.ev_engine import EV_THRESHOLDS
+from pipeline.analyze.ev_engine import EV_THRESHOLDS, compute_ev
 
 NOVELTY_FLOOR = 20
 CONFIDENCE_FLOOR = 40
@@ -150,6 +150,33 @@ def objective_no_trade_reason(
     if is_fda_crl_without_8k:
         return "CRL de FDA sin 8-K correspondiente — aún no comunicado oficialmente por la empresa"
     return _illiquid_reason(adv_usd_60d)
+
+
+def ev_ceiling_no_trade_reason(expected_magnitude_pct: float, impact_confidence: float) -> str | None:
+    """Techo de EV alcanzable (BUGS_REPORT.md H-13). La Etapa 6 (análogos)
+    no depende de la IA, y el EV es net_conviction × magnitud × confianza del
+    Judge × confianza del impacto: con el MEJOR caso posible del Judge
+    (|net_conviction| = 1, confidence = 100) se obtiene el |EV| máximo de cada
+    versión. Si ni ese supera su umbral + buffer (regla 3 de
+    decide_for_strategy, misma comparación) en NINGUNA versión, el evento será
+    NO_TRADE diga lo que diga la IA: pagarla no cambia la decisión.
+
+    Devuelve el motivo, o None si alguna versión aún podría operar."""
+    best = compute_ev(1.0, 100.0, expected_magnitude_pct, impact_confidence)
+    best_by_strategy = {
+        "CONSERVATIVE": best.ev_conservative,
+        "BALANCED": best.ev_balanced,
+        "AGGRESSIVE": best.ev_aggressive,
+    }
+    if any(abs(best_by_strategy[s]) >= EV_THRESHOLDS[s] + EV_ABSTENTION_BUFFER for s in STRATEGIES):
+        return None
+    top = max(STRATEGIES, key=lambda s: abs(best_by_strategy[s]) - EV_THRESHOLDS[s])
+    return (
+        f"techo de EV: ni con convicción ±1 y confianza 100 se alcanza el umbral "
+        f"(|EV| máx {top.lower()} {abs(best_by_strategy[top]) * 100:.2f}% < "
+        f"{(EV_THRESHOLDS[top] + EV_ABSTENTION_BUFFER) * 100:.2f}%; magnitud histórica "
+        f"{abs(expected_magnitude_pct):.2f}%, confianza del impacto {impact_confidence:.0f})"
+    )
 
 
 def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDecision:

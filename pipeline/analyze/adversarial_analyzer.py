@@ -172,6 +172,10 @@ CACHE_WINDOW_HOURS = 24
 # de 5 años de una empresa recibían el Bull/Bear/Judge del primero que se
 # analizó — veinte informes distintos con un único veredicto.
 CACHE_MAX_D0_GAP_DAYS = 1
+# Marca de las filas de event_analyses que NO son un análisis de la IA (el
+# evento se descartó antes por una regla objetiva; convicción y confianza a 0
+# de relleno). Nunca sirven de caché (BUGS_REPORT.md H-12).
+SKIPPED_MODEL_VERSION = "SKIPPED_OBJECTIVE_NO_TRADE"
 
 
 @dataclass
@@ -408,11 +412,12 @@ def get_cached_analysis(conn, ticker: str, event_class: str, as_of: date, within
             WHERE e.ticker = %(ticker)s AND e.event_class = %(event_class)s
               AND ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
               AND e.d0_close_date BETWEEN %(as_of)s::date - %(gap)s AND %(as_of)s::date
+              AND ea.model_version_bull_bear <> %(skipped)s
             ORDER BY ea.analyzed_at DESC
             LIMIT 1
             """,
             {"ticker": ticker, "event_class": event_class, "hours": within_hours,
-             "as_of": as_of, "gap": CACHE_MAX_D0_GAP_DAYS},
+             "as_of": as_of, "gap": CACHE_MAX_D0_GAP_DAYS, "skipped": SKIPPED_MODEL_VERSION},
         )
         return cur.fetchone()
 
@@ -452,6 +457,7 @@ def get_cached_analyses_batch(
             JOIN event_analyses ea ON ea.event_id = e.event_id
             WHERE ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
               AND e.d0_close_date BETWEEN c.as_of - %(gap)s AND c.as_of
+              AND ea.model_version_bull_bear <> %(skipped)s
             ORDER BY c.event_id, ea.analyzed_at DESC
             """,
             {
@@ -461,6 +467,7 @@ def get_cached_analyses_batch(
                 "as_ofs": [ev["d0_close_date"] for ev in event_rows],
                 "hours": within_hours,
                 "gap": CACHE_MAX_D0_GAP_DAYS,
+                "skipped": SKIPPED_MODEL_VERSION,
             },
         )
         return {row["request_event_id"]: row for row in cur.fetchall()}

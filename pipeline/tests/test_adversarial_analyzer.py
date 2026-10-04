@@ -338,6 +338,26 @@ class TestCacheAgainstRealPostgres:
         assert req_mismo_episodio in results
         assert req_otro_trimestre not in results
 
+    def test_cache_ignora_los_descartes_previos_a_la_ia(self):
+        """BUGS_REPORT.md H-12: una fila SKIPPED_OBJECTIVE_NO_TRADE no es un
+        análisis de la IA (convicción y confianza a 0 de relleno). Reutilizarla
+        dejaba en NO_TRADE a un evento nuevo del mismo episodio sin preguntar
+        nunca a la IA."""
+        from pipeline.analyze.adversarial_analyzer import get_cached_analyses_batch
+
+        descartado = self._insert_event_with_analysis("30", "ACME", "8K_2.02_EARNINGS", "1 hour")
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE event_analyses SET model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE' WHERE event_id = %s",
+                (descartado,),
+            )
+        self.conn.commit()
+        req = self._insert_pending_event("31", "ACME", "8K_2.02_EARNINGS", "2024-01-02")
+
+        assert get_cached_analysis(self.conn, "ACME", "8K_2.02_EARNINGS", date(2024, 1, 2)) is None
+        rows = [{"event_id": req, "ticker": "ACME", "event_class": "8K_2.02_EARNINGS", "d0_close_date": date(2024, 1, 2)}]
+        assert get_cached_analyses_batch(self.conn, rows) == {}
+
 
 # --- custom_id contra el patrón real de la Batch API ------------------------
 #
