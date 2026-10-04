@@ -282,6 +282,22 @@ def test_fetch_and_compute_enrichment_end_to_end_against_real_postgres():
     assert result.sector_etf_ticker == "XLV"
     assert result.beta_vs_spy is not None
     assert result.vix_d0 == pytest.approx(18.0, abs=2.0)
+
+    # H-27: con la caché de la corrida, el resultado es el mismo y las series
+    # comunes (no la del propio evento) se leen una sola vez.
+    series_comunes: dict = {}
+    con_cache = fetch_and_compute_enrichment(conn, event, series_comunes)
+    assert set(series_comunes) == {"SPY", "XLV", "^VIX", "__fama_french__"}
+    assert (con_cache.price_d0, con_cache.beta_vs_spy, con_cache.vix_d0) == (result.price_d0, result.beta_vs_spy, result.vix_d0)
+
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM prices WHERE ticker IN ('SPY', 'XLV', '^VIX')")
+        cur.execute("DELETE FROM fama_french_factors")
+    conn.commit()
+    # Ya no están en la base: si se releyeran, la beta y el VIX saldrían None.
+    segunda = fetch_and_compute_enrichment(conn, event, series_comunes)
+    assert segunda.beta_vs_spy == result.beta_vs_spy
+    assert segunda.vix_d0 == result.vix_d0
     conn.close()
 
 

@@ -23,8 +23,10 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
 **Estado (2026-10-04):**
 - **Arreglados:**
   - H-39, H-38 y H-08 (opción a: liquidez solo por ADV): PR #66, fusionado.
-  - H-01, H-02, H-12 y H-13: rama `claude/great-allen-nv7mdd`, PR siguiente.
-  - H-09 (stop con gap: SL, TP y tramos del trailing se ejecutan a la apertura si la barra ya abre más allá), H-11 (volatilidad base en (D0-90, D0-30]; las ratios antiguas se anulan sin borrar el CAR) y H-15 (con varios símbolos por CIK gana la acción ordinaria). H-14 (universo point-in-time) queda pendiente: solo afecta al análisis histórico.
+  - H-01, H-02, H-12 y H-13: PR #67, fusionado.
+  - H-27, H-29 y H-30 (eficiencia), PR #73: series comunes del enrichment leídas una vez por chunk; sesión HTTP única y throttle por intervalo hacia EDGAR; un 404 del índice diario cuenta como día sin índice, no como fallo (sin usar el calendario bursátil, que perdería los filings de Viernes Santo).
+  - H-03 (splits entre descargas), PR #72: cada descarga incremental vuelve a pedir el último día guardado y, si su cierre cambió, se rebaja la serie entera; los tickers ya partidos se reparan por tandas en el nightly. H-04 (filtros absolutos con precios reexpresados por contrasplits) sigue abierto.
+  - PR #74: H-09 (stop con gap: SL, TP y tramos del trailing se ejecutan a la apertura si la barra ya abre más allá), H-11 (volatilidad base en (D0-90, D0-30]; las ratios antiguas se anulan sin borrar el CAR) y H-15 (con varios símbolos por CIK gana la acción ordinaria). H-14 (universo point-in-time) queda pendiente: solo afecta al análisis histórico.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

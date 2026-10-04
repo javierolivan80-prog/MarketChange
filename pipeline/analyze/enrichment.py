@@ -231,11 +231,18 @@ def compute_enrichment(
     )
 
 
-def fetch_and_compute_enrichment(conn, event: dict) -> EnrichmentResult:
+def fetch_and_compute_enrichment(conn, event: dict, series_comunes: dict | None = None) -> EnrichmentResult:
     """Ensambla los paneles desde Postgres y llama a compute_enrichment().
 
     event: dict con al menos 'ticker', 'd0_close_date', 'sic_code' (de un JOIN
     events+universe — ver analyze/event_analysis_pipeline.py).
+
+    series_comunes: caché de UNA corrida para las series que comparten todos
+    los eventos (SPY, ETFs sectoriales, ^VIX y Fama-French). Sin ella, cada
+    evento volvía a leer el histórico completo de las cuatro: hasta 500
+    eventos x 4 consultas grandes por corrida (BUGS_REPORT.md H-27). El que
+    llama crea el dict al empezar la corrida; dentro de una corrida esas
+    series no cambian (los precios se descargan antes del análisis).
     """
     import pandas as pd
 
@@ -263,12 +270,19 @@ def fetch_and_compute_enrichment(conn, event: dict) -> EnrichmentResult:
         df["trade_date"] = pd.to_datetime(df["trade_date"])
         return df.set_index("trade_date").astype(float)
 
+    cache = series_comunes if series_comunes is not None else {}
+
+    def _comun(clave: str, cargar):
+        if clave not in cache:
+            cache[clave] = cargar()
+        return cache[clave]
+
     sector_etf = sic_to_sector_etf(event.get("sic_code"))
     ticker_prices = _load_prices(event["ticker"])
-    spy_prices = _load_prices("SPY")
-    sector_prices = _load_prices(sector_etf)
-    vix_prices = _load_prices("^VIX")
-    factor_returns = _load_factors()
+    spy_prices = _comun("SPY", lambda: _load_prices("SPY"))
+    sector_prices = _comun(sector_etf, lambda: _load_prices(sector_etf))
+    vix_prices = _comun("^VIX", lambda: _load_prices("^VIX"))
+    factor_returns = _comun("__fama_french__", _load_factors)
 
     return compute_enrichment(
         ticker_prices, spy_prices, sector_prices, vix_prices, factor_returns,
