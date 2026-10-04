@@ -352,6 +352,16 @@ def backfill_tickers(tickers: list[str], start: date, end: date, forzar: bool = 
     from pipeline.db.connection import get_connection
 
     conn = get_connection()
+    # Siempre se cierra: una conexión abandonada queda "idle in transaction"
+    # con un lock sobre prices tras la última lectura, y cualquier TRUNCATE o
+    # VACUUM posterior (ops_prune, los tests) se queda esperando sin fin.
+    try:
+        _backfill_con_conexion(conn, tickers, start, end, forzar)
+    finally:
+        conn.close()
+
+
+def _backfill_con_conexion(conn, tickers: list[str], start: date, end: date, forzar: bool) -> None:
     expected_days = _trading_days_expected(start, end)
     descartados = [t for t in tickers if not t.startswith("^") and not is_tradable_symbol(t)]
     if descartados:
