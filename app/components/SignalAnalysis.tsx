@@ -90,7 +90,10 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
         </div>
       )}
 
-      <div id="analisis" className="grid scroll-mt-4 grid-cols-1 gap-3 lg:grid-cols-2">
+      {/* m-stagger: Bull, luego Bear, luego Judge (y el resto con él) — el
+          orden de aparición repite el del razonamiento. La decisión de arriba
+          no se anima: es la respuesta y tiene que estar ya ahí. */}
+      <div id="analisis" className="m-stagger grid scroll-mt-4 grid-cols-1 gap-3 lg:grid-cols-2">
         <Section title={t("A favor (Bull)", "The case for (Bull)")} accent="long">
           {bull ? (
             <>
@@ -179,6 +182,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
               <p>{planText(impact.expected_magnitude, locale)}</p>
               <p className="mt-1 text-xs text-text-tertiary">{t("Probabilidad de que se mueva al menos:", "Probability of moving at least:")}</p>
               <HBars
+                animate
                 max={100}
                 labelWidth="3rem"
                 rows={[

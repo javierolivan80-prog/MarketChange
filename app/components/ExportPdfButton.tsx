@@ -163,7 +163,9 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
 
   return (
     <Button onClick={handleExport} disabled={busy} aria-live="polite">
-      {busy ? t("Generando…", "Generating…") : t("Exportar informe (PDF)", "Export report (PDF)")}
+      <span key={String(busy)} className={busy ? "m-fade" : undefined}>
+        {busy ? t("Generando…", "Generating…") : t("Exportar informe (PDF)", "Export report (PDF)")}
+      </span>
     </Button>
   );
 }

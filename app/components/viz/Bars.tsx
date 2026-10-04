@@ -5,12 +5,16 @@ export function HBars({
   max,
   format,
   labelWidth = "minmax(0,14rem)",
+  animate = false,
 }: {
   rows: { label: string; value: number; key?: string }[];
   max?: number;
   format: (v: number) => string;
   /** Ancho de la columna de etiquetas (grid-template-columns). */
   labelWidth?: string;
+  /** Rellenar las barras al aparecer (a la vez: se comparan entre sí). Solo
+   * fuera de tablas; la cifra no se anima nunca. */
+  animate?: boolean;
 }) {
   const top = max ?? Math.max(...rows.map((r) => r.value), 1);
   return (
@@ -21,7 +25,7 @@ export function HBars({
             {r.label}
           </span>
           <span className="flex max-w-md items-center gap-2">
-            <span className="h-2 rounded-r-sm bg-accent-500 dark:bg-accent-400" style={{ width: `${Math.max(2, (r.value / top) * 100)}%`, maxWidth: "calc(100% - 3.5rem)" }} />
+            <span className={`h-2 rounded-r-sm bg-accent-500 dark:bg-accent-400 ${animate ? "m-fill-right" : ""}`} style={{ width: `${Math.max(2, (r.value / top) * 100)}%`, maxWidth: "calc(100% - 3.5rem)" }} />
             <span className="num text-xs text-text-secondary">{format(r.value)}</span>
           </span>
         </li>

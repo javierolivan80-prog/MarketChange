@@ -44,23 +44,31 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
               {row.n_years === 1 ? t("ejercicio", "fiscal year") : t("ejercicios", "fiscal years")}
             </p>
           </div>
-          <span className="text-text-tertiary" aria-hidden="true">
-            {open ? "▾" : "▸"}
+          <span
+            className={`inline-block text-text-tertiary transition-transform duration-(--motion-duration-micro) ease-(--motion-ease-out) motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
+            aria-hidden="true"
+          >
+            ▸
           </span>
         </div>
         <p className="ml-10 mt-2 text-xs text-text-secondary">{qualityText(row.verdict, locale)}</p>
       </button>
 
       {open && (
-        <div className="space-y-3 border-t border-border-subtle px-4 pb-4 pt-3">
-          {row.components.map((c) => (
+        <div className="m-enter space-y-3 border-t border-border-subtle px-4 pb-4 pt-3">
+          {row.components.map((c, i) => (
             <div key={c.name}>
               <div className="mb-1 flex items-baseline justify-between gap-2">
                 <span className={`text-sm font-medium ${c.score === null ? "text-text-tertiary" : "text-foreground"}`}>{qualityText(c.name, locale)}</span>
                 <span className="num font-mono text-xs text-text-secondary">{c.score !== null ? `${c.score.toFixed(0)}/100` : t("sin datos", "no data")}</span>
               </div>
               <div className="mb-1 h-1.5 bg-surface-sunken">
-                <div className={`h-1.5 ${barColorClass(c.score)}`} style={{ width: `${c.score ?? 0}%` }} />
+                {/* Las barras se rellenan escalonadas (media unidad de stagger): se
+                    ve qué criterios sostienen la nota y cuáles la bajan. */}
+                <div
+                  className={`m-fill-right h-1.5 ${barColorClass(c.score)}`}
+                  style={{ width: `${c.score ?? 0}%`, animationDelay: `calc(var(--motion-stagger) / 2 * ${i})` }}
+                />
               </div>
               <p className="text-xs text-text-secondary">{qualityText(c.explanation, locale)}</p>
             </div>

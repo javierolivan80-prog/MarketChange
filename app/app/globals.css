@@ -42,6 +42,22 @@
      no llega a 3:1 de contraste, así que siempre va con etiqueta visible. */
   --gain: #047857;
   --loss: #fb7185;
+
+  /* Motion (ver MOTION_PLAN.md). Única fuente de verdad de duraciones y
+     curvas; lib/motion.ts las replica en ms para Recharts y un test
+     comprueba que no se separen. Tono institucional: sin rebote ni
+     elástico, y nada por encima de --motion-duration-max. */
+  --motion-duration-instant: 0ms;
+  --motion-duration-micro: 120ms;
+  --motion-duration-fast: 180ms;
+  --motion-duration-base: 240ms;
+  --motion-duration-data: 560ms;
+  --motion-duration-max: 800ms;
+  --motion-stagger: 80ms;
+  --motion-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-shift: 4px;
 }
 
 /* Modo oscuro: negro real (no "gris oscuro" tipo neutral-950) — la app abre
@@ -126,5 +142,118 @@ body {
 @media (prefers-reduced-motion: no-preference) {
   html {
     scroll-behavior: smooth;
+  }
+}
+
+/* Nota de bienvenida ya cerrada: oculta antes del primer pintado (ver el
+   script de layout.tsx), sin esperar a hidratar. */
+html[data-welcome-dismissed] [data-welcome-note] {
+  display: none;
+}
+
+/* ── Motion ─────────────────────────────────────────────────────────────
+   La animación está para comunicar (qué apareció, en qué orden se razonó,
+   desde dónde sale un plan), no para decorar. Todas las clases .m-* son
+   opt-in y solo existen dentro de `no-preference`: con movimiento reducido
+   el elemento se pinta directamente en su estado final, sin fundidos. Solo
+   se anima opacity, transform, clip-path y stroke-dashoffset (componibles,
+   sin recalcular layout). Los @keyframes solo declaran el `from`: el `to`
+   es el estado natural del elemento, así que el dato final es siempre el
+   que hay en el DOM. */
+@keyframes m-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-shift));
+  }
+}
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes m-exit {
+  to {
+    opacity: 0;
+  }
+}
+/* Relleno de barra sin animar width: se recorta y se destapa. */
+@keyframes m-fill-right {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+@keyframes m-fill-left {
+  from {
+    clip-path: inset(0 0 0 100%);
+  }
+}
+@keyframes m-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+/* Skeleton: pulso de opacidad de poca amplitud. Sin shimmer: un barrido es
+   un gradiente, y la estética del producto no los usa. */
+@keyframes m-skeleton {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .m-enter {
+    animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
+  }
+  .m-fade {
+    animation: m-fade var(--motion-duration-fast) var(--motion-ease-out) both;
+  }
+  .m-exit {
+    animation: m-exit var(--motion-duration-fast) var(--motion-ease-in) both;
+  }
+  .m-fill-right {
+    animation: m-fill-right var(--motion-duration-data) var(--motion-ease-out) both;
+  }
+  .m-fill-left {
+    animation: m-fill-left var(--motion-duration-data) var(--motion-ease-out) both;
+  }
+  /* Requiere pathLength="1" en el <path>. */
+  .m-draw {
+    stroke-dasharray: 1 1;
+    animation: m-draw var(--motion-duration-data) var(--motion-ease-out) both;
+  }
+  /* Lo que concluye a algo que se dibuja (la cifra final de una curva)
+     aparece cuando ese algo termina. */
+  .m-after-data {
+    animation-delay: var(--motion-duration-data);
+  }
+  .m-skeleton {
+    animation: m-skeleton 1.6s linear infinite;
+  }
+
+  /* Revelado secuencial (Bull → Bear → Judge): los dos primeros hijos
+     escalonados y el resto a la vez que el tercero — el escalonado solo
+     tiene sentido mientras cuenta un orden; más allá solo retrasa. */
+  .m-stagger > * {
+    animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
+  }
+  .m-stagger > :nth-child(2) {
+    animation-delay: var(--motion-stagger);
+  }
+  .m-stagger > :nth-child(n + 3) {
+    animation-delay: calc(var(--motion-stagger) * 2);
+  }
+
+  /* Paneles plegables nativos: lo que se despliega entra con un fundido y
+     4px de desplazamiento. Plegar es instantáneo (no se retiene la acción
+     siguiente esperando a una salida). */
+  details[open] > :not(summary) {
+    animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
   }
 }

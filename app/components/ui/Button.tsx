@@ -13,7 +13,7 @@ import type { ButtonHTMLAttributes } from "react";
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 
 const BASE =
-  "inline-flex min-h-9 items-center justify-center gap-1.5 px-3 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex min-h-9 items-center justify-center gap-1.5 px-3 text-sm font-medium transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) disabled:cursor-not-allowed disabled:opacity-40";
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary: "bg-accent-600 text-white hover:bg-accent-700 dark:bg-accent-500 dark:hover:bg-accent-400 dark:text-black",

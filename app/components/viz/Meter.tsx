@@ -25,17 +25,19 @@ export function Meter({
 }
 
 /** La puntuación del plan técnico por partes: un tramo por criterio, ancho
- * proporcional a lo que vale (40/30/20/10), relleno si se cumple. */
+ * proporcional a lo que vale (40/30/20/10), relleno si se cumple. Los tramos
+ * cumplidos aparecen en orden (la nota se construye sumando); el color de
+ * cada uno es el final desde el primer fotograma. */
 export function ScoreSegments({ parts, label }: { parts: { name: string; max: number; value: number }[]; label: string }) {
   const total = parts.reduce((s, p) => s + p.max, 0) || 1;
   return (
     <span className="flex h-2 w-full gap-0.5" role="img" aria-label={label}>
-      {parts.map((p) => (
+      {parts.map((p, i) => (
         <span
           key={p.name}
           title={`${p.name}: ${p.value}/${p.max}`}
-          className={`h-full rounded-sm ${p.value > 0 ? "bg-accent-600 dark:bg-accent-400" : "bg-border-subtle"}`}
-          style={{ width: `${(p.max / total) * 100}%` }}
+          className={`h-full rounded-sm ${p.value > 0 ? "m-fade bg-accent-600 dark:bg-accent-400" : "bg-border-subtle"}`}
+          style={{ width: `${(p.max / total) * 100}%`, animationDelay: `calc(var(--motion-stagger) * ${i})` }}
         />
       ))}
     </span>

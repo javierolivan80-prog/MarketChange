@@ -24,12 +24,18 @@ export async function generateMetadata(): Promise<Metadata> {
 // usuario lo elige a mano con ThemeToggle.tsx. Sin este script la página
 // arrancaría en claro y "saltaría" a oscuro tras hidratar — un parpadeo que
 // en un producto que aspira a verse serio se nota de inmediato.
+//
+// Por lo mismo marca si la nota de bienvenida ya se cerró (misma clave que
+// WelcomeNote.tsx): la nota se pinta en el servidor y globals.css la oculta
+// antes del primer pintado, en vez de aparecer tras hidratar y empujar la
+// página hacia abajo.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var stored = localStorage.getItem("theme");
     var dark = stored !== "light";
     document.documentElement.classList.toggle("dark", dark);
+    if (localStorage.getItem("welcome-dismissed-v1") === "1") document.documentElement.dataset.welcomeDismissed = "1";
   } catch (e) {}
 })();
 `;

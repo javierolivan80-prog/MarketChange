@@ -14,9 +14,31 @@ export default async function Loading() {
     <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6" aria-busy="true">
       <p className="sr-only">{t("Cargando…", "Loading…")}</p>
       <div className="mb-6 h-14 border-b border-border-subtle" />
-      <div className="mb-3 h-7 w-48 animate-pulse bg-surface-raised motion-reduce:animate-none" />
-      <div className="mb-6 h-4 w-80 max-w-full animate-pulse bg-surface-raised motion-reduce:animate-none" />
-      <div className="h-64 animate-pulse border border-border-subtle bg-surface-raised motion-reduce:animate-none" />
+      {/* Misma forma que una página de datos (título, franja de cifras,
+          tabla), para que al llegar el contenido no salte nada de sitio. El
+          pulso es .m-skeleton: poca amplitud y nada con movimiento reducido. */}
+      <div className="m-skeleton">
+        <div className="mb-3 h-7 w-48 bg-surface-raised" />
+        <div className="mb-6 h-4 w-80 max-w-full bg-surface-raised" />
+        <div className="mb-6 flex flex-wrap gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
+              <div className="mb-2 h-3 w-20 bg-surface-raised" />
+              <div className="h-7 w-24 bg-surface-raised" />
+            </div>
+          ))}
+        </div>
+        <div className="border border-border-subtle">
+          <div className="h-9 border-b border-border-strong bg-surface-raised" />
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="flex h-10 items-center gap-4 border-b border-border-subtle px-3 last:border-b-0">
+              <div className="h-3 w-16 bg-surface-raised" />
+              <div className="h-3 flex-1 bg-surface-raised" />
+              <div className="h-3 w-12 bg-surface-raised" />
+            </div>
+          ))}
+        </div>
+      </div>
     </main>
   );
 }

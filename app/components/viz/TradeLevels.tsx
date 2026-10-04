@@ -48,10 +48,14 @@ export function TradeLevels({
 
   // Tramo entre dos precios, con 1px de aire a cada lado de la entrada para
   // que riesgo y beneficio se lean como dos piezas (la "separación de 2px").
+  // En la versión completa cada tramo crece desde `a` hacia `b`: riesgo y
+  // beneficio salen de la entrada, que es de donde sale el plan. En la
+  // compacta (filas de tabla) no se anima: diez barras a la vez son ruido.
   const segment = (a: number, b: number, className: string) => {
     const left = Math.min(pos(a), pos(b));
     const width = Math.abs(pos(a) - pos(b));
-    return <span className={`absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full ${className}`} style={{ left: `calc(${left}% + 1px)`, width: `calc(${width}% - 2px)` }} />;
+    const grow = compact ? "" : pos(b) >= pos(a) ? "m-fill-right" : "m-fill-left";
+    return <span className={`absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full ${grow} ${className}`} style={{ left: `calc(${left}% + 1px)`, width: `calc(${width}% - 2px)` }} />;
   };
 
   const bar = (

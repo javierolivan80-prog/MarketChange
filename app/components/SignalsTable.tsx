@@ -154,7 +154,13 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                         aria-label={`${isExpanded ? t("Ocultar razonamiento de", "Hide reasoning for") : t("Ver razonamiento de", "Show reasoning for")} ${row.original.ticker}, ${formatDate(row.original.d0_close_date, locale)}`}
                         className="-m-2 p-2 text-text-tertiary hover:text-foreground"
                       >
-                        {isExpanded ? "▾" : "▸"}
+                        {/* Un solo glifo que gira: se lee como el mismo control cambiando de estado, no como dos iconos. */}
+                        <span
+                          aria-hidden="true"
+                          className={`inline-block transition-transform duration-(--motion-duration-micro) ease-(--motion-ease-out) motion-reduce:transition-none ${isExpanded ? "rotate-90" : ""}`}
+                        >
+                          ▸
+                        </span>
                       </button>
                     </td>
                     {row.getVisibleCells().map((cell) => (
@@ -210,7 +216,7 @@ function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: numbe
   return (
     <tr className="border-b border-border-subtle bg-surface-raised">
       <td colSpan={colSpan} className="px-4 py-4">
-        {state.status === "loading" && <p className="text-xs text-text-tertiary">{t("Cargando análisis…", "Loading analysis…")}</p>}
+        {state.status === "loading" && <AnalysisSkeleton label={t("Cargando análisis…", "Loading analysis…")} />}
         {state.status === "error" && (
           <p className="text-xs text-text-secondary">
             {t("No se pudo cargar el análisis.", "The analysis could not be loaded.")}{" "}
@@ -219,8 +225,30 @@ function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: numbe
             </Link>
           </p>
         )}
-        {state.status === "ok" && <SignalAnalysis detail={state.detail} recommended={state.recommended} locale={locale} />}
+        {state.status === "ok" && (
+          <div className="m-fade">
+            <SignalAnalysis detail={state.detail} recommended={state.recommended} locale={locale} />
+          </div>
+        )}
       </td>
     </tr>
+  );
+}
+
+/** Hueco con la forma del análisis (decisión arriba, rejilla de secciones
+ * debajo) mientras llega de /api/senales/[id]. */
+function AnalysisSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status">
+      <span className="sr-only">{label}</span>
+      <div aria-hidden="true" className="m-skeleton">
+        <div className="mb-4 h-16 border border-border-subtle bg-surface" />
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-24 border border-border-subtle bg-surface" />
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
