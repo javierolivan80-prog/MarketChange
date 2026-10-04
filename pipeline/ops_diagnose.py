@@ -95,6 +95,18 @@ QUERIES: list[tuple[str, str]] = [
                               '[-+]?[0-9][0-9.,]*', 'N', 'g') AS motivo,
                count(*) AS n
         FROM event_analyses GROUP BY 1 ORDER BY 2 DESC LIMIT 15"""),
+    ("App — motivo REAL de los descartados antes de la IA (cifras = N)", """
+        SELECT regexp_replace(coalesce(bull_analyst_output->>'reason', '?'), '[-+]?[0-9][0-9.,]*', 'N', 'g') AS motivo,
+               count(*) AS n
+        FROM event_analyses WHERE model_version_bull_bear = 'SKIPPED_OBJECTIVE_NO_TRADE'
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 15"""),
+    ("App — rango high-low de D0 en los descartados por spread (percentiles, %)", """
+        SELECT count(*) AS n,
+               round(percentile_cont(0.1) WITHIN GROUP (ORDER BY v)::numeric, 2) AS p10,
+               round(percentile_cont(0.5) WITHIN GROUP (ORDER BY v)::numeric, 2) AS mediana,
+               round(percentile_cont(0.9) WITHIN GROUP (ORDER BY v)::numeric, 2) AS p90
+        FROM (SELECT (substring(bull_analyst_output->>'reason' FROM '/close=([0-9.]+)%'))::float AS v
+              FROM event_analyses WHERE bull_analyst_output->>'reason' LIKE '%proxy de spread%') x"""),
     ("App — cómo se decidió (IA real, caché o descartado antes de la IA)", """
         SELECT model_version_bull_bear AS modelo, from_cache, count(*) AS n
         FROM event_analyses GROUP BY 1, 2 ORDER BY 3 DESC"""),
