@@ -205,7 +205,10 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
         bar = ticker_prices[d]
         if bar["high_raw"] is None or bar["low_raw"] is None or bar["close_raw"] is None:
             continue
-        step_position_forward(position, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), d)
+        step_position_forward(
+            position, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), d,
+            open_=float(bar["open_raw"]) if bar.get("open_raw") is not None else None,
+        )
         if position.remaining_fraction <= 1e-9:
             break
 

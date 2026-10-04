@@ -239,17 +239,36 @@ class OpenPosition:
     thesis_expiry_date: date | None = None
 
 
-def step_position_forward(position: OpenPosition, high: float, low: float, close: float, trade_date: date) -> OpenPosition:
+def fill_con_gap(direction: str, open_: float | None, nivel: float, *, a_favor: bool) -> float:
+    """Precio de ejecución de una orden de nivel cuando la barra puede abrir
+    ya más allá de él (BUGS_REPORT.md H-09). En eventos los gaps son la
+    norma: si una acción LONG abre por debajo del stop, la venta se hace a la
+    apertura, no al stop (la pérdida es mayor). Simétrico para lo que va a
+    favor: un LONG que abre por encima del objetivo se cierra a la apertura
+    (la ganancia es mayor). Sin apertura conocida, el nivel (como antes)."""
+    if open_ is None:
+        return nivel
+    sube = (direction == "LONG") == a_favor  # ¿la orden salta si el precio sube?
+    return max(open_, nivel) if sube else min(open_, nivel)
+
+
+def step_position_forward(
+    position: OpenPosition, high: float, low: float, close: float, trade_date: date, open_: float | None = None
+) -> OpenPosition:
     """Aplica un día de precios a una posición abierta, mutando su estado
     (remaining_fraction, tiers_hit, closes) y devolviéndola. Pura respecto a
-    I/O — no toca la base de datos."""
+    I/O — no toca la base de datos.
+
+    open_: apertura del día. Con ella, los niveles que la barra ya ha
+    rebasado al abrir se ejecutan a la apertura (gap), ver fill_con_gap."""
     if position.remaining_fraction <= 1e-9:
         return position  # ya cerrada del todo, nada que hacer (defensivo)
 
     # 1) Stop-loss — máxima prioridad, ver docstring del módulo.
     sl_triggered = (low <= position.stop_loss_price) if position.direction == "LONG" else (high >= position.stop_loss_price)
     if sl_triggered:
-        position.closes.append((trade_date, position.remaining_fraction, position.stop_loss_price, "STOP_LOSS"))
+        fill = fill_con_gap(position.direction, open_, position.stop_loss_price, a_favor=False)
+        position.closes.append((trade_date, position.remaining_fraction, fill, "STOP_LOSS"))
         position.remaining_fraction = 0.0
         return position
 
@@ -257,7 +276,8 @@ def step_position_forward(position: OpenPosition, high: float, low: float, close
     if position.take_profit_price is not None:
         tp_triggered = (high >= position.take_profit_price) if position.direction == "LONG" else (low <= position.take_profit_price)
         if tp_triggered:
-            position.closes.append((trade_date, position.remaining_fraction, position.take_profit_price, "TAKE_PROFIT"))
+            fill = fill_con_gap(position.direction, open_, position.take_profit_price, a_favor=True)
+            position.closes.append((trade_date, position.remaining_fraction, fill, "TAKE_PROFIT"))
             position.remaining_fraction = 0.0
             return position
 
@@ -275,7 +295,8 @@ def step_position_forward(position: OpenPosition, high: float, low: float, close
                     else position.entry_price * (1 - threshold / 100)
                 )
                 actual_fraction = min(fraction, position.remaining_fraction)
-                position.closes.append((trade_date, actual_fraction, tier_price, "TRAILING_STOP"))
+                tier_fill = fill_con_gap(position.direction, open_, tier_price, a_favor=True)
+                position.closes.append((trade_date, actual_fraction, tier_fill, "TRAILING_STOP"))
                 position.remaining_fraction -= actual_fraction
                 position.tiers_hit = position.tiers_hit | {threshold}
                 position.used_trailing_stop = True
@@ -853,7 +874,10 @@ def simulate_portfolio(
                 if bar is None or bar["high_raw"] is None or bar["low_raw"] is None or bar["close_raw"] is None:
                     still_open.append(pos)  # sin dato ese día (festivo local/halt) — se mantiene abierta
                     continue
-                step_position_forward(pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today)
+                step_position_forward(
+                    pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today,
+                    open_=float(bar["open_raw"]) if bar["open_raw"] is not None else None,
+                )
                 if pos.remaining_fraction <= 1e-9:
                     record = consolidate_trade_record(pos)
                     record["version"] = version
