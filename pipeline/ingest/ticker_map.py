@@ -51,8 +51,31 @@ def _fetch_and_build_map() -> dict[str, str]:
       {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, "1": {...}, ...}
     """
     resp = throttled_get(SOURCE_URL)
-    raw = resp.json()
-    return {str(entry["cik_str"]): entry["ticker"] for entry in raw.values()}
+    return build_map(resp.json())
+
+
+def build_map(raw: dict) -> dict[str, str]:
+    """{cik: ticker} eligiendo, cuando un CIK tiene varios símbolos (común,
+    preferentes, warrants, unidades), la acción ordinaria.
+
+    Antes el diccionario se quedaba con la ÚLTIMA fila de cada CIK, que podía
+    ser el warrant o la preferente (BUGS_REPORT.md H-15): los eventos de esa
+    empresa se atribuían a un símbolo no operable y, desde que esos símbolos
+    se descartan al ingerir y se borran en ops_prune, se perdían. Ahora gana
+    el primer símbolo operable en el orden del fichero (la SEC lista primero
+    la clase principal); si ninguno lo es, el primero, como último recurso."""
+    elegido: dict[str, str] = {}
+    operable: set[str] = set()
+    for entry in raw.values():
+        cik, ticker = str(entry["cik_str"]), entry["ticker"]
+        if cik in operable:
+            continue
+        if is_tradable_symbol(ticker):
+            elegido[cik] = ticker
+            operable.add(cik)
+        elif cik not in elegido:
+            elegido[cik] = ticker
+    return elegido
 
 
 def get_ticker_map(force_refresh: bool = False) -> dict[str, str]:

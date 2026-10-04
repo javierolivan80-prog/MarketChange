@@ -586,3 +586,57 @@ def test_open_position_untouched_when_adv_is_none_or_generous():
     )
     assert pos_liquid.had_adv_cap_applied is False
     assert pos_liquid.position_size_dollars == pytest.approx(200_000.0)
+
+
+# ---------------------------------------------------------------------------
+# Gaps de apertura (BUGS_REPORT.md H-09): un nivel ya rebasado al abrir se
+# ejecuta a la apertura, no al nivel. Sin apertura, como antes.
+# ---------------------------------------------------------------------------
+
+
+def test_long_que_abre_bajo_el_stop_se_vende_a_la_apertura():
+    pos = _make_long_position(entry_price=100.0, take_profit_pct=2.0, stop_loss_pct=1.5)  # SL 98.5
+    step_position_forward(pos, high=95.0, low=92.0, close=93.0, trade_date=D0 + timedelta(days=1), open_=94.0)
+    assert pos.closes[-1][3] == "STOP_LOSS"
+    assert pos.closes[-1][2] == pytest.approx(94.0)  # la pérdida del gap no se recorta al stop
+
+
+def test_long_que_toca_el_stop_sin_gap_se_vende_al_stop():
+    pos = _make_long_position(entry_price=100.0, take_profit_pct=2.0, stop_loss_pct=1.5)
+    step_position_forward(pos, high=100.5, low=98.0, close=99.0, trade_date=D0 + timedelta(days=1), open_=100.0)
+    assert pos.closes[-1][2] == pytest.approx(98.5)
+
+
+def test_short_que_abre_sobre_el_stop_se_recompra_a_la_apertura():
+    pos = _make_short_position(entry_price=100.0)  # SL 101.5
+    step_position_forward(pos, high=108.0, low=104.0, close=106.0, trade_date=D0 + timedelta(days=1), open_=105.0)
+    assert pos.closes[-1][3] == "STOP_LOSS"
+    assert pos.closes[-1][2] == pytest.approx(105.0)
+
+
+def test_long_que_abre_sobre_el_objetivo_cierra_a_la_apertura():
+    pos = _make_long_position(entry_price=100.0, take_profit_pct=2.0, stop_loss_pct=1.5)  # TP 102
+    step_position_forward(pos, high=106.0, low=103.0, close=104.0, trade_date=D0 + timedelta(days=1), open_=105.0)
+    assert pos.closes[-1][3] == "TAKE_PROFIT"
+    assert pos.closes[-1][2] == pytest.approx(105.0)
+
+
+def test_short_que_abre_bajo_el_objetivo_cierra_a_la_apertura():
+    pos = _make_short_position(entry_price=100.0)  # TP 98
+    step_position_forward(pos, high=96.0, low=94.0, close=95.0, trade_date=D0 + timedelta(days=1), open_=95.5)
+    assert pos.closes[-1][3] == "TAKE_PROFIT"
+    assert pos.closes[-1][2] == pytest.approx(95.5)
+
+
+def test_tramo_de_trailing_rebasado_al_abrir_se_ejecuta_a_la_apertura():
+    pos = _make_long_position(entry_price=100.0, take_profit_pct=None, stop_loss_pct=5.0, trailing_tiers=[(20.0, 0.3)], target_days=20)
+    step_position_forward(pos, high=126.0, low=123.0, close=125.0, trade_date=D0 + timedelta(days=2), open_=124.0)
+    assert pos.closes[-1][3] == "TRAILING_STOP"
+    assert pos.closes[-1][2] == pytest.approx(124.0)
+
+
+def test_fill_con_gap_sin_apertura_devuelve_el_nivel():
+    from pipeline.backtest.portfolio_simulator import fill_con_gap
+
+    assert fill_con_gap("LONG", None, 98.5, a_favor=False) == 98.5
+    assert fill_con_gap("SHORT", None, 101.5, a_favor=False) == 101.5

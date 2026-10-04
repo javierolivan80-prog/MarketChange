@@ -131,6 +131,34 @@ def purge_incomplete_car_results(conn) -> int:
     return n
 
 
+# Fecha del arreglo de H-11: las ratios de volatilidad guardadas antes se
+# calcularon con la volatilidad de los últimos 60 días de TODA la serie
+# (datos posteriores a D0).
+VOL_RATIO_POINT_IN_TIME_SINCE = "2026-10-05"
+
+
+def reset_lookahead_volume_ratios(conn) -> int:
+    """Anula abnormal_volume_ratio en los CAR calculados antes de que la
+    volatilidad base fuera point-in-time (BUGS_REPORT.md H-11).
+
+    No se borra la fila entera para recalcularla, como en
+    purge_incomplete_car_results: el CAR en sí es correcto, y recalcularlo
+    exige precios que ops_prune ya puede haber borrado (se perdería). Sin la
+    ratio, los análogos simplemente no la promedian y la tesis no la usa para
+    saturar: mejor ningún dato que uno con información futura. Idempotente."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE car_results SET abnormal_volume_ratio = NULL "
+            "WHERE abnormal_volume_ratio IS NOT NULL AND computed_at < %s::date",
+            (VOL_RATIO_POINT_IN_TIME_SINCE,),
+        )
+        n = cur.rowcount
+    conn.commit()
+    if n:
+        logger.info("%d ratios de volatilidad calculadas con datos futuros anuladas (H-11)", n)
+    return n
+
+
 def populate_missing_car_results(conn, limit: int = 1000) -> int:
     """Recorre TODOS los eventos sin CAR, en páginas de `limit`.
 
@@ -195,6 +223,7 @@ if __name__ == "__main__":
     from pipeline.db.connection import get_connection
 
     conn = get_connection()
+    reset_lookahead_volume_ratios(conn)
     purged = purge_incomplete_car_results(conn)
     if purged:
         print(f"{purged} CAR con la ventana incompleta borrados (se recalculan cuando la ventana esté completa)")

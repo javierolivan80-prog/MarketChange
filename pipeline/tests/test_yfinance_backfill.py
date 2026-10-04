@@ -588,3 +588,182 @@ def test_download_one_with_retry_usa_retry_with_backoff_compartido(monkeypatch):
 
     assert llamadas["n"] == 2
     assert resultado is not None
+
+# ---------------------------------------------------------------------------
+# Splits entre descargas (BUGS_REPORT.md H-03)
+#
+# Close de yfinance ya viene ajustado por splits en la base del día de la
+# descarga. Con descargas incrementales, un split entre dos descargas dejaba
+# la serie partida en dos bases: un salto falso de −50 %.
+# ---------------------------------------------------------------------------
+
+from pipeline.ingest.yfinance_backfill import base_cambiada, cambio_de_base
+
+
+def test_un_split_2x1_es_un_cambio_de_base():
+    assert cambio_de_base(100.0, 50.0) is True
+
+
+def test_un_contrasplit_es_un_cambio_de_base():
+    assert cambio_de_base(0.5, 25.0) is True
+
+
+def test_una_revision_de_redondeo_no_es_un_cambio_de_base():
+    assert cambio_de_base(100.0, 100.4) is False
+
+
+def test_sin_cierre_no_se_puede_decir_que_cambio_la_base():
+    assert cambio_de_base(None, 50.0) is False
+    assert cambio_de_base(100.0, None) is False
+    assert cambio_de_base(0.0, 50.0) is False
+    assert cambio_de_base(100.0, float("nan")) is False
+
+
+def test_base_cambiada_compara_el_dia_de_referencia():
+    df = _df_precios(["2026-01-07", "2026-01-08"], close=50.0)
+    assert base_cambiada(df, "ACME", (date(2026, 1, 7), 100.0)) is True
+    assert base_cambiada(df, "ACME", (date(2026, 1, 7), 50.0)) is False
+
+
+def test_base_cambiada_sin_el_dia_de_referencia_no_decide():
+    df = _df_precios(["2026-01-08"], close=50.0)
+    assert base_cambiada(df, "ACME", (date(2026, 1, 7), 100.0)) is False
+    assert base_cambiada(df, "ACME", None) is False
+
+
+def test_base_cambiada_acepta_columnas_multiindex():
+    df = _df_precios(["2026-01-07"], close=50.0)
+    df.columns = pd.MultiIndex.from_tuples([(c, "ACME") for c in df.columns])
+    assert base_cambiada(df, "ACME", (date(2026, 1, 7), 100.0)) is True
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+class TestSplitsContraPostgres:
+    @pytest.fixture(autouse=True)
+    def _setup(self, monkeypatch):
+        from pipeline.db.connection import get_connection, init_schema
+
+        self.conn = get_connection()
+        init_schema(self.conn)
+        with self.conn.cursor() as cur:
+            cur.execute("TRUNCATE prices")
+        self.conn.commit()
+        monkeypatch.setattr(yfinance_backfill, "PAUSE_BETWEEN_BATCHES_S", 0)
+        self.descargas_completas: list[tuple] = []
+        yield
+        self.conn.close()
+
+    def _cierres(self, ticker: str = "ACME") -> dict:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT trade_date, close_raw FROM prices WHERE ticker = %s ORDER BY trade_date", (ticker,))
+            return {r["trade_date"]: (None if r["close_raw"] is None else float(r["close_raw"])) for r in cur.fetchall()}
+
+    def _simular_yahoo(self, monkeypatch, lote, serie_completa):
+        """La descarga por lotes devuelve `lote`; la individual (la de la serie
+        entera), `serie_completa`, y apunta desde qué fecha se pidió."""
+        monkeypatch.setattr(yfinance_backfill, "_descargar_lote_con_reintentos", lambda tickers, start, end: lote)
+
+        def _una(ticker, start, end):
+            self.descargas_completas.append((ticker, start, end))
+            return serie_completa
+
+        monkeypatch.setattr(yfinance_backfill, "_download_one_with_retry", _una)
+
+    def _insertar(self, filas: list[tuple[str, float, str]], ticker: str = "ACME") -> None:
+        with self.conn.cursor() as cur:
+            for dia, cierre, capturado in filas:
+                cur.execute(
+                    "INSERT INTO prices (ticker, trade_date, close_raw, captured_at) VALUES (%s, %s, %s, %s)",
+                    (ticker, dia, cierre, capturado),
+                )
+        self.conn.commit()
+
+    def test_split_entre_descargas_rebaja_la_serie_entera(self, monkeypatch):
+        yfinance_backfill._store_with_gap_detection(
+            self.conn, "ACME", _df_precios(["2026-01-05", "2026-01-06", "2026-01-07"], close=100.0), set()
+        )
+        # Split 2:1 después de la primera descarga: Yahoo devuelve ya todo a 50.
+        self._simular_yahoo(
+            monkeypatch,
+            lote=_df_precios(["2026-01-07", "2026-01-08", "2026-01-09"], close=50.0),
+            serie_completa=_df_precios(["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09"], close=50.0),
+        )
+
+        yfinance_backfill.backfill_tickers(["ACME"], date(2026, 1, 5), date(2026, 1, 9))
+
+        cierres = self._cierres()
+        assert sorted(cierres) == [date(2026, 1, d) for d in range(5, 10)]
+        assert set(cierres.values()) == {50.0}  # una sola base, sin el salto falso de −50 %
+        assert self.descargas_completas[0] == ("ACME", date(2026, 1, 5), date(2026, 1, 9))
+
+    def test_sin_split_solo_se_anade_la_cola(self, monkeypatch):
+        yfinance_backfill._store_with_gap_detection(
+            self.conn, "ACME", _df_precios(["2026-01-05", "2026-01-06", "2026-01-07"], close=100.0), set()
+        )
+        self._simular_yahoo(
+            monkeypatch,
+            lote=_df_precios(["2026-01-07", "2026-01-08", "2026-01-09"], close=100.0),
+            serie_completa=_df_precios(["2026-01-05"], close=1.0),  # no debe usarse
+        )
+
+        yfinance_backfill.backfill_tickers(["ACME"], date(2026, 1, 5), date(2026, 1, 9))
+
+        assert set(self._cierres().values()) == {100.0}
+        assert self.descargas_completas == []
+
+    def test_la_reparacion_encuentra_y_arregla_una_serie_ya_partida(self, monkeypatch):
+        # Lo que quedó guardado antes del arreglo: dos descargas en bases distintas.
+        self._insertar([
+            ("2026-01-05", 100.0, "2026-01-06"),
+            ("2026-01-06", 100.0, "2026-01-07"),
+            ("2026-01-07", 50.0, "2026-01-08"),
+            ("2026-01-08", 50.0, "2026-01-09"),
+        ])
+        self._simular_yahoo(
+            monkeypatch,
+            lote=None,
+            serie_completa=_df_precios(["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08"], close=50.0),
+        )
+
+        assert yfinance_backfill.tickers_con_salto_de_base(self.conn, ["ACME"]) == ["ACME"]
+        assert yfinance_backfill.reparar_saltos_de_base(self.conn, ["ACME"], date(2026, 1, 8)) == 1
+
+        assert set(self._cierres().values()) == {50.0}
+        # Ya en una sola descarga: no vuelve a ser candidata.
+        assert yfinance_backfill.tickers_con_salto_de_base(self.conn, ["ACME"]) == []
+
+    def test_un_salto_real_dentro_de_una_descarga_no_es_candidato(self):
+        self._insertar([
+            ("2026-01-05", 10.0, "2026-01-10"),
+            ("2026-01-06", 25.0, "2026-01-10"),
+        ])
+        assert yfinance_backfill.tickers_con_salto_de_base(self.conn, ["ACME"]) == []
+
+    def test_un_movimiento_pequeno_entre_descargas_no_es_candidato(self):
+        self._insertar([
+            ("2026-01-05", 100.0, "2026-01-06"),
+            ("2026-01-06", 108.0, "2026-01-07"),
+        ])
+        assert yfinance_backfill.tickers_con_salto_de_base(self.conn, ["ACME"]) == []
+
+    def test_la_redescarga_no_deja_dias_en_la_base_vieja(self, monkeypatch):
+        self._insertar([(f"2026-01-0{d}", 100.0, "2026-01-02") for d in range(5, 10)])
+        # Yahoo ya no trae el 7: si se dejara, quedaría a 100 en la base vieja.
+        self._simular_yahoo(
+            monkeypatch,
+            lote=None,
+            serie_completa=_df_precios(["2026-01-05", "2026-01-06", "2026-01-08", "2026-01-09"], close=50.0),
+        )
+
+        assert yfinance_backfill.redescargar_serie_completa(self.conn, "ACME", date(2026, 1, 9)) is True
+
+        cierres = self._cierres()
+        assert cierres[date(2026, 1, 7)] is None  # hueco marcado, sin precio inventado ni viejo
+        assert {v for v in cierres.values() if v is not None} == {50.0}
+
+    def test_si_la_redescarga_falla_se_conserva_la_serie(self, monkeypatch):
+        self._insertar([("2026-01-05", 100.0, "2026-01-06"), ("2026-01-06", 50.0, "2026-01-07")])
+        self._simular_yahoo(monkeypatch, lote=None, serie_completa=None)
+
+        assert yfinance_backfill.redescargar_serie_completa(self.conn, "ACME", date(2026, 1, 6)) is False
+        assert self._cierres() == {date(2026, 1, 5): 100.0, date(2026, 1, 6): 50.0}
