@@ -34,7 +34,7 @@ export function DrawdownChart({ equityCurve }: { equityCurve: PortfolioEquityPoi
           <XAxis dataKey="seq" type="number" domain={["dataMin", "dataMax"]} tick={{ fontSize: 10 }} tickFormatter={(seq: number) => dateBySeq.get(seq) ?? ""} minTickGap={40} />
           <YAxis tick={{ fontSize: 10 }} unit="%" width={40} />
           <Tooltip {...chartTooltipMotion} formatter={(value) => `${Number(value).toFixed(2)}%`} labelFormatter={(seq) => `${t("Fecha", "Date")}: ${dateBySeq.get(Number(seq)) ?? seq}`} />
-          <Area {...seriesMotion} type="monotone" dataKey="drawdown" stroke="#dc2626" fill="#dc2626" fillOpacity={0.2} strokeWidth={1.5} />
+          <Area {...seriesMotion} type="monotone" dataKey="drawdown" stroke="var(--loss)" fill="var(--loss)" fillOpacity={0.2} strokeWidth={1.5} />
         </AreaChart>
       </ResponsiveContainer>
     </div>

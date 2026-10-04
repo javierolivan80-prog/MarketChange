@@ -48,7 +48,11 @@ export function PortfolioEquityCurve({
   const last = values[values.length - 1];
   const [endX, endY] = toXY(points.length - 1, last);
   const positive = last >= startingCapital;
-  const strokeColor = positive ? "#16a34a" : "#dc2626";
+  // Línea y punto con el par de gráficos (--gain/--loss, validado para
+  // daltonismo); la cifra, que es texto, con el mismo par que SignedPct: en
+  // claro --loss no llega al contraste de texto (ver globals.css).
+  const strokeColor = positive ? "var(--gain)" : "var(--loss)";
+  const labelClass = positive ? "fill-emerald-700 dark:fill-emerald-400" : "fill-rose-700 dark:fill-rose-400";
   // Mismo cálculo que "Resultado" de la tarjeta (total_return = final /
   // capital inicial - 1): la cifra de arriba y el final de la curva tienen
   // que decir lo mismo. Antes la curva no tenía ninguna etiqueta y su color
@@ -76,13 +80,12 @@ export function PortfolioEquityCurve({
         <path d={pathD} pathLength={1} className="m-draw" fill="none" stroke={strokeColor} strokeWidth={1.5} />
         <circle className="m-fade m-after-data" cx={endX} cy={endY} r={2.5} fill={strokeColor} />
         <text
-          className="m-fade m-after-data"
+          className={`m-fade m-after-data ${labelClass}`}
           x={endX - 4}
           y={endY < 14 ? endY + 12 : endY - 5}
           textAnchor="end"
           fontSize={9}
           fontWeight={600}
-          fill={strokeColor}
         >
           {label}
         </text>
