@@ -16,6 +16,10 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
    - el LLM conoce el desenlace de eventos anteriores a su fecha de corte;
    - el nightly corre `--full-range`, así que el OOS se mira cada noche.
 
+**Verificado con datos de producción (sección 2.1):** los 200 análisis guardados son NO_TRADE y **ninguno llegó a la IA**.
+- 126 se quedaron sin barra de D0 al analizarse (H-39) y quedan fuera de la cola para siempre.
+- 58 cayeron en el proxy de spread (H-08, confirmado).
+
 ## 2. Tabla de hallazgos
 
 Severidad: **CRÍTICA** = afecta a la validez del backtest/OOS o puede perder dinero/datos.
@@ -86,7 +90,7 @@ Severidad: **CRÍTICA** = afecta a la validez del backtest/OOS o puede perder di
 - **Problema:** se usa el rango diario `(high−low)/close` de D0 como "spread" y se rechaza si supera 0,5 %. El rango diario de una mega-cap normal es de 1-3 %, y más en un día de evento.
 - **Impacto:** casi cualquier evento acaba en NO_TRADE por "ilíquido". El Judge no se invoca (pre-filtro), así que no hay señales. Podría explicar "0 análisis técnicos".
 - **Fix:** usar un estimador de spread real (Corwin-Schultz o Abdi-Ranaldo), o quitar el componente (a) y dejar el ADV.
-- **SOSPECHA**, verificar con: `SELECT abstention_decision->'BALANCED'->>'reason_if_no_trade', count(*) FROM event_analyses GROUP BY 1`.
+- **CONFIRMADO** (sección 2.1): de los 184 eventos que llegaron al control de liquidez, **pasaron 0**. Los 58 con barra de D0 tenían rangos del 1,43 % (p10), 2,77 % (mediana) y 9,76 % (p90), todos por encima del techo del 0,5 %.
 - **PREGUNTA:** el umbral.
 - **Esfuerzo:** S.
 
@@ -140,6 +144,43 @@ Severidad: **CRÍTICA** = afecta a la validez del backtest/OOS o puede perder di
 - **Fix:** preferir el ticker común (el primero del fichero, o el que no tenga sufijo).
 - **SOSPECHA**, verificar contando CIKs con más de un ticker en `company_tickers.json` y cuántos acaban en `-`, `.`, `W`, `U`.
 - **Esfuerzo:** S.
+
+**H-39 · CRÍTICA · Eventos analizados antes de tener su barra de D0 → NO_TRADE permanente**
+- **Dónde:**
+  - `nightly_pipeline.yml`: el paso "Análisis de eventos" no tiene `if:` y corre en las 3 pasadas diarias;
+  - el paso "Actualizar precios del universo" (línea 389) solo corre en la nocturna;
+  - `event_analysis_pipeline.py:79` (`fetch_events_needing_analysis`) no exige que exista precio en D0.
+- **Problema:**
+  - las pasadas de 14:30 y 21:30 UTC analizan eventos de hoy, o con D0 = mañana (filings tras el cierre), sin la barra de D0;
+  - `high_low_range_pct = None` produce "sin datos de high/low", descartado antes de la IA;
+  - se guarda una fila en `event_analyses`, así que el evento **sale de la cola para siempre** (la cola es `ea.event_id IS NULL`).
+- **Impacto:**
+  - **126 de 200 análisis (63 %)** están en este caso, verificado en producción;
+  - eventos potencialmente operables se pierden para siempre sin aviso;
+  - analizar antes del cierre de D0 contradice además la regla de decisión "al cierre de D0".
+- **Fix:**
+  - (a) en la cola, exigir `EXISTS (SELECT 1 FROM prices WHERE ticker = e.ticker AND trade_date = e.d0_close_date AND high_raw IS NOT NULL)`;
+  - (b) no persistir los descartes por "sin datos" (dejarlos pendientes) o marcarlos como reintentables;
+  - (c) migración para borrar esas 126 filas y que se re-analicen.
+- **Esfuerzo:** S.
+
+**H-38 · MEDIA · Motivo engañoso en los eventos descartados antes de la IA**
+- **Dónde:** `event_analysis_pipeline.py` (rama `skip_reason`: `net_conviction=0`, `confidence=0`) y `abstention_engine.decide_for_strategy`, donde la regla 2 (confianza) va antes que las objetivas.
+- **Problema:** a un evento descartado por una regla objetiva se le guarda `confidence_in_conviction=0`. Al re-evaluar las 3 versiones, la regla "confianza < 40" salta antes que la regla que de verdad lo descartó, y ese es el `reason_if_no_trade` que se guarda y enseña la app.
+- **Impacto:** 188 de 200 eventos muestran "no sabemos qué pasa (confianza 0 < 40)" cuando el motivo real era falta de datos o liquidez. Despista al usuario y a cualquier diagnóstico.
+- **Fix:** cuando hay `skip_reason`, guardar ese motivo en las 3 decisiones sin pasar por `decide_all_strategies`.
+- **Esfuerzo:** S.
+
+### 2.1 Verificación con datos de producción (diagnóstico de solo lectura, run 86, 2026-10-04)
+
+| Qué | Resultado |
+|---|---|
+| Análisis guardados | 200 (del 29/9 al 2/10), **0 operables** en las 3 versiones |
+| Cómo se decidieron | **200/200 `SKIPPED_OBJECTIVE_NO_TRADE`**: ninguna llamada a Bull/Bear/Judge (0 € de API gastados) |
+| Motivo real del descarte | 126 sin barra de D0 (H-39) · 58 proxy de spread (H-08) · 12 novelty < 20 · 4 sin beta |
+| Rango high-low de D0 de los 58 descartados por spread | p10 1,43 % · mediana 2,77 % · p90 9,76 % (techo: 0,5 %) |
+| Motivo que muestra la app | 188 "confianza 0 < 40" (H-38) · 12 novelty |
+| H-13 (techo de EV) | No verificable todavía: ningún evento ha llegado a la Etapa 6 con la IA |
 
 ### Hallazgos medios y bajos
 
@@ -212,12 +253,15 @@ Coincide con `ANALYSIS_EST_COST_PER_EVENT_USD = 0,011`. Con 50 €/mes salen uno
 11. **`filed_at` sin hora de aceptación:** debe quedar marcado como estimado (H-17).
 12. **Cobertura baja:** `universe_maintenance` (57 %), `yfinance_backfill` (60 %), `ops_history_rounds` (62 %), `portfolio_report` (78 %), `adversarial_analyzer` (81 %): rutas de error y lotes.
 13. **Workflow:** el nightly no corre `--full-range` sobre OOS (H-07; test de configuración).
+14. **Cola de la IA:** un evento sin barra de D0 no entra, y un descarte por "sin datos" no se persiste (H-39).
+15. **Descartados antes de la IA:** `reason_if_no_trade` es el motivo objetivo real, no "confianza 0" (H-38).
 
 ## 5. Plan de ataque (PRs pequeños y atómicos)
 
 Cada PR lleva su test en rojo primero y la suite al 100 %.
 
-1. **PR-1 · Análogos point-in-time (H-01 + test 1).** El de más impacto con el menor cambio.
+0. **PR-0 · Cola de la IA solo con barra de D0 (H-39 + H-38)** y re-analizar las 126 filas afectadas. Es lo que hoy impide cualquier señal en producción.
+1. **PR-1 · Análogos point-in-time (H-01 + test 1).** El de más impacto en el backtest con el menor cambio.
 2. **PR-2 · CAR completo o nada (H-02 + H-16 + test 2)** más una migración que borre los CAR truncados y recalcule.
 3. **PR-3 · Caché correcta y techo de EV (H-12 + H-13 + tests 6-7).** Ahorro de API inmediato.
 4. **PR-4 · OOS protegido (H-07, H-37).** Tras responder la PREGUNTA sobre qué muestra la app.
