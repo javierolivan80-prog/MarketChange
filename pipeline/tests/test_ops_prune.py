@@ -85,3 +85,48 @@ def test_run_completo_no_falla(conn):
     _event(conn, "ACMEW", "c1")
     run(conn, vacuum_full=True)
     assert _ids(conn) == set()
+
+
+def _price(conn, ticker, days_ago):
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO prices (ticker, trade_date, close_raw, adj_factor) VALUES (%s, current_date - %s, 10, 1)",
+            (ticker, days_ago),
+        )
+    conn.commit()
+
+
+def _prices(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT ticker, (current_date - trade_date) AS d FROM prices ORDER BY 1, 2")
+        return [(r["ticker"], r["d"]) for r in cur.fetchall()]
+
+
+def test_precios_antiguos_solo_de_empresas_no_operadas_y_sin_uso(conn):
+    from pipeline.ops_prune import PRICE_KEEP_DAYS, prune_old_prices
+
+    viejo, reciente = PRICE_KEEP_DAYS + 100, 10
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date, in_investable_universe) "
+            "VALUES ('2','BIGC','Big Co','2024-01-01','2024-01-01', TRUE), "
+            "('3','USED','Used Co','2024-01-01','2024-01-01', FALSE)"
+        )
+    conn.commit()
+    usado = _event(conn, "USED", "u1")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO technical_analyses (event_id, direction, confidence, passes_filters, details) "
+            "VALUES (%s, 'LONG', 50, FALSE, '{}')",
+            (usado,),
+        )
+    conn.commit()
+    for t in ("ACME", "BIGC", "USED", "SPY"):
+        _price(conn, t, viejo)
+        _price(conn, t, reciente)
+
+    assert prune_old_prices(conn) == 1
+    assert ("ACME", viejo) not in _prices(conn)
+    assert ("ACME", reciente) in _prices(conn)
+    for t in ("BIGC", "USED", "SPY"):
+        assert (t, viejo) in _prices(conn), t
