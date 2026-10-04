@@ -178,6 +178,18 @@ jobs:
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
       - run: pip install -r pipeline/requirements.txt
+      - name: Aplicar schema (idempotente — borra índices duplicados)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -c "from pipeline.db.connection import get_connection, init_schema; init_schema(get_connection())"
+      - name: Hacer sitio antes de los precios (plan gratuito ~500 MB)
+        # Borra eventos de símbolos no operables sin nada que los use y el
+        # texto de filings antiguos, y compacta `events` (VACUUM FULL): ver
+        # ops_prune.py. Va ANTES de los precios para que el freno de tamaño
+        # de ops_history_prices tenga margen.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ops_prune --vacuum-full
       - name: Precios de los eventos históricos (acotados, con freno de tamaño)
         # Ventana por ticker alrededor de SUS eventos, no el universo entero
         # desde el principio: ver la cabecera de ops_history_prices.py.
