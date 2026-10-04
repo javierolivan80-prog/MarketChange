@@ -23,7 +23,8 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
 **Estado (2026-10-04):**
 - **Arreglados:**
   - H-39, H-38 y H-08 (opción a: liquidez solo por ADV): PR #66, fusionado.
-  - H-01, H-02, H-12 y H-13: rama `claude/great-allen-nv7mdd`, PR siguiente.
+  - H-01, H-02, H-12 y H-13: PR #67, fusionado.
+  - H-03 (splits entre descargas): cada descarga incremental vuelve a pedir el último día guardado y, si su cierre cambió, se rebaja la serie entera; los tickers ya partidos se reparan por tandas en el nightly. H-04 (filtros absolutos con precios reexpresados por contrasplits) sigue abierto.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

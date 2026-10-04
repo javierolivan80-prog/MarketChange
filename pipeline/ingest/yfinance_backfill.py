@@ -55,6 +55,31 @@ DOWNLOAD_THREADS = 8       # descargas en paralelo dentro de un lote (ver _desca
 # carga de histórico (ops_history_prices.py).
 MAX_DB_MB = float(os.environ.get("HISTORY_MAX_DB_MB", "400"))
 
+# Splits (BUGS_REPORT.md H-03). Con auto_adjust=False, la columna Close de
+# yfinance NO es el precio negociado: ya viene ajustada por splits, en la base
+# del día de la descarga. Como las descargas son incrementales, un split entre
+# dos descargas deja las filas viejas en la base anterior y las nuevas en la
+# posterior: un salto falso de −50 % (o +900 % en un contrasplit) que rompe
+# CAR, beta, stops del backtest y paper trading, en silencio y para siempre.
+#
+# Por eso cada descarga incremental vuelve a pedir el último día ya guardado:
+# si su Close ya no coincide, la base cambió y se rebaja la serie entera del
+# ticker. Los dividendos no tocan Close (solo Adj Close), así que una
+# diferencia aquí es un split o una corrección de Yahoo; ambas se arreglan
+# igual. 3 %: muy por encima de las revisiones de redondeo y muy por debajo
+# del split más pequeño habitual (5:4, un 20 %).
+TOLERANCIA_CAMBIO_DE_BASE = 0.03
+# Reparación de lo que ya se guardó mal antes de este arreglo: un salto entre
+# dos días consecutivos que vinieron de descargas DISTINTAS (captured_at
+# diferente) es la firma de un cambio de base. Un salto real también puede
+# cumplirlo (una biotech tras la FDA): el coste es rebajar ese ticker una vez,
+# porque después toda la serie comparte captured_at y deja de ser candidata.
+# 30 %: capta los splits 3:2 y mayores.
+UMBRAL_SALTO_DE_BASE = 0.30
+# Rebajas completas por corrida: la primera noche puede haber muchas
+# candidatas acumuladas; el resto se hace en las siguientes.
+MAX_REPARACIONES_POR_CORRIDA = int(os.environ.get("PRICE_REPAIR_MAX", "200"))
+
 def database_mb(conn) -> float:
     with conn.cursor() as cur:
         cur.execute("SELECT pg_database_size(current_database()) AS b")
@@ -265,10 +290,11 @@ def pendientes_de_descarga(
     la ejecución anterior ya los hubiera guardado. Descargar solo lo que falta
     convierte una reejecución de hora y media en segundos.
 
-    Es coherente con el diseño del módulo: close_raw y adj_factor se guardan
-    por separado precisamente para que el histórico no haya que rebajarlo
-    cuando cambian los ajustes por splits y dividendos (ver cabecera). Para
-    forzar una redescarga completa está --forzar.
+    Ojo: eso solo vale para dividendos. Close ya viene ajustado por splits,
+    así que tras un split la cola nueva llega en otra base que lo guardado
+    (BUGS_REPORT.md H-03): backfill_tickers lo detecta volviendo a pedir el
+    último día guardado y rebaja entonces la serie entera. Para forzar una
+    redescarga completa de todo está --forzar.
     """
     a_pedir: list[tuple[str, date]] = []
     al_dia: list[str] = []
@@ -285,6 +311,43 @@ def pendientes_de_descarga(
     return a_pedir, al_dia
 
 
+def cierres_de_referencia(conn, tickers: list[str]) -> dict[str, tuple[date, float]]:
+    """Último cierre guardado de cada ticker: el que se vuelve a pedir para
+    saber si la base de precios cambió (ver TOLERANCIA_CAMBIO_DE_BASE)."""
+    if not tickers:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (ticker) ticker, trade_date, close_raw FROM prices "
+            "WHERE ticker = ANY(%s) AND close_raw IS NOT NULL "
+            "ORDER BY ticker, trade_date DESC",
+            (list(tickers),),
+        )
+        return {r["ticker"]: (r["trade_date"], float(r["close_raw"])) for r in cur.fetchall()}
+
+
+def cambio_de_base(cierre_guardado: float | None, cierre_nuevo: float | None, tolerancia: float = TOLERANCIA_CAMBIO_DE_BASE) -> bool:
+    """True si el mismo día trae ahora otro cierre: la serie guardada está en
+    otra base (un split entre las dos descargas)."""
+    if not cierre_guardado or not cierre_nuevo or pd.isna(cierre_guardado) or pd.isna(cierre_nuevo):
+        return False
+    return abs(cierre_nuevo / cierre_guardado - 1) > tolerancia
+
+
+def base_cambiada(df: pd.DataFrame, ticker: str, referencia: tuple[date, float] | None) -> bool:
+    """Compara el día de referencia de la descarga nueva con lo guardado. Si
+    la descarga no trae ese día no se puede saber: False, y la reparación
+    (tickers_con_salto_de_base) lo cazará si hay salto."""
+    if referencia is None or df is None or df.empty:
+        return False
+    dia, cierre_guardado = referencia
+    df = aplanar_columnas(df, ticker)
+    filas = df[[d.date() == dia for d in df.index]]
+    if filas.empty or "Close" not in filas.columns:
+        return False
+    return cambio_de_base(cierre_guardado, float(filas["Close"].iloc[0]))
+
+
 def backfill_tickers(tickers: list[str], start: date, end: date, forzar: bool = False) -> None:
     from pipeline.db.connection import get_connection
 
@@ -295,29 +358,37 @@ def backfill_tickers(tickers: list[str], start: date, end: date, forzar: bool = 
         logger.info("%d símbolos que no son acciones ordinarias operables, sin descargar (p. ej. %s)", len(descartados), ", ".join(descartados[:8]))
         tickers = [t for t in tickers if t.startswith("^") or is_tradable_symbol(t)]
 
+    referencias: dict[str, tuple[date, float]] = {}
     if forzar:
         a_pedir, al_dia = [(t, start) for t in tickers], []
     else:
         a_pedir, al_dia = pendientes_de_descarga(
             ultimo_dia_guardado(conn, tickers), tickers, start, end
         )
+        # Las descargas incrementales piden también el último día guardado,
+        # para comprobar que la base de precios no cambió (H-03).
+        referencias = {
+            t: ref for t, ref in cierres_de_referencia(conn, [t for t, _ in a_pedir]).items() if ref[0] >= start
+        }
+        a_pedir = [(t, referencias[t][0] if t in referencias else desde) for t, desde in a_pedir]
     if al_dia:
         logger.info("%d de %d tickers ya al día, no se vuelven a pedir", len(al_dia), len(tickers))
     if not a_pedir:
         logger.info("Nada que descargar: los %d tickers ya cubren hasta %s", len(tickers), end)
-        return
+    else:
+        # Se agrupan por fecha de inicio para que cada lote sea una sola
+        # petición con un rango común. En la práctica casi todos comparten fecha.
+        por_fecha: dict[date, list[str]] = {}
+        for ticker, desde in a_pedir:
+            por_fecha.setdefault(desde, []).append(ticker)
 
-    # Se agrupan por fecha de inicio para que cada lote sea una sola petición
-    # con un rango común. En la práctica casi todos comparten fecha.
-    por_fecha: dict[date, list[str]] = {}
-    for ticker, desde in a_pedir:
-        por_fecha.setdefault(desde, []).append(ticker)
+        for desde, tickers_desde in sorted(por_fecha.items()):
+            logger.info("%d tickers a descargar desde %s", len(tickers_desde), desde)
+            if not _descargar_grupo(conn, tickers_desde, desde, end, expected_days, max_db_mb=MAX_DB_MB, referencias=referencias):
+                return
+        logger.info("Backfill de precios completo para %d tickers", len(tickers))
 
-    for desde, tickers_desde in sorted(por_fecha.items()):
-        logger.info("%d tickers a descargar desde %s", len(tickers_desde), desde)
-        if not _descargar_grupo(conn, tickers_desde, desde, end, expected_days, max_db_mb=MAX_DB_MB):
-            return
-    logger.info("Backfill de precios completo para %d tickers", len(tickers))
+    reparar_saltos_de_base(conn, tickers, end)
 
 
 def confirmar_forzar(n_tickers: int, start: date, end: date, *, leer_respuesta=input) -> bool:
@@ -340,9 +411,34 @@ def confirmar_forzar(n_tickers: int, start: date, end: date, *, leer_respuesta=i
     return respuesta.strip().lower() == "si"
 
 
-def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_days: set[date], max_db_mb: float | None = None) -> bool:
+def _descargar_grupo(
+    conn,
+    tickers: list[str],
+    start: date,
+    end: date,
+    expected_days: set[date],
+    max_db_mb: float | None = None,
+    referencias: dict[str, tuple[date, float]] | None = None,
+) -> bool:
     """Descarga por lotes. Devuelve False si se paró por el tope de tamaño de
-    la base de datos (max_db_mb), True si terminó."""
+    la base de datos (max_db_mb), True si terminó.
+
+    referencias: último cierre guardado por ticker (cierres_de_referencia).
+    Si la descarga lo trae con otro valor, la base cambió y en vez de añadir
+    la cola se rebaja la serie entera del ticker."""
+    referencias = referencias or {}
+
+    def _guardar(ticker: str, df: pd.DataFrame) -> None:
+        if base_cambiada(df, ticker, referencias.get(ticker)):
+            logger.warning(
+                "%s: el cierre del %s ya no coincide con el guardado (split o corrección): "
+                "se rebaja la serie completa para no mezclar bases",
+                ticker, referencias[ticker][0],
+            )
+            redescargar_serie_completa(conn, ticker, end)
+        else:
+            _store_with_gap_detection(conn, ticker, df, expected_days)
+
     for i in range(0, len(tickers), BATCH_SIZE):
         if max_db_mb is not None:
             size = database_mb(conn)
@@ -362,7 +458,7 @@ def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_
             if df is None:
                 pendientes.append(ticker)
                 continue
-            _store_with_gap_detection(conn, ticker, df, expected_days)
+            _guardar(ticker, df)
 
         # Red de seguridad: lo que el lote no trajo se reintenta de uno en uno
         # ANTES de darlo por deslistado. Un ticker ausente del lote puede serlo
@@ -382,10 +478,87 @@ def _descargar_grupo(conn, tickers: list[str], start: date, end: date, expected_
                 logger.warning("Sin datos para %s en absoluto — probable deslistado total", ticker)
                 _flag_full_gap(conn, ticker, start, end)
                 continue
-            _store_with_gap_detection(conn, ticker, df, expected_days)
+            _guardar(ticker, df)
 
         time.sleep(PAUSE_BETWEEN_BATCHES_S)
     return True
+
+
+def redescargar_serie_completa(conn, ticker: str, end: date) -> bool:
+    """Vuelve a bajar TODO el rango ya guardado de un ticker, en la base de
+    precios de hoy, y sustituye la serie. Los días con precio que la descarga
+    nueva ya no trae se borran (si no, quedarían en la base vieja); las filas
+    centinela de hueco (sin precio) se conservan. Si la descarga falla no se
+    toca nada: mejor la serie de antes que ninguna."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT MIN(trade_date) AS desde FROM prices WHERE ticker = %s AND close_raw IS NOT NULL", (ticker,))
+        fila = cur.fetchone()
+    desde = fila["desde"] if fila else None
+    if desde is None or desde > end:
+        return False
+    df = _download_one_with_retry(ticker, desde, end)
+    if df is None or df.empty:
+        logger.warning("%s: no se pudo rebajar la serie completa; se deja la guardada", ticker)
+        return False
+    df = aplanar_columnas(df, ticker).dropna(how="all")
+    if df.empty:
+        logger.warning("%s: la serie rebajada viene vacía; se deja la guardada", ticker)
+        return False
+    dias_nuevos = [d.date() for d in df.index]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM prices WHERE ticker = %s AND trade_date BETWEEN %s AND %s "
+            "AND close_raw IS NOT NULL AND NOT (trade_date = ANY(%s))",
+            (ticker, desde, end, dias_nuevos),
+        )
+    _store_with_gap_detection(conn, ticker, df, _trading_days_expected(desde, end))
+    logger.info("%s: serie rebajada entera (%s -> %s, %d días)", ticker, desde, end, len(dias_nuevos))
+    return True
+
+
+def tickers_con_salto_de_base(conn, tickers: list[str], umbral: float = UMBRAL_SALTO_DE_BASE) -> list[str]:
+    """Tickers con un salto > umbral entre dos días consecutivos guardados en
+    descargas distintas (captured_at diferente): la firma de una serie que
+    mezcla dos bases de precios (ver UMBRAL_SALTO_DE_BASE)."""
+    if not tickers:
+        return []
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT ticker FROM (
+                SELECT ticker, close_raw, captured_at,
+                       lag(close_raw) OVER w AS cierre_previo,
+                       lag(captured_at) OVER w AS captura_previa
+                FROM prices
+                WHERE ticker = ANY(%s) AND close_raw IS NOT NULL
+                WINDOW w AS (PARTITION BY ticker ORDER BY trade_date)
+            ) s
+            WHERE cierre_previo > 0
+              AND abs(close_raw / cierre_previo - 1) > %s
+              AND captured_at <> captura_previa
+            ORDER BY ticker
+            """,
+            (list(tickers), umbral),
+        )
+        return [r["ticker"] for r in cur.fetchall()]
+
+
+def reparar_saltos_de_base(conn, tickers: list[str], end: date, maximo: int = MAX_REPARACIONES_POR_CORRIDA) -> int:
+    """Rebaja entera la serie de los tickers que mezclan bases de precios
+    (los guardados antes de detectar los splits al descargar). Devuelve
+    cuántos se repararon."""
+    candidatos = tickers_con_salto_de_base(conn, [t for t in tickers if not t.startswith("^")])
+    if not candidatos:
+        return 0
+    logger.warning(
+        "%d tickers con un salto de precio entre descargas distintas (posible split mal guardado); "
+        "se rebajan enteros hasta %d en esta corrida", len(candidatos), maximo,
+    )
+    reparados = 0
+    for ticker in candidatos[:maximo]:
+        if redescargar_serie_completa(conn, ticker, end):
+            reparados += 1
+    return reparados
 
 
 def _flag_full_gap(conn, ticker: str, start: date, end: date) -> None:
