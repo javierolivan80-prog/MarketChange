@@ -83,22 +83,27 @@ def fetch_events_for_week(conn, version: str, week_start: date, week_end: date) 
     """Eventos con trade_decision != NO_TRADE para `version`, cuyo
     d0_close_date cae dentro de [week_start, week_end] — mismo shape de
     columnas que portfolio_simulator.fetch_events_for_version, con el
-    filtro de semana añadido."""
+    filtro de semana añadido y, como allí, una operación como mucho por
+    (empresa, D0) (BUGS_REPORT.md H-20)."""
     assert version in VERSIONS
     trade_decision_col = f"trade_decision_{version.lower()}"
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT e.event_id, e.ticker, e.d0_close_date,
-                   ea.{trade_decision_col} AS trade_decision,
-                   ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
-                   ea.confidence_in_conviction AS confidence,
-                   ea.net_conviction AS prediction
-            FROM events e
-            JOIN event_analyses ea ON ea.event_id = e.event_id
-            WHERE ea.{trade_decision_col} != 'NO_TRADE'
-              AND e.d0_close_date BETWEEN %s AND %s
-            ORDER BY e.d0_close_date
+            SELECT * FROM (
+                SELECT DISTINCT ON (e.ticker, e.d0_close_date)
+                       e.event_id, e.ticker, e.d0_close_date,
+                       ea.{trade_decision_col} AS trade_decision,
+                       ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
+                       ea.confidence_in_conviction AS confidence,
+                       ea.net_conviction AS prediction
+                FROM events e
+                JOIN event_analyses ea ON ea.event_id = e.event_id
+                WHERE ea.{trade_decision_col} != 'NO_TRADE'
+                  AND e.d0_close_date BETWEEN %s AND %s
+                ORDER BY e.ticker, e.d0_close_date, abs(ea.ev_{version.lower()}) DESC, e.event_id
+            ) unicos
+            ORDER BY d0_close_date, event_id
             """,
             (week_start, week_end),
         )

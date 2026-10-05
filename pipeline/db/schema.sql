@@ -165,6 +165,10 @@ CREATE TABLE IF NOT EXISTS car_results (
     computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, window_days)
 );
+-- Para el test BMP (H-19): desviación de los residuos del modelo en la
+-- ventana de estimación y nº de sesiones de la ventana de evento.
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS resid_std NUMERIC;
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS n_event_days INT;
 
 -- Soporta la query de analogues: por clase, ordenado por fecha, excluyendo
 -- eventos futuros respecto al evento que se está evaluando (ver
