@@ -30,6 +30,7 @@ de orquestación para poder loguear progreso y no perder todo un backfill de
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import date, timedelta
 
 from pipeline import config
@@ -644,16 +645,69 @@ def _process_single_event(
     else:
         decisions = decide_all_strategies(abstention_inputs)
 
+    control = decision_sin_ia(abstention_inputs, impact, skip_reason)
+
     _store_event_analysis(
         conn, event_id, novelty, bull_output, bear_output, judge_output,
         net_conviction, confidence_in_conviction, impact, ev_result, decisions,
-        model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
+        model_bull_bear, model_judge, batch_bb, batch_judge, from_cache, control,
     )
+
+
+METODO_SIN_IA = "analogos_v1"
+
+
+def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -> dict:
+    """Grupo de control: la decisión que se habría tomado SIN la IA.
+
+    Mismo evento, misma Etapa 6, mismo EV (compute_ev) y misma abstención
+    (decide_all_strategies) que la decisión real; solo cambian las dos
+    salidas del Judge por su equivalente sin IA:
+      - net_conviction = dirección esperada por los análogos (+1, -1 o 0 si
+        el CAR esperado está a menos de 0,1 % de cero);
+      - confidence_in_conviction = la confianza de los análogos (0-100).
+
+    Ojo, elección deliberada y documentada: esa confianza entra dos veces en
+    el EV (como confianza en la convicción y como confianza del impacto), así
+    que el control es algo más exigente que la versión con IA. Por eso se
+    guardan también los ingredientes en bruto (dirección, magnitud,
+    confianza): el control se puede recalcular con otra regla sin volver a
+    analizar nada. `metodo` identifica la regla usada.
+
+    Un evento descartado antes de la IA por una regla objetiva o por el
+    techo de EV es NO_TRADE también sin IA, por el mismo motivo."""
+    net = float(impact.expected_direction)
+    conf = float(impact.confidence)
+    ev = compute_ev(net, conf, impact.expected_magnitude_pct, impact.confidence)
+    if skip_reason is not None:
+        decisiones = {s: AbstentionDecision("NO_TRADE", skip_reason, conf) for s in STRATEGIES}
+    else:
+        decisiones = decide_all_strategies(
+            replace(
+                con_ia,
+                net_conviction=net,
+                confidence_in_conviction=conf,
+                ev_by_strategy={"CONSERVATIVE": ev.ev_conservative, "BALANCED": ev.ev_balanced, "AGGRESSIVE": ev.ev_aggressive},
+            )
+        )
+    return {
+        "metodo": METODO_SIN_IA,
+        "net_conviction": net,
+        "confidence_in_conviction": conf,
+        "expected_magnitude_pct": round(float(impact.expected_magnitude_pct), 4),
+        "impact_confidence": conf,
+        "n_analogues": impact.n_analogues,
+        "ev_conservative": ev.ev_conservative,
+        "ev_balanced": ev.ev_balanced,
+        "ev_aggressive": ev.ev_aggressive,
+        "decisiones": abstention_as_json(decisiones),
+    }
 
 
 def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, judge_output,
                            net_conviction, confidence_in_conviction, impact, ev_result, decisions,
-                           model_bull_bear, model_judge, batch_bb, batch_judge, from_cache) -> None:
+                           model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
+                           control: dict | None = None) -> None:
     import json as _json
 
     with conn.cursor() as cur:
@@ -665,13 +719,13 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 n_historical_analogues, ev_calculation, ev_conservative, ev_aggressive, ev_balanced,
                 abstention_decision, trade_decision_conservative, trade_decision_aggressive,
                 trade_decision_balanced, model_version_bull_bear, model_version_judge,
-                batch_id_bull_bear, batch_id_judge, from_cache
+                batch_id_bull_bear, batch_id_judge, from_cache, decision_sin_ia
             ) VALUES (
                 %(event_id)s, %(novelty_score)s, %(novelty_reasoning)s, %(bull)s, %(bear)s,
                 %(judge)s, %(net_conviction)s, %(confidence)s, %(impact)s,
                 %(n_analogues)s, %(ev_calc)s, %(ev_cons)s, %(ev_aggr)s, %(ev_bal)s,
                 %(abstention)s, %(td_cons)s, %(td_aggr)s, %(td_bal)s, %(model_bb)s, %(model_j)s,
-                %(batch_bb)s, %(batch_j)s, %(from_cache)s
+                %(batch_bb)s, %(batch_j)s, %(from_cache)s, %(sin_ia)s
             )
             ON CONFLICT (event_id) DO UPDATE SET
                 novelty_score = EXCLUDED.novelty_score, novelty_reasoning = EXCLUDED.novelty_reasoning,
@@ -683,7 +737,8 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 ev_balanced = EXCLUDED.ev_balanced, abstention_decision = EXCLUDED.abstention_decision,
                 trade_decision_conservative = EXCLUDED.trade_decision_conservative,
                 trade_decision_aggressive = EXCLUDED.trade_decision_aggressive,
-                trade_decision_balanced = EXCLUDED.trade_decision_balanced, analyzed_at = now()
+                trade_decision_balanced = EXCLUDED.trade_decision_balanced,
+                decision_sin_ia = EXCLUDED.decision_sin_ia, analyzed_at = now()
             """,
             {
                 "event_id": event_id,
@@ -709,6 +764,7 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 "batch_bb": batch_bb,
                 "batch_j": batch_judge,
                 "from_cache": from_cache,
+                "sin_ia": _json.dumps(control) if control is not None else None,
             },
         )
     conn.commit()

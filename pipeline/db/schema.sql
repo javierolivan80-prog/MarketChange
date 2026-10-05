@@ -567,6 +567,14 @@ CREATE TABLE IF NOT EXISTS validation_reports (
 -- ============================================================================
 ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
 
+-- Grupo de control (auditoría, Tanda 1): la decisión que se habría tomado
+-- SIN la IA, con la misma Etapa 6, el mismo EV y la misma abstención, pero
+-- con la dirección y la confianza de los análogos en lugar de las del Judge.
+-- Comparar ambas sobre los mismos eventos es la única forma de saber si la IA
+-- añade algo. JSONB con los ingredientes en bruto (dirección, magnitud,
+-- confianza) para poder recalcular el control con otra regla sin re-analizar.
+ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS decision_sin_ia JSONB;
+
 -- ============================================================================
 -- notifications_sent: deduplicación de avisos que, a diferencia de una señal
 -- de trading (una fila de event_analyses, notificada una única vez), pueden

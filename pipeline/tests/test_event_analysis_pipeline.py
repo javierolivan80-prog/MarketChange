@@ -882,3 +882,75 @@ def test_un_item_del_mismo_filing_analizado_antes_sirve_de_cache(conn, sin_techo
     with conn.cursor() as cur:
         cur.execute("SELECT from_cache FROM event_analyses ORDER BY event_id")
         assert [r["from_cache"] for r in cur.fetchall()] == [False, True]
+
+
+# ---------------------------------------------------------------------------
+# Grupo de control: la decisión SIN IA (auditoría, Tanda 1)
+# ---------------------------------------------------------------------------
+
+
+def _entradas(**cambios):
+    from pipeline.analyze.abstention_engine import AbstentionInputs
+
+    base = dict(
+        novelty_score=80.0, confidence_in_conviction=90.0, net_conviction=0.9,
+        ev_by_strategy={"CONSERVATIVE": 0.05, "BALANCED": 0.05, "AGGRESSIVE": 0.05},
+        had_survivorship_warning=False, beta_available=True, adv_usd_60d=1e9, is_fda_crl_without_8k=False,
+    )
+    base.update(cambios)
+    return AbstentionInputs(**base)
+
+
+def _impacto(direccion, magnitud, confianza, n=60):
+    from pipeline.analyze.historical_analogues import ImpactEstimate
+
+    return ImpactEstimate(50.0, 20.0, 5.0, direccion, magnitud, 10.0, confianza, n)
+
+
+def test_sin_ia_usa_la_direccion_y_la_confianza_de_los_analogos():
+    from pipeline.analyze.ev_engine import compute_ev
+    from pipeline.analyze.event_analysis_pipeline import decision_sin_ia
+
+    # La IA dice LONG con fuerza; los análogos dicen bajada clara.
+    control = decision_sin_ia(_entradas(), _impacto(-1.0, -6.0, 90.0), None)
+    assert control["net_conviction"] == -1.0 and control["confidence_in_conviction"] == 90.0
+    esperado = compute_ev(-1.0, 90.0, -6.0, 90.0)
+    assert control["ev_balanced"] == pytest.approx(esperado.ev_balanced)
+    assert control["decisiones"]["BALANCED"]["trade_decision"] == "SHORT"
+    assert control["metodo"] == "analogos_v1" and control["n_analogues"] == 60
+
+
+def test_sin_ia_aplica_la_misma_abstencion():
+    from pipeline.analyze.event_analysis_pipeline import decision_sin_ia
+
+    # Análogos sin confianza: la regla de confianza (< 40) descarta igual que con la IA.
+    control = decision_sin_ia(_entradas(), _impacto(1.0, 3.0, 20.0, n=4), None)
+    assert all(d["trade_decision"] == "NO_TRADE" for d in control["decisiones"].values())
+    # Iliquidez: misma regla objetiva aunque los análogos sean buenos.
+    control = decision_sin_ia(_entradas(adv_usd_60d=1.0), _impacto(1.0, 8.0, 95.0), None)
+    assert all(d["trade_decision"] == "NO_TRADE" for d in control["decisiones"].values())
+
+
+def test_sin_ia_un_evento_descartado_antes_de_la_ia_es_no_trade_por_el_mismo_motivo():
+    from pipeline.analyze.event_analysis_pipeline import decision_sin_ia
+
+    control = decision_sin_ia(_entradas(), _impacto(1.0, 8.0, 95.0), "novelty baja")
+    assert {d["reason_if_no_trade"] for d in control["decisiones"].values()} == {"novelty baja"}
+
+
+def test_el_analisis_guarda_la_decision_sin_ia_junto_a_la_real(conn, sin_techo_de_ev):
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_event(conn, "1", "TESTCO", dates[280].date())
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+    with conn.cursor() as cur:
+        cur.execute("SELECT net_conviction, decision_sin_ia FROM event_analyses")
+        fila = cur.fetchone()
+    control = fila["decision_sin_ia"]
+    assert control is not None and control["metodo"] == "analogos_v1"
+    assert set(control["decisiones"]) == {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}
+    # Sin análogos sembrados el control no tiene dirección: nunca opera.
+    assert control["net_conviction"] == 0.0
+    assert all(d["trade_decision"] == "NO_TRADE" for d in control["decisiones"].values())
