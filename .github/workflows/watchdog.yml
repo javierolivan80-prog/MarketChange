@@ -1,0 +1,40 @@
+# watchdog.yml — relanza la pasada programada que GitHub se haya saltado.
+#
+# GitHub Actions no garantiza los crons: con carga alta los retrasa o no los
+# lanza. Esto corre un rato después de cada pasada de nightly_pipeline.yml y,
+# si no hubo corrida, la relanza (lógica y tests en pipeline/ops_watchdog.py).
+# No toca la base de datos ni la IA: solo lee la lista de corridas y, si hace
+# falta, lanza una. Dura segundos.
+
+name: Watchdog
+
+on:
+  schedule:
+    - cron: "15 16 * * 1-5"  # revisa la de 14:30
+    - cron: "15 23 * * 1-5"  # revisa la de 21:30
+    - cron: "45 7 * * 2-6"   # revisa la de 06:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Solo decir si relanzaría"
+        required: false
+        default: "false"
+
+permissions:
+  actions: write   # listar corridas y lanzar nightly_pipeline.yml
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Relanzar la pasada perdida
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WATCHDOG_REF: ${{ github.event.repository.default_branch }}
+        run: python -m pipeline.ops_watchdog ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}

@@ -18,6 +18,9 @@
 #   EDGAR_USER_AGENT      — "Tu Nombre tu@email.com" (la SEC lo exige)
 
 name: Nightly Pipeline
+# Nombre de cada corrida: ops_watchdog.py distingue así una pasada normal del
+# diagnóstico y del histórico (que no cuentan como pasada).
+run-name: ${{ github.event.inputs.diagnose_only == 'true' && 'Diagnóstico' || (github.event.inputs.history_from != '' && 'Histórico' || (github.event.inputs.relaunch_of != '' && format('Nightly Pipeline (relanzada {0})', github.event.inputs.relaunch_of) || 'Nightly Pipeline')) }}
 
 on:
   schedule:
@@ -69,6 +72,10 @@ on:
         description: "Con history_from: solo el paso final (precios, factores, CAR, diagnóstico) sobre los eventos ya cargados, sin volver a ingerir EDGAR"
         required: false
         default: "false"
+      relaunch_of:
+        description: "Uso interno (watchdog.yml): cron de la pasada programada que GitHub se saltó; la relanzada hace los mismos pasos que esa"
+        required: false
+        default: ""
 
 # Nunca dos corridas a la vez. Un backfill manual de horas se solapaba con las
 # pasadas programadas: dos procesos escribiendo las mismas tablas y, peor, dos
@@ -403,7 +410,7 @@ jobs:
         # Solo en la pasada nocturna (y en las manuales): yfinance es la etapa
         # lenta y frágil del pipeline (ARCHITECTURE_LEAN.md §7) y los precios
         # DIARIOS no cambian entre la apertura y el cierre.
-        if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5' && github.event.inputs.backfill_start == ''
+        if: (github.event.schedule || github.event.inputs.relaunch_of) != '30 14 * * 1-5' && (github.event.schedule || github.event.inputs.relaunch_of) != '30 21 * * 1-5' && github.event.inputs.backfill_start == ''
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # Freno de tamaño también aquí (yfinance_backfill.MAX_DB_MB): sin él,
@@ -449,7 +456,7 @@ jobs:
         # Solo en la pasada nocturna: es una petición HTTP por empresa del
         # universo entero, y las cuentas anuales cambian cuatro veces al año,
         # no tres veces al día.
-        if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5'
+        if: (github.event.schedule || github.event.inputs.relaunch_of) != '30 14 * * 1-5' && (github.event.schedule || github.event.inputs.relaunch_of) != '30 21 * * 1-5'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           EDGAR_USER_AGENT: ${{ secrets.EDGAR_USER_AGENT }}
@@ -459,7 +466,7 @@ jobs:
         # Va DESPUÉS de la ingesta de cuentas y del backfill de precios:
         # necesita ambas (las cuentas para los 4 criterios de negocio, el
         # precio para el de valoración). Solo nocturna, como su insumo.
-        if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5'
+        if: (github.event.schedule || github.event.inputs.relaunch_of) != '30 14 * * 1-5' && (github.event.schedule || github.event.inputs.relaunch_of) != '30 21 * * 1-5'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.analyze.quality_score
@@ -477,7 +484,7 @@ jobs:
         # los mismos datos que ya tiene, dos veces al día, sin que el
         # resultado pueda cambiar. --list 25 deja en el log las 25 mayores y
         # cuántos eventos tienen pendientes.
-        if: github.event.schedule != '30 14 * * 1-5' && github.event.schedule != '30 21 * * 1-5'
+        if: (github.event.schedule || github.event.inputs.relaunch_of) != '30 14 * * 1-5' && (github.event.schedule || github.event.inputs.relaunch_of) != '30 21 * * 1-5'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.universe_maintenance --list 25
@@ -646,7 +653,7 @@ jobs:
     # DENTRO de ingest_and_analyze, que sí corre en el orden correcto (después
     # de que la ingesta de EDGAR haya poblado universe). Este job corre en
     # paralelo, así que en un arranque en frío descargaría un universo vacío.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.backfill_start == '' && github.event.inputs.diagnose_only != 'true' && github.event.inputs.history_from == ''
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.backfill_start == '' && github.event.inputs.diagnose_only != 'true' && github.event.inputs.history_from == '' && github.event.inputs.relaunch_of == ''
     runs-on: ubuntu-latest
     # Mismo motivo que ingest_and_analyze (IMPROVEMENT_PLAN.md R6 + A4): un
     # backfill manual de precios de todo el universo es justo el caso más

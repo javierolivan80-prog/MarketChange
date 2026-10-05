@@ -763,3 +763,122 @@ def test_registrar_batch_apunta_aunque_la_conexion_haya_muerto_en_la_espera(conn
         cur.execute("SELECT kind, n_requests FROM ai_batches WHERE batch_id = 'batch_tras_espera'")
         fila = cur.fetchone()
     assert fila is not None and fila["kind"] == "judge" and fila["n_requests"] == 7
+
+
+def test_spend_today_usd_usa_el_coste_real_cuando_el_batch_termino(conn):
+    """Con el coste real apuntado, el tope diario usa ese y no la estimación;
+    el batch aún sin cerrar sigue contando con la estimación."""
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import cerrar_batch, registrar_batch, spend_today_usd
+
+    registrar_batch(conn, "bull_bear")("batch_real", 100)
+    cerrar_batch(conn, "bull_bear")(
+        "batch_real", {"model": "claude-haiku-4-5", "input_tokens": 300_000, "output_tokens": 40_000, "n_responses": 100}
+    )
+    registrar_batch(conn, "judge")("batch_en_curso", 10)
+
+    real = (300_000 * 1.0 + 40_000 * 5.0) / 1e6 * 0.5
+    assert spend_today_usd(conn) == pytest.approx(real + 10 * config.EST_COST_JUDGE_REQUEST_USD, abs=1e-4)
+    with conn.cursor() as cur:
+        cur.execute("SELECT input_tokens, output_tokens, model, cost_usd, finished_at FROM ai_batches WHERE batch_id = 'batch_real'")
+        fila = cur.fetchone()
+    assert fila["input_tokens"] == 300_000 and fila["output_tokens"] == 40_000
+    assert float(fila["cost_usd"]) == pytest.approx(real) and fila["finished_at"] is not None
+
+
+def test_cerrar_batch_sin_precio_deja_la_estimacion(conn):
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import cerrar_batch, registrar_batch, spend_today_usd
+
+    registrar_batch(conn, "judge")("batch_raro", 5)
+    cerrar_batch(conn, "judge")("batch_raro", {"model": "claude-futuro-9", "input_tokens": 1, "output_tokens": 1, "n_responses": 5})
+    assert spend_today_usd(conn) == pytest.approx(5 * config.EST_COST_JUDGE_REQUEST_USD)
+
+
+def test_cerrar_batch_apunta_aunque_la_conexion_haya_muerto(conn):
+    from pipeline.analyze.event_analysis_pipeline import cerrar_batch, registrar_batch
+    from pipeline.db.connection import get_connection
+
+    registrar_batch(conn, "judge")("batch_x", 2)
+    muerta = get_connection()
+    muerta.close()
+    cerrar_batch(muerta, "judge")("batch_x", {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 10, "n_responses": 2})
+    with conn.cursor() as cur:
+        cur.execute("SELECT cost_usd FROM ai_batches WHERE batch_id = 'batch_x'")
+        assert cur.fetchone()["cost_usd"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Un solo análisis por filing (BUGS_REPORT.md H-20)
+# ---------------------------------------------------------------------------
+
+
+def test_un_8k_con_varios_items_paga_un_solo_debate(conn, sin_techo_de_ev):
+    """2.02 + 5.02 en el mismo 8-K son dos eventos pero un filing: se envía
+    un debate (2 Bull/Bear + 1 Judge), el prompt nombra los dos Items y los
+    dos eventos quedan analizados con el mismo resultado."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_2.02_EARNINGS")
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_5.02_EXEC_CHANGE")  # mismo accession (acc-1-d0)
+
+    scripted = _ScriptedBatchesClient()
+    enviados = []
+    original_create = scripted.create
+
+    def _create(requests):
+        enviados.append(list(requests))
+        return original_create(requests)
+
+    scripted.create = _create
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted))
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+
+    assert [len(r) for r in enviados] == [2, 1]
+    prompt = enviados[0][0]["params"]["messages"][0]["content"]
+    assert "8K_2.02_EARNINGS + 8K_5.02_EXEC_CHANGE" in str(prompt)
+    with conn.cursor() as cur:
+        cur.execute("SELECT net_conviction, model_version_judge FROM event_analyses ORDER BY event_id")
+        rows = cur.fetchall()
+    assert len(rows) == 2
+    assert all(float(r["net_conviction"]) == pytest.approx(0.6) for r in rows)
+    assert all(r["model_version_judge"] == "claude-sonnet-4-6" for r in rows)
+
+
+def test_filings_distintos_del_mismo_dia_no_se_agrupan():
+    from pipeline.analyze.event_analysis_pipeline import agrupar_por_filing
+
+    d0 = date(2024, 5, 1)
+    base = {"source": "EDGAR", "ticker": "X", "d0_close_date": d0}
+    eventos = [
+        {**base, "event_id": 1, "accession_number": "a1"},
+        {**base, "event_id": 2, "accession_number": "a2"},
+        {**base, "event_id": 3, "accession_number": "a1"},
+        {**base, "event_id": 4, "accession_number": None, "source": "FDA_OPENFDA"},
+        {**base, "event_id": 5, "accession_number": None, "source": "FDA_OPENFDA"},
+    ]
+    grupos = [[e["event_id"] for e in g] for g in agrupar_por_filing(eventos)]
+    assert grupos == [[1, 3], [2], [4], [5]]
+
+
+def test_un_item_del_mismo_filing_analizado_antes_sirve_de_cache(conn, sin_techo_de_ev):
+    """Si un Item del filing ya se analizó (en otra corrida o en otro chunk),
+    el resto del mismo filing lo reutiliza aunque sea de otra clase."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_2.02_EARNINGS")
+    scripted = _ScriptedBatchesClient()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted))
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+    assert scripted.call_count == 2
+
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_5.02_EXEC_CHANGE")
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+    assert scripted.call_count == 2
+    with conn.cursor() as cur:
+        cur.execute("SELECT from_cache FROM event_analyses ORDER BY event_id")
+        assert [r["from_cache"] for r in cur.fetchall()] == [False, True]

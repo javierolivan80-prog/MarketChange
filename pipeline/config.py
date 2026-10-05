@@ -133,6 +133,50 @@ ANALYSIS_EST_COST_PER_EVENT_USD = 0.011
 EST_COST_BULL_BEAR_REQUEST_USD = 0.0024
 EST_COST_JUDGE_REQUEST_USD = 0.0062
 
+# Precios de la API en $ por millón de tokens (entrada, salida), para contar
+# el gasto REAL de cada batch con el `usage` que devuelve la API (ver
+# event_analysis_pipeline.cerrar_batch). La Batch API cobra la mitad. Si se
+# cambia de modelo, añadir aquí su precio: un modelo sin precio se cuenta con
+# la estimación de arriba, nunca como gratis.
+MODEL_PRICES_USD_PER_MTOK = {
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+}
+BATCH_PRICE_FACTOR = 0.5
+# Multiplicadores de la caché de prompts sobre el precio de entrada (hoy no
+# se usa — H-26 —, pero si vuelve a usarse el coste debe seguir cuadrando).
+CACHE_WRITE_PRICE_FACTOR = 1.25
+CACHE_READ_PRICE_FACTOR = 0.1
+
+
+def model_price_usd_per_mtok(model: str | None) -> tuple[float, float] | None:
+    """Precio de `model`. La API devuelve a veces el nombre con fecha
+    (claude-haiku-4-5-20251001): se busca por prefijo."""
+    if not model:
+        return None
+    for nombre, precio in MODEL_PRICES_USD_PER_MTOK.items():
+        if model == nombre or model.startswith(nombre + "-"):
+            return precio
+    return None
+
+
+def batch_cost_usd(uso: dict) -> float | None:
+    """Coste en $ de un batch a partir de sus tokens (ver
+    adversarial_analyzer.run_batch_and_collect). None si el modelo no tiene
+    precio."""
+    precio = model_price_usd_per_mtok(uso.get("model"))
+    if precio is None:
+        return None
+    entrada, salida = precio
+    tokens_entrada = (
+        uso.get("input_tokens", 0)
+        + CACHE_WRITE_PRICE_FACTOR * uso.get("cache_creation_input_tokens", 0)
+        + CACHE_READ_PRICE_FACTOR * uso.get("cache_read_input_tokens", 0)
+    )
+    coste = (tokens_entrada * entrada + uso.get("output_tokens", 0) * salida) / 1_000_000
+    return round(coste * BATCH_PRICE_FACTOR, 6)
+
 # Cota máxima de espera al polling de la Batch API (IMPROVEMENT_PLAN.md R6 +
 # M1) — sin esto, adversarial_analyzer.run_batch_and_collect hacía
 # `while True: ...; time.sleep(30)` sin límite: si la Batch API se queda

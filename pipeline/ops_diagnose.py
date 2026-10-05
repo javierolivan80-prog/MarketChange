@@ -126,6 +126,13 @@ QUERIES: list[tuple[str, str]] = [
         UNION ALL SELECT 'paper_trades', count(*), max(updated_at) FROM paper_trades
         UNION ALL SELECT 'portfolio_trades', count(*), NULL FROM portfolio_trades
         UNION ALL SELECT 'quality_scores', count(*), max(as_of_date)::timestamptz FROM quality_scores"""),
+    ("Gasto de IA por día (libro ai_batches; real = de los tokens de la API)", """
+        SELECT submitted_at::date AS dia, kind, count(*) AS batches, sum(n_requests) AS requests,
+               sum(input_tokens) AS tokens_entrada, sum(output_tokens) AS tokens_salida,
+               round(sum(cost_usd), 4) AS usd_real,
+               count(*) FILTER (WHERE cost_usd IS NULL) AS sin_coste_real,
+               round(sum(cost_usd) / nullif(sum(n_requests) FILTER (WHERE cost_usd IS NOT NULL), 0), 5) AS usd_por_request
+        FROM ai_batches GROUP BY 1, 2 ORDER BY 1 DESC, 2 LIMIT 30"""),
     ("Análisis técnicos", """
         SELECT count(*) AS total, count(*) FILTER (WHERE passes_filters) AS pasan
         FROM technical_analyses"""),
