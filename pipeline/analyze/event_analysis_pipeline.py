@@ -621,32 +621,20 @@ def _process_single_event(
     # --- Etapa 6: impact estimation (SIEMPRE fresco — depende de as_of_date) ---
     impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], event_id, window_days=20)
 
-    # --- Etapa 7: EV engine ---
-    ev_result = compute_ev(net_conviction, confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence)
-
-    # --- Etapa 8: abstention engine (is_fda_crl_without_8k ya calculado arriba) ---
+    # --- Etapas 7-8: EV y abstención (is_fda_crl_without_8k ya calculado arriba) ---
+    # La MISMA función decide con IA y sin IA (grupo de control): la única
+    # diferencia entre ambas es de dónde sale net_conviction.
     abstention_inputs = AbstentionInputs(
         novelty_score=novelty.score,
         confidence_in_conviction=confidence_in_conviction,
         net_conviction=net_conviction,
-        ev_by_strategy={"CONSERVATIVE": ev_result.ev_conservative, "BALANCED": ev_result.ev_balanced, "AGGRESSIVE": ev_result.ev_aggressive},
+        ev_by_strategy={},
         had_survivorship_warning=enrichment.had_survivorship_warning,
         beta_available=enrichment.beta_vs_spy is not None,
         adv_usd_60d=enrichment.adv_usd_60d,
         is_fda_crl_without_8k=is_fda_crl_without_8k,
     )
-    if skip_reason is not None:
-        # El evento se descartó ANTES de la IA por una regla objetiva. Sin
-        # esto, decide_all_strategies evaluaba la regla 2 (confidence=0 < 40)
-        # antes que la objetiva y guardaba "no sabemos qué pasa" como motivo
-        # en vez del real (BUGS_REPORT.md H-38: 188 de 200 en producción).
-        decisions = {
-            strategy: AbstentionDecision("NO_TRADE", skip_reason, confidence_in_conviction)
-            for strategy in STRATEGIES
-        }
-    else:
-        decisions = decide_all_strategies(abstention_inputs)
-
+    ev_result, decisions = evaluar_decision(abstention_inputs, impact, skip_reason)
     control = decision_sin_ia(abstention_inputs, impact, skip_reason)
 
     _store_event_analysis(
@@ -656,48 +644,58 @@ def _process_single_event(
     )
 
 
-METODO_SIN_IA = "analogos_v1"
+def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None):
+    """Etapas 7-8: EV y abstención de las 3 estrategias a partir de
+    `entradas` (net_conviction, confidence_in_conviction y el resto de
+    insumos) y de la Etapa 6. La usan tanto la decisión con IA como el grupo
+    de control, para que ninguna fórmula, umbral o regla pueda divergir entre
+    las dos. Devuelve (EVResult, {estrategia: AbstentionDecision})."""
+    ev_result = compute_ev(
+        entradas.net_conviction, entradas.confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence
+    )
+    entradas = replace(
+        entradas,
+        ev_by_strategy={"CONSERVATIVE": ev_result.ev_conservative, "BALANCED": ev_result.ev_balanced, "AGGRESSIVE": ev_result.ev_aggressive},
+    )
+    if skip_reason is not None:
+        # El evento se descartó ANTES de la IA por una regla objetiva. Sin
+        # esto, decide_all_strategies evaluaba la regla 2 (confidence=0 < 40)
+        # antes que la objetiva y guardaba "no sabemos qué pasa" como motivo
+        # en vez del real (BUGS_REPORT.md H-38: 188 de 200 en producción).
+        decisions = {
+            strategy: AbstentionDecision("NO_TRADE", skip_reason, entradas.confidence_in_conviction)
+            for strategy in STRATEGIES
+        }
+    else:
+        decisions = decide_all_strategies(entradas)
+    return ev_result, decisions
+
+
+METODO_SIN_IA = "analogos_signo_v2"
 
 
 def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -> dict:
-    """Grupo de control: la decisión que se habría tomado SIN la IA.
+    """Grupo de control: la decisión que se habría tomado SIN la dirección
+    de la IA.
 
-    Mismo evento, misma Etapa 6, mismo EV (compute_ev) y misma abstención
-    (decide_all_strategies) que la decisión real; solo cambian las dos
-    salidas del Judge por su equivalente sin IA:
-      - net_conviction = dirección esperada por los análogos (+1, -1 o 0 si
-        el CAR esperado está a menos de 0,1 % de cero);
-      - confidence_in_conviction = la confianza de los análogos (0-100).
+    Pasa por evaluar_decision, exactamente igual que la decisión real; lo
+    ÚNICO que cambia es net_conviction, que sale de los análogos en lugar del
+    debate: +1 / -1 según el signo del CAR esperado, o 0 si está a menos de
+    0,1 % de cero (ImpactEstimate.expected_direction). Todo lo demás, incluida
+    confidence_in_conviction, es lo mismo que recibió la decisión con IA
+    (decisión del usuario, auditoría 2026-10-05): así la comparación mide si
+    la DIRECCIÓN de la IA aporta, sin ventaja de construcción para ninguna.
 
-    Ojo, elección deliberada y documentada: esa confianza entra dos veces en
-    el EV (como confianza en la convicción y como confianza del impacto), así
-    que el control es algo más exigente que la versión con IA. Por eso se
-    guardan también los ingredientes en bruto (dirección, magnitud,
-    confianza): el control se puede recalcular con otra regla sin volver a
-    analizar nada. `metodo` identifica la regla usada.
-
-    Un evento descartado antes de la IA por una regla objetiva o por el
-    techo de EV es NO_TRADE también sin IA, por el mismo motivo."""
+    `metodo` identifica la regla; los ingredientes se guardan en bruto para
+    poder recalcular con otra regla sin volver a analizar."""
     net = float(impact.expected_direction)
-    conf = float(impact.confidence)
-    ev = compute_ev(net, conf, impact.expected_magnitude_pct, impact.confidence)
-    if skip_reason is not None:
-        decisiones = {s: AbstentionDecision("NO_TRADE", skip_reason, conf) for s in STRATEGIES}
-    else:
-        decisiones = decide_all_strategies(
-            replace(
-                con_ia,
-                net_conviction=net,
-                confidence_in_conviction=conf,
-                ev_by_strategy={"CONSERVATIVE": ev.ev_conservative, "BALANCED": ev.ev_balanced, "AGGRESSIVE": ev.ev_aggressive},
-            )
-        )
+    ev, decisiones = evaluar_decision(replace(con_ia, net_conviction=net), impact, skip_reason)
     return {
         "metodo": METODO_SIN_IA,
         "net_conviction": net,
-        "confidence_in_conviction": conf,
+        "confidence_in_conviction": float(con_ia.confidence_in_conviction),
         "expected_magnitude_pct": round(float(impact.expected_magnitude_pct), 4),
-        "impact_confidence": conf,
+        "impact_confidence": float(impact.confidence),
         "n_analogues": impact.n_analogues,
         "ev_conservative": ev.ev_conservative,
         "ev_balanced": ev.ev_balanced,
@@ -708,7 +706,8 @@ def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -
 
 def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
     """Calcula el grupo de control de los análisis guardados antes de que
-    existiera (decision_sin_ia NULL), sin llamar a la IA: la decisión sin IA
+    existiera, o con una regla anterior (`metodo` distinto del actual), sin
+    llamar a la IA: la decisión sin IA
     solo usa Postgres (análogos, enrichment, novelty ya guardada).
 
     Diferencia con el control calculado en el momento: los análogos se
@@ -724,11 +723,11 @@ def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
             FROM event_analyses ea
             JOIN events e ON e.event_id = ea.event_id
             JOIN universe u ON u.cik = e.cik
-            WHERE ea.decision_sin_ia IS NULL
+            WHERE ea.decision_sin_ia IS NULL OR ea.decision_sin_ia->>'metodo' IS DISTINCT FROM %s
             ORDER BY e.event_id
             LIMIT %s
             """,
-            (limit,),
+            (METODO_SIN_IA, limit),
         )
         filas = cur.fetchall()
     series_comunes: dict = {}

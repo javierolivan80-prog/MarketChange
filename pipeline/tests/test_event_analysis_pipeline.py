@@ -907,24 +907,48 @@ def _impacto(direccion, magnitud, confianza, n=60):
     return ImpactEstimate(50.0, 20.0, 5.0, direccion, magnitud, 10.0, confianza, n)
 
 
-def test_sin_ia_usa_la_direccion_y_la_confianza_de_los_analogos():
+def test_sin_ia_solo_cambia_el_origen_de_net_conviction():
+    """El control usa la dirección de los análogos y TODO lo demás de la
+    decisión con IA, incluida la confianza del Judge (sin contar dos veces
+    la de los análogos)."""
     from pipeline.analyze.ev_engine import compute_ev
     from pipeline.analyze.event_analysis_pipeline import decision_sin_ia
 
-    # La IA dice LONG con fuerza; los análogos dicen bajada clara.
-    control = decision_sin_ia(_entradas(), _impacto(-1.0, -6.0, 90.0), None)
-    assert control["net_conviction"] == -1.0 and control["confidence_in_conviction"] == 90.0
-    esperado = compute_ev(-1.0, 90.0, -6.0, 90.0)
+    # La IA dice LONG (0,9) con confianza 90; los análogos dicen bajada.
+    control = decision_sin_ia(_entradas(), _impacto(-1.0, -6.0, 70.0), None)
+    assert control["net_conviction"] == -1.0
+    assert control["confidence_in_conviction"] == 90.0  # la del Judge
+    esperado = compute_ev(-1.0, 90.0, -6.0, 70.0)
     assert control["ev_balanced"] == pytest.approx(esperado.ev_balanced)
     assert control["decisiones"]["BALANCED"]["trade_decision"] == "SHORT"
-    assert control["metodo"] == "analogos_v1" and control["n_analogues"] == 60
+    assert control["metodo"] == "analogos_signo_v2" and control["n_analogues"] == 60
+
+
+@pytest.mark.parametrize("direccion", [1.0, -1.0, 0.0])
+@pytest.mark.parametrize("confianza", [20.0, 55.0, 95.0])
+@pytest.mark.parametrize("cambios", [{}, {"adv_usd_60d": 1.0}, {"novelty_score": 5.0}, {"beta_available": False}])
+def test_con_la_misma_net_conviction_ia_y_control_dan_el_mismo_ev_y_decision(direccion, confianza, cambios):
+    """La garantía del grupo de control: con la misma net_conviction de
+    entrada, la versión con IA y el control producen el MISMO EV y la MISMA
+    decisión en las 3 estrategias (misma fórmula, umbral y abstención)."""
+    from pipeline.analyze.abstention_engine import as_json
+    from pipeline.analyze.event_analysis_pipeline import decision_sin_ia, evaluar_decision
+
+    impacto = _impacto(direccion, 4.0 * (direccion or 1.0), 80.0)
+    entradas = _entradas(net_conviction=direccion, confidence_in_conviction=confianza, **cambios)
+    ev_ia, decisiones_ia = evaluar_decision(entradas, impacto, None)
+    control = decision_sin_ia(entradas, impacto, None)
+    assert control["ev_conservative"] == ev_ia.ev_conservative
+    assert control["ev_balanced"] == ev_ia.ev_balanced
+    assert control["ev_aggressive"] == ev_ia.ev_aggressive
+    assert control["decisiones"] == as_json(decisiones_ia)
 
 
 def test_sin_ia_aplica_la_misma_abstencion():
     from pipeline.analyze.event_analysis_pipeline import decision_sin_ia
 
-    # Análogos sin confianza: la regla de confianza (< 40) descarta igual que con la IA.
-    control = decision_sin_ia(_entradas(), _impacto(1.0, 3.0, 20.0, n=4), None)
+    # Judge inseguro: la regla de confianza (< 40) descarta también el control.
+    control = decision_sin_ia(_entradas(confidence_in_conviction=20.0), _impacto(1.0, 8.0, 95.0), None)
     assert all(d["trade_decision"] == "NO_TRADE" for d in control["decisiones"].values())
     # Iliquidez: misma regla objetiva aunque los análogos sean buenos.
     control = decision_sin_ia(_entradas(adv_usd_60d=1.0), _impacto(1.0, 8.0, 95.0), None)
@@ -949,7 +973,7 @@ def test_el_analisis_guarda_la_decision_sin_ia_junto_a_la_real(conn, sin_techo_d
         cur.execute("SELECT net_conviction, decision_sin_ia FROM event_analyses")
         fila = cur.fetchone()
     control = fila["decision_sin_ia"]
-    assert control is not None and control["metodo"] == "analogos_v1"
+    assert control is not None and control["metodo"] == "analogos_signo_v2"
     assert set(control["decisiones"]) == {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}
     # Sin análogos sembrados el control no tiene dirección: nunca opera.
     assert control["net_conviction"] == 0.0
@@ -994,7 +1018,7 @@ def test_el_control_guardado_sigue_a_los_analogos(conn, sin_techo_de_ev):
     assert float(fila["net_conviction"]) == pytest.approx(0.6)
     assert control["net_conviction"] == 1.0
     assert control["n_analogues"] == len(analogos)
-    assert control["confidence_in_conviction"] > 40
+    assert control["confidence_in_conviction"] == pytest.approx(80.0)  # la del Judge simulado
 
 
 def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de_ev):
@@ -1010,8 +1034,8 @@ def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de
     client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
     eventos = [e for e in fetch_events_needing_analysis(conn) if e["event_id"] == objetivo]
     conn = process_chunk(conn, client, eventos)
-    with conn.cursor() as cur:  # como si se hubiera analizado antes de existir el control
-        cur.execute("UPDATE event_analyses SET decision_sin_ia = NULL")
+    with conn.cursor() as cur:  # como si se hubiera calculado con la regla anterior
+        cur.execute("""UPDATE event_analyses SET decision_sin_ia = '{"metodo": "analogos_v1"}'""")
     conn.commit()
 
     assert backfill_decision_sin_ia(conn) == 1
@@ -1020,3 +1044,4 @@ def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de
         cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
         control = cur.fetchone()["decision_sin_ia"]
     assert control["recalculado"] is True and control["net_conviction"] == 1.0
+    assert control["metodo"] == "analogos_signo_v2" and control["confidence_in_conviction"] == pytest.approx(80.0)
