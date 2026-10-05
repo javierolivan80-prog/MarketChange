@@ -320,13 +320,33 @@ def _is_transient_api_error(exc: Exception) -> bool:
     return False
 
 
-def run_batch_and_collect(client, requests_, on_submitted=None) -> tuple[dict[str, dict], str | None]:
+def _sumar_uso(uso: dict, message) -> None:
+    """Acumula en `uso` los tokens de una respuesta. Cuenta TODAS las
+    respuestas que la API cobró, también las cortadas por max_tokens o con
+    JSON ilegible: se pagan igual."""
+    u = getattr(message, "usage", None)
+    if u is None:
+        return
+    for campo in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
+        uso[campo] += getattr(u, campo, None) or 0
+    uso["n_responses"] += 1
+    model = getattr(message, "model", None)
+    if model and not uso.get("model"):
+        uso["model"] = model
+
+
+def run_batch_and_collect(
+    client, requests_, on_submitted=None, on_finished=None
+) -> tuple[dict[str, dict], str | None]:
     """Envía un batch, espera a que termine, y devuelve ({custom_id: parsed_json}, batch_id).
     Errores de validación o servidor se registran y se omiten (no abortan el
     batch entero).
 
     on_submitted(batch_id, n_requests): se llama nada más crear el batch,
-    antes de esperar, para apuntar el gasto aunque luego algo falle (H-24)."""
+    antes de esperar, para apuntar el gasto aunque luego algo falle (H-24).
+    on_finished(batch_id, uso): se llama al leer los resultados con los
+    tokens que la API cobró (ver _sumar_uso) y el modelo, para apuntar el
+    gasto REAL. Un fallo al apuntarlo no tira los resultados."""
     if not requests_:
         # Pasa cuando TODOS los Bull/Bear de un chunk fallan: el Judge se
         # queda sin nada que arbitrar. La API rechaza un batch vacío con un
@@ -384,14 +404,33 @@ def run_batch_and_collect(client, requests_, on_submitted=None) -> tuple[dict[st
         time.sleep(30)
 
     results: dict[str, dict] = {}
-    for result in client.messages.batches.results(batch.id):
+    uso = {
+        "model": (requests_[0].get("params") or {}).get("model"),
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        "n_responses": 0,
+    }
+    _leer_resultados(client, batch.id, results, uso)
+    # Solo con la lectura COMPLETA: si se corta a mitad, un coste parcial
+    # infravaloraría el gasto; mejor que el libro siga con la estimación.
+    if on_finished is not None:
+        try:
+            on_finished(batch.id, uso)
+        except Exception:  # noqa: BLE001 — el libro de gasto no debe tirar el batch
+            logger.warning("No se pudo apuntar el gasto real del batch %s", batch.id, exc_info=True)
+    return results, batch.id
+
+
+def _leer_resultados(client, batch_id: str, results: dict[str, dict], uso: dict) -> None:
+    for result in client.messages.batches.results(batch_id):
         if result.result.type != "succeeded":
             # El MOTIVO del error, no solo "errored": sin él, 595 Judge
             # fallidos en dos runs no dejaron ni una pista de por qué
             # (era el minimum/maximum del esquema — ver JUDGE_SCHEMA).
             detalle = getattr(result.result, "error", None)
             logger.warning("Request %s: %s%s", result.custom_id, result.result.type, f" — {detalle}" if detalle else "")
-            continue
+            continue  # errored/expired/canceled: la API no los cobra
+        _sumar_uso(uso, result.result.message)
         if getattr(result.result.message, "stop_reason", None) == "max_tokens":
             # Cortada a mitad: el JSON no se puede leer. Se dice por su nombre
             # (antes salía como "JSON inválido") para poder ajustar el tope.
@@ -405,7 +444,6 @@ def run_batch_and_collect(client, requests_, on_submitted=None) -> tuple[dict[st
             results[result.custom_id] = json.loads(text)
         except json.JSONDecodeError:
             logger.warning("Request %s: JSON inválido pese a output_config.format: %r", result.custom_id, text[:200])
-    return results, batch.id
 
 
 def get_cached_analysis(conn, ticker: str, event_class: str, as_of: date, within_hours: int = CACHE_WINDOW_HOURS) -> dict | None:

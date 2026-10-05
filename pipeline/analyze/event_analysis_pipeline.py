@@ -166,23 +166,34 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
 
 
 def spend_today_usd(conn) -> float:
-    """Gasto ESTIMADO ya incurrido hoy en Bull/Bear/Judge (IMPROVEMENT_PLAN.md
-    A2) — hallazgo de auditoría: no hace falta una tabla nueva de gasto,
-    event_analyses YA es el libro de cuentas: cada fila con from_cache=FALSE
-    y model_version_bull_bear distinto de 'SKIPPED_OBJETIVO_NO_TRADE' es
-    exactamente un evento que sí pagó una llamada real a la Batch API (los
-    de caché y los descartados por una condición objetiva o por el techo de
-    EV, A1, cuestan 0 — ver process_chunk). Crear una tabla aparte solo para
-    volver a contar lo que esta consulta ya cuenta sería una segunda fuente
-    de verdad redundante, no una simplificación.
+    """Gasto ya incurrido hoy en Bull/Bear/Judge (IMPROVEMENT_PLAN.md A2).
 
-    'Hoy' es CURRENT_DATE en la zona horaria de Postgres (UTC por defecto en
-    Neon/Supabase) — no se ajusta a hora de mercado de EE. UU. a propósito:
-    con 3 corridas/día (nightly_pipeline.yml), un desfase de unas horas en el
-    corte del día no cambia la conclusión de si hay presupuesto o no, y
-    ajustarlo sería complejidad sin beneficio real (mismo principio de
-    parsimonia que el resto del proyecto)."""
+    La fuente es el libro ai_batches (H-24): cada batch ENVIADO hoy, con su
+    coste REAL (cost_usd, de los tokens que devolvió la API) cuando ya
+    terminó, o con la estimación por request mientras no se sepa (batch en
+    curso, corrida que murió esperando, modelo sin precio en config). Un
+    batch pagado cuenta aunque su resultado no llegara a guardarse.
+
+    Solo si hoy no hay NINGUNA línea en el libro (p. ej. apuntarlas falló) se
+    cae a contar los eventos guardados en event_analyses por la estimación de
+    0,011 $/evento: nunca se da por gastado 0 algo que sí se pagó.
+
+    'Hoy' es CURRENT_DATE en la zona horaria de Postgres (UTC en Neon/
+    Supabase): con 3 corridas al día, un desfase de unas horas en el corte del
+    día no cambia si queda presupuesto o no."""
     with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*) AS n,
+                   coalesce(sum(coalesce(cost_usd, n_requests * CASE kind WHEN 'judge' THEN %s ELSE %s END)), 0) AS usd
+            FROM ai_batches
+            WHERE submitted_at::date = CURRENT_DATE
+            """,
+            (config.EST_COST_JUDGE_REQUEST_USD, config.EST_COST_BULL_BEAR_REQUEST_USD),
+        )
+        libro = cur.fetchone()
+        if libro["n"]:
+            return round(float(libro["usd"]), 4)
         cur.execute(
             """
             SELECT count(*) AS n
@@ -193,63 +204,92 @@ def spend_today_usd(conn) -> float:
             """
         )
         n = cur.fetchone()["n"]
-        # BUGS_REPORT.md H-24: lo de arriba solo cuenta eventos GUARDADOS. Un
-        # Bull/Bear pagado cuyo Judge falla no aparece ahí, y el tope diario
-        # se quedaba corto. El libro de batches (ai_batches) cuenta lo que se
-        # ENVIÓ; se toma el mayor de los dos, así un día con corridas previas
-        # al libro tampoco se infravalora.
-        cur.execute(
-            """
-            SELECT coalesce(sum(n_requests * CASE kind WHEN 'judge' THEN %s ELSE %s END), 0) AS usd
-            FROM ai_batches
-            WHERE submitted_at::date = CURRENT_DATE
-            """,
-            (config.EST_COST_JUDGE_REQUEST_USD, config.EST_COST_BULL_BEAR_REQUEST_USD),
-        )
-        enviado = float(cur.fetchone()["usd"])
-    return round(max(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, enviado), 4)
+    return round(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, 4)
+
+
+def _escribir_en_libro(conn, sql: str, params: tuple, batch_id: str) -> None:
+    """Escribe una línea en ai_batches. Si apuntarla falla, se avisa y se
+    sigue: perder una línea del libro no debe tirar un batch ya pagado.
+
+    Los batches se apuntan tras esperas largas a la Batch API (hasta ~20 min)
+    y Neon cierra las conexiones ociosas: con `conn` muerta el apunte fallaba
+    y ese gasto no contaba para el tope diario. Si `conn` no responde, se
+    apunta con una conexión propia y efímera; `conn` no se toca (la
+    reconexión del chunk es cosa de process_chunk)."""
+
+    def _escribir(c) -> None:
+        with c.cursor() as cur:
+            cur.execute(sql, params)
+        c.commit()
+
+    try:
+        if _conexion_viva(conn):
+            _escribir(conn)
+            return
+        from pipeline.db.connection import get_connection
+
+        propia = get_connection()
+        try:
+            _escribir(propia)
+        finally:
+            propia.close()
+    except Exception:
+        logger.warning("No se pudo apuntar el batch %s en ai_batches", batch_id, exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass  # conexión muerta: process_chunk ya reconecta más abajo
 
 
 def registrar_batch(conn, kind: str):
-    """Callback para run_batch_and_collect: apunta el batch en ai_batches nada
-    más crearlo (H-24). Si apuntarlo falla, se avisa y se sigue: perder una
-    línea del libro no debe tirar un batch ya pagado.
-
-    El batch del Judge se crea DESPUÉS de esperar al de Bull/Bear (hasta ~20
-    min), y Neon cierra las conexiones ociosas: con `conn` muerta el apunte
-    fallaba y el gasto del Judge (~60 % del coste) no contaba para el tope
-    diario. Si `conn` no responde, se apunta con una conexión propia y
-    efímera; `conn` no se toca (la reconexión del chunk es cosa de
-    process_chunk)."""
-
-    def _insertar(c, batch_id: str, n_requests: int) -> None:
-        with c.cursor() as cur:
-            cur.execute(
-                "INSERT INTO ai_batches (batch_id, kind, n_requests) VALUES (%s, %s, %s) ON CONFLICT (batch_id) DO NOTHING",
-                (batch_id, kind, n_requests),
-            )
-        c.commit()
+    """Callback on_submitted de run_batch_and_collect: apunta el batch en
+    ai_batches nada más crearlo (H-24), antes de esperar, para que cuente
+    aunque luego algo falle."""
 
     def _registrar(batch_id: str, n_requests: int) -> None:
-        try:
-            if _conexion_viva(conn):
-                _insertar(conn, batch_id, n_requests)
-                return
-            from pipeline.db.connection import get_connection
-
-            propia = get_connection()
-            try:
-                _insertar(propia, batch_id, n_requests)
-            finally:
-                propia.close()
-        except Exception:
-            logger.warning("No se pudo apuntar el batch %s en ai_batches", batch_id, exc_info=True)
-            try:
-                conn.rollback()
-            except Exception:
-                pass  # conexión muerta: process_chunk ya reconecta más abajo
+        _escribir_en_libro(
+            conn,
+            "INSERT INTO ai_batches (batch_id, kind, n_requests) VALUES (%s, %s, %s) ON CONFLICT (batch_id) DO NOTHING",
+            (batch_id, kind, n_requests),
+            batch_id,
+        )
 
     return _registrar
+
+
+def cerrar_batch(conn, kind: str):
+    """Callback on_finished de run_batch_and_collect: apunta lo que el batch
+    COSTÓ de verdad, con los tokens que devuelve la API (usage de cada
+    respuesta) y los precios de config.MODEL_PRICES_USD_PER_MTOK. Así el
+    tope diario deja de depender de la estimación de 0,011 $/evento, que
+    puede quedarse corta (filings largos) o larga (respuestas breves).
+
+    Si el modelo no tiene precio en config, cost_usd se deja vacío y
+    spend_today_usd usa la estimación por request para ese batch: nunca se
+    cuenta como gratis algo que no se sabe cuánto costó."""
+
+    def _cerrar(batch_id: str, uso: dict) -> None:
+        coste = config.batch_cost_usd(uso)
+        if coste is None:
+            logger.warning("Batch %s: sin precio para el modelo %r; se cuenta con la estimación", batch_id, uso.get("model"))
+        else:
+            n = uso.get("n_responses") or 0
+            logger.info(
+                "Batch %s (%s): %d respuestas, %d tokens de entrada, %d de salida = %.4f $ reales (%.5f $/respuesta)",
+                batch_id, kind, n, uso["input_tokens"], uso["output_tokens"], coste, coste / n if n else 0.0,
+            )
+        _escribir_en_libro(
+            conn,
+            """
+            UPDATE ai_batches
+            SET input_tokens = %s, output_tokens = %s, model = %s, cost_usd = %s, finished_at = now()
+            WHERE batch_id = %s
+            """,
+            (uso["input_tokens"], uso["output_tokens"], uso.get("model"), coste, batch_id),
+            batch_id,
+        )
+
+    return _cerrar
 
 
 def remaining_daily_budget_events(conn) -> int | None:
@@ -395,10 +435,12 @@ def process_chunk(conn, client, event_rows: list[dict]):
             for ev in llm_candidates
         ]
         bull_bear_results, bb_batch_id = run_batch_and_collect(
-            client, build_bull_bear_batch(contexts), on_submitted=registrar_batch(conn, "bull_bear")
+            client, build_bull_bear_batch(contexts), on_submitted=registrar_batch(conn, "bull_bear"),
+            on_finished=cerrar_batch(conn, "bull_bear"),
         )
         judge_results, judge_batch_id = run_batch_and_collect(
-            client, build_judge_batch(contexts, bull_bear_results), on_submitted=registrar_batch(conn, "judge")
+            client, build_judge_batch(contexts, bull_bear_results), on_submitted=registrar_batch(conn, "judge"),
+            on_finished=cerrar_batch(conn, "judge"),
         )
 
         # BUG REAL (2026-09-15, run 34964242549): cada run_batch_and_collect

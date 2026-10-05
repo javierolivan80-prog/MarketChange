@@ -763,3 +763,46 @@ def test_registrar_batch_apunta_aunque_la_conexion_haya_muerto_en_la_espera(conn
         cur.execute("SELECT kind, n_requests FROM ai_batches WHERE batch_id = 'batch_tras_espera'")
         fila = cur.fetchone()
     assert fila is not None and fila["kind"] == "judge" and fila["n_requests"] == 7
+
+
+def test_spend_today_usd_usa_el_coste_real_cuando_el_batch_termino(conn):
+    """Con el coste real apuntado, el tope diario usa ese y no la estimación;
+    el batch aún sin cerrar sigue contando con la estimación."""
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import cerrar_batch, registrar_batch, spend_today_usd
+
+    registrar_batch(conn, "bull_bear")("batch_real", 100)
+    cerrar_batch(conn, "bull_bear")(
+        "batch_real", {"model": "claude-haiku-4-5", "input_tokens": 300_000, "output_tokens": 40_000, "n_responses": 100}
+    )
+    registrar_batch(conn, "judge")("batch_en_curso", 10)
+
+    real = (300_000 * 1.0 + 40_000 * 5.0) / 1e6 * 0.5
+    assert spend_today_usd(conn) == pytest.approx(real + 10 * config.EST_COST_JUDGE_REQUEST_USD, abs=1e-4)
+    with conn.cursor() as cur:
+        cur.execute("SELECT input_tokens, output_tokens, model, cost_usd, finished_at FROM ai_batches WHERE batch_id = 'batch_real'")
+        fila = cur.fetchone()
+    assert fila["input_tokens"] == 300_000 and fila["output_tokens"] == 40_000
+    assert float(fila["cost_usd"]) == pytest.approx(real) and fila["finished_at"] is not None
+
+
+def test_cerrar_batch_sin_precio_deja_la_estimacion(conn):
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import cerrar_batch, registrar_batch, spend_today_usd
+
+    registrar_batch(conn, "judge")("batch_raro", 5)
+    cerrar_batch(conn, "judge")("batch_raro", {"model": "claude-futuro-9", "input_tokens": 1, "output_tokens": 1, "n_responses": 5})
+    assert spend_today_usd(conn) == pytest.approx(5 * config.EST_COST_JUDGE_REQUEST_USD)
+
+
+def test_cerrar_batch_apunta_aunque_la_conexion_haya_muerto(conn):
+    from pipeline.analyze.event_analysis_pipeline import cerrar_batch, registrar_batch
+    from pipeline.db.connection import get_connection
+
+    registrar_batch(conn, "judge")("batch_x", 2)
+    muerta = get_connection()
+    muerta.close()
+    cerrar_batch(muerta, "judge")("batch_x", {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 10, "n_responses": 2})
+    with conn.cursor() as cur:
+        cur.execute("SELECT cost_usd FROM ai_batches WHERE batch_id = 'batch_x'")
+        assert cur.fetchone()["cost_usd"] is not None

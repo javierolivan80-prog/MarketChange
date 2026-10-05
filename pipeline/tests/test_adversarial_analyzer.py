@@ -639,3 +639,80 @@ def test_los_batches_no_marcan_cache_control_y_suben_el_tope_de_salida():
         params = req["params"]
         assert "cache_control" not in str(params["system"])
         assert params["max_tokens"] == MAX_OUTPUT_TOKENS >= 2048
+
+
+# ---------------------------------------------------------------------------
+# Gasto REAL por tokens (usage de la API)
+# ---------------------------------------------------------------------------
+
+
+def _respuesta_con_uso(custom_id, payload, input_tokens, output_tokens, stop_reason="end_turn", model="claude-haiku-4-5-20251001"):
+    return SimpleNamespace(
+        custom_id=custom_id,
+        result=SimpleNamespace(
+            type="succeeded",
+            message=SimpleNamespace(
+                model=model,
+                stop_reason=stop_reason,
+                usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens,
+                                      cache_creation_input_tokens=0, cache_read_input_tokens=None),
+                content=[SimpleNamespace(type="text", text=payload)],
+            ),
+        ),
+    )
+
+
+def test_run_batch_and_collect_suma_los_tokens_cobrados():
+    """Cuenta también la respuesta cortada por max_tokens (se cobra igual) y
+    no cuenta la que dio error (no se cobra)."""
+
+    class _ConUso(_FakeBatchesClient):
+        def results(self, batch_id):
+            return [
+                _respuesta_con_uso(custom_id_de(1, "judge"), json.dumps({"net_conviction": 0.1}), 3000, 400),
+                _respuesta_con_uso(custom_id_de(2, "judge"), '{"net_c', 2500, 2048, stop_reason="max_tokens"),
+                _mock_batch_result(custom_id_de(3, "judge"), "errored"),
+            ]
+
+    cerrados = []
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ConUso()))
+    results, _ = run_batch_and_collect(
+        client, [{"custom_id": custom_id_de(1, "judge")}], on_finished=lambda b, uso: cerrados.append((b, uso))
+    )
+    assert set(results) == {custom_id_de(1, "judge")}
+    assert len(cerrados) == 1
+    batch_id, uso = cerrados[0]
+    assert batch_id == "batch_test123"
+    assert uso["input_tokens"] == 5500 and uso["output_tokens"] == 2448 and uso["n_responses"] == 2
+    assert uso["model"] == "claude-haiku-4-5-20251001"
+
+
+def test_un_fallo_al_apuntar_el_gasto_no_tira_los_resultados():
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_FakeBatchesClient()))
+
+    def _rompe(batch_id, uso):
+        raise RuntimeError("BD caída")
+
+    results, _ = run_batch_and_collect(client, [{"custom_id": custom_id_de(1, "judge")}], on_finished=_rompe)
+    assert custom_id_de(1, "judge") in results
+
+
+def test_batch_cost_usd_aplica_precio_del_modelo_y_descuento_batch():
+    from pipeline import config
+
+    # Haiku 4.5: 1 $/MTok entrada, 5 $/MTok salida, -50 % en Batch.
+    uso = {"model": "claude-haiku-4-5-20251001", "input_tokens": 1_000_000, "output_tokens": 100_000}
+    assert config.batch_cost_usd(uso) == pytest.approx((1.0 + 0.5) * 0.5)
+    uso = {"model": "claude-sonnet-4-6", "input_tokens": 2000, "output_tokens": 300}
+    assert config.batch_cost_usd(uso) == pytest.approx((2000 * 3 + 300 * 15) / 1e6 * 0.5)
+    # Modelo sin precio: None (se contará con la estimación, nunca como gratis).
+    assert config.batch_cost_usd({"model": "claude-desconocido", "input_tokens": 10, "output_tokens": 10}) is None
+    # Un prefijo parecido no cuela: claude-haiku-4-50 no es claude-haiku-4-5.
+    assert config.model_price_usd_per_mtok("claude-haiku-4-50") is None
+
+
+def test_los_modelos_configurados_tienen_precio():
+    from pipeline import config
+
+    assert config.model_price_usd_per_mtok(config.ANALYZER_MODEL) is not None
+    assert config.model_price_usd_per_mtok(config.JUDGE_MODEL) is not None

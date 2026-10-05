@@ -831,3 +831,10 @@ CREATE TABLE IF NOT EXISTS ai_batches (
     n_requests    INT NOT NULL,
     submitted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Gasto REAL de cada batch, de los tokens que devuelve la API (se rellena al
+-- terminar; vacío = en curso o sin precio, y se cuenta con la estimación).
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS model TEXT;
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS input_tokens BIGINT;
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS output_tokens BIGINT;
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS cost_usd NUMERIC;
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
