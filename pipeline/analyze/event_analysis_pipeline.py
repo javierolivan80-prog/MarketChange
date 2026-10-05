@@ -125,7 +125,7 @@ def fetch_events_needing_analysis(
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT e.event_id, e.cik, e.ticker, e.event_class, e.source, e.d0_close_date,
+            SELECT e.event_id, e.cik, e.ticker, e.event_class, e.source, e.accession_number, e.d0_close_date,
                    e.filing_text, u.company_name, u.sic_code
             FROM events e
             JOIN universe u ON u.cik = e.cik
@@ -350,6 +350,35 @@ def _conexion_viva(conn) -> bool:
         return False
 
 
+def agrupar_por_filing(eventos: list[dict]) -> list[list[dict]]:
+    """Agrupa los eventos que vienen del mismo filing (misma fuente y mismo
+    accession_number), conservando el orden; el primero de cada grupo es el
+    que se envía a la IA. Sin accession (p. ej. FDA) cada evento va solo.
+    Por prudencia también se exige el mismo ticker y D0: un mismo accession
+    con datos distintos sería un error de ingesta, no un filing compartido."""
+    grupos: dict[tuple, list[dict]] = {}
+    for ev in eventos:
+        accession = ev.get("accession_number")
+        clave = (
+            (ev.get("source"), accession, ev["ticker"], ev["d0_close_date"]) if accession else ("solo", ev["event_id"])
+        )
+        grupos.setdefault(clave, []).append(ev)
+    return list(grupos.values())
+
+
+def repartir_resultados_del_filing(grupos: list[list[dict]], bull_bear_results: dict, judge_results: dict) -> None:
+    """Copia el Bull/Bear/Judge del representante de cada grupo a los demás
+    eventos del mismo filing, con sus propios custom_id."""
+    for grupo in grupos:
+        rep_id = grupo[0]["event_id"]
+        for ev in grupo[1:]:
+            for lado in ("bull", "bear"):
+                if custom_id_de(rep_id, lado) in bull_bear_results:
+                    bull_bear_results[custom_id_de(ev["event_id"], lado)] = bull_bear_results[custom_id_de(rep_id, lado)]
+            if custom_id_de(rep_id, "judge") in judge_results:
+                judge_results[custom_id_de(ev["event_id"], "judge")] = judge_results[custom_id_de(rep_id, "judge")]
+
+
 def process_chunk(conn, client, event_rows: list[dict]):
     """event_rows: filas de fetch_events_needing_analysis().
 
@@ -421,19 +450,29 @@ def process_chunk(conn, client, event_rows: list[dict]):
     judge_batch_id = None
 
     if llm_candidates:
+        # H-20: un 8-K con varios Items (2.02 + 5.02...) da un evento por Item,
+        # pero es UN filing: mismo texto, misma empresa, mismo D0. Se paga un
+        # solo debate por filing; el prompt nombra todos sus Items y el
+        # resultado se reparte entre los eventos del grupo (ver abajo).
+        grupos = agrupar_por_filing(llm_candidates)
         contexts = [
             EventContext(
-                event_id=ev["event_id"],
-                ticker=ev["ticker"],
-                event_class=ev["event_class"],
-                company_name=ev["company_name"],
+                event_id=rep["event_id"],
+                ticker=rep["ticker"],
+                event_class=" + ".join(sorted({ev["event_class"] for ev in grupo})),
+                company_name=rep["company_name"],
                 # Fase 3: texto real del filing cuando existe (ingest/filing_text.py
                 # ya lo extrajo); si no, degrada al placeholder — un evento sin
                 # texto todavía no debe bloquear el análisis, solo empobrecerlo.
-                filing_excerpt=ev["filing_text"] or _FALLBACK_FILING_EXCERPT,
+                filing_excerpt=rep["filing_text"] or _FALLBACK_FILING_EXCERPT,
             )
-            for ev in llm_candidates
+            for rep, grupo in ((g[0], g) for g in grupos)
         ]
+        if len(contexts) < len(llm_candidates):
+            logger.info(
+                "%d eventos a la IA comparten filing: se envían %d debates en vez de %d",
+                len(llm_candidates), len(contexts), len(llm_candidates),
+            )
         bull_bear_results, bb_batch_id = run_batch_and_collect(
             client, build_bull_bear_batch(contexts), on_submitted=registrar_batch(conn, "bull_bear"),
             on_finished=cerrar_batch(conn, "bull_bear"),
@@ -442,6 +481,7 @@ def process_chunk(conn, client, event_rows: list[dict]):
             client, build_judge_batch(contexts, bull_bear_results), on_submitted=registrar_batch(conn, "judge"),
             on_finished=cerrar_batch(conn, "judge"),
         )
+        repartir_resultados_del_filing(grupos, bull_bear_results, judge_results)
 
         # BUG REAL (2026-09-15, run 34964242549): cada run_batch_and_collect
         # espera a la Batch API con un `while ... time.sleep(30)` que puede

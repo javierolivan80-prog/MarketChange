@@ -506,21 +506,39 @@ def get_cached_analyses_batch(
     with conn.cursor() as cur:
         cur.execute(
             """
-            WITH candidates (event_id, ticker, event_class, as_of) AS (
+            WITH candidates (event_id, ticker, event_class, as_of, source, accession) AS (
                 SELECT * FROM unnest(%(event_ids)s::int[], %(tickers)s::text[],
-                                      %(event_classes)s::text[], %(as_ofs)s::date[])
+                                      %(event_classes)s::text[], %(as_ofs)s::date[],
+                                      %(sources)s::text[], %(accessions)s::text[])
+            ),
+            hits AS (
+                SELECT c.event_id AS request_event_id, FALSE AS mismo_filing, ea.*
+                FROM candidates c
+                JOIN events e ON e.ticker = c.ticker AND e.event_class = c.event_class
+                JOIN event_analyses ea ON ea.event_id = e.event_id
+                WHERE ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
+                  AND e.d0_close_date BETWEEN c.as_of - %(gap)s AND c.as_of
+                  AND ea.model_version_bull_bear <> %(skipped)s
+                UNION ALL
+                -- H-20: otro evento del MISMO filing (un 8-K con varios Items
+                -- da un evento por Item) ya analizado: es el mismo texto y el
+                -- mismo D0, así que no hay look-ahead ni hace falta ventana.
+                SELECT c.event_id, TRUE, ea.*
+                FROM candidates c
+                JOIN events e ON e.source = c.source AND e.accession_number = c.accession
+                             AND e.event_id <> c.event_id
+                JOIN event_analyses ea ON ea.event_id = e.event_id
+                WHERE c.accession IS NOT NULL
+                  AND ea.model_version_bull_bear <> %(skipped)s
             )
-            SELECT DISTINCT ON (c.event_id) c.event_id AS request_event_id, ea.*
-            FROM candidates c
-            JOIN events e ON e.ticker = c.ticker AND e.event_class = c.event_class
-            JOIN event_analyses ea ON ea.event_id = e.event_id
-            WHERE ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
-              AND e.d0_close_date BETWEEN c.as_of - %(gap)s AND c.as_of
-              AND ea.model_version_bull_bear <> %(skipped)s
-            ORDER BY c.event_id, ea.analyzed_at DESC
+            SELECT DISTINCT ON (request_event_id) *
+            FROM hits
+            ORDER BY request_event_id, mismo_filing DESC, analyzed_at DESC
             """,
             {
                 "event_ids": [ev["event_id"] for ev in event_rows],
+                "sources": [ev.get("source") for ev in event_rows],
+                "accessions": [ev.get("accession_number") for ev in event_rows],
                 "tickers": [ev["ticker"] for ev in event_rows],
                 "event_classes": [ev["event_class"] for ev in event_rows],
                 "as_ofs": [ev["d0_close_date"] for ev in event_rows],

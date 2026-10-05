@@ -806,3 +806,79 @@ def test_cerrar_batch_apunta_aunque_la_conexion_haya_muerto(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT cost_usd FROM ai_batches WHERE batch_id = 'batch_x'")
         assert cur.fetchone()["cost_usd"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Un solo análisis por filing (BUGS_REPORT.md H-20)
+# ---------------------------------------------------------------------------
+
+
+def test_un_8k_con_varios_items_paga_un_solo_debate(conn, sin_techo_de_ev):
+    """2.02 + 5.02 en el mismo 8-K son dos eventos pero un filing: se envía
+    un debate (2 Bull/Bear + 1 Judge), el prompt nombra los dos Items y los
+    dos eventos quedan analizados con el mismo resultado."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_2.02_EARNINGS")
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_5.02_EXEC_CHANGE")  # mismo accession (acc-1-d0)
+
+    scripted = _ScriptedBatchesClient()
+    enviados = []
+    original_create = scripted.create
+
+    def _create(requests):
+        enviados.append(list(requests))
+        return original_create(requests)
+
+    scripted.create = _create
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted))
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+
+    assert [len(r) for r in enviados] == [2, 1]
+    prompt = enviados[0][0]["params"]["messages"][0]["content"]
+    assert "8K_2.02_EARNINGS + 8K_5.02_EXEC_CHANGE" in str(prompt)
+    with conn.cursor() as cur:
+        cur.execute("SELECT net_conviction, model_version_judge FROM event_analyses ORDER BY event_id")
+        rows = cur.fetchall()
+    assert len(rows) == 2
+    assert all(float(r["net_conviction"]) == pytest.approx(0.6) for r in rows)
+    assert all(r["model_version_judge"] == "claude-sonnet-4-6" for r in rows)
+
+
+def test_filings_distintos_del_mismo_dia_no_se_agrupan():
+    from pipeline.analyze.event_analysis_pipeline import agrupar_por_filing
+
+    d0 = date(2024, 5, 1)
+    base = {"source": "EDGAR", "ticker": "X", "d0_close_date": d0}
+    eventos = [
+        {**base, "event_id": 1, "accession_number": "a1"},
+        {**base, "event_id": 2, "accession_number": "a2"},
+        {**base, "event_id": 3, "accession_number": "a1"},
+        {**base, "event_id": 4, "accession_number": None, "source": "FDA_OPENFDA"},
+        {**base, "event_id": 5, "accession_number": None, "source": "FDA_OPENFDA"},
+    ]
+    grupos = [[e["event_id"] for e in g] for g in agrupar_por_filing(eventos)]
+    assert grupos == [[1, 3], [2], [4], [5]]
+
+
+def test_un_item_del_mismo_filing_analizado_antes_sirve_de_cache(conn, sin_techo_de_ev):
+    """Si un Item del filing ya se analizó (en otra corrida o en otro chunk),
+    el resto del mismo filing lo reutiliza aunque sea de otra clase."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_2.02_EARNINGS")
+    scripted = _ScriptedBatchesClient()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=scripted))
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+    assert scripted.call_count == 2
+
+    _seed_event(conn, "1", "TESTCO", d0, event_class="8K_5.02_EXEC_CHANGE")
+    conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
+    assert scripted.call_count == 2
+    with conn.cursor() as cur:
+        cur.execute("SELECT from_cache FROM event_analyses ORDER BY event_id")
+        assert [r["from_cache"] for r in cur.fetchall()] == [False, True]
