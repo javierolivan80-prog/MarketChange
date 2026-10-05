@@ -241,10 +241,10 @@ def fill_missing_resid_std(conn, max_events: int = FILL_RESID_STD_MAX_EVENTS) ->
             SELECT DISTINCT e.event_id, e.ticker, e.d0_close_date
             FROM car_results cr
             JOIN events e ON e.event_id = cr.event_id
-            WHERE cr.resid_std IS NULL
+            WHERE cr.resid_std IS NULL AND cr.resid_std_checked_at IS NULL
               AND EXISTS (SELECT 1 FROM prices p WHERE p.ticker = e.ticker
                           AND p.trade_date <= e.d0_close_date - 200)
-            ORDER BY e.event_id
+            ORDER BY e.ticker, e.event_id
             LIMIT %s
             """,
             (max_events,),
@@ -258,6 +258,9 @@ def fill_missing_resid_std(conn, max_events: int = FILL_RESID_STD_MAX_EVENTS) ->
     for row in pending:
         ticker = row["ticker"]
         if ticker not in ticker_cache:
+            # Ordenado por ticker: solo hace falta la serie del ticker actual
+            # en memoria, no la de miles.
+            ticker_cache.clear()
             ticker_cache[ticker] = _load_ticker_returns(conn, ticker)
         with conn.cursor() as cur:
             cur.execute(
@@ -267,15 +270,20 @@ def fill_missing_resid_std(conn, max_events: int = FILL_RESID_STD_MAX_EVENTS) ->
             stored = cur.fetchall()
         for fila in stored:
             result = compute_car(ticker_cache[ticker], factor_returns, row["d0_close_date"], fila["window_days"])
-            if result is None or not np.isclose(result.car, float(fila["car"]), rtol=1e-6, atol=1e-9):
-                skipped += 1
-                continue
+            ok = result is not None and np.isclose(result.car, float(fila["car"]), rtol=1e-6, atol=1e-9)
             with conn.cursor() as cur:
+                # Se marca como intentado también si no se pudo: si no, las
+                # mismas filas volverían cada noche y taparían a las demás.
                 cur.execute(
-                    "UPDATE car_results SET resid_std = %s, n_event_days = %s WHERE event_id = %s AND window_days = %s",
-                    (result.resid_std, result.n_event_days, row["event_id"], fila["window_days"]),
+                    "UPDATE car_results SET resid_std = %s, n_event_days = %s, resid_std_checked_at = now() "
+                    "WHERE event_id = %s AND window_days = %s",
+                    (result.resid_std if ok else None, result.n_event_days if ok else None,
+                     row["event_id"], fila["window_days"]),
                 )
-            filled += 1
+            if ok:
+                filled += 1
+            else:
+                skipped += 1
         conn.commit()
     logger.info("resid_std completado en %d CAR; %d sin precios iguales a los de entonces", filled, skipped)
     return filled

@@ -88,8 +88,13 @@ def _fetch_car_by_class(conn, window_days: int, sample: str | None = None) -> di
 # (microcaps con ±300 %) y los eventos se amontonan en las mismas fechas
 # (temporada de resultados): con un t-test simple el error estándar sale
 # demasiado pequeño y la significancia, inflada. El contraste principal es
-# ahora un t sobre CAR winsorizados con errores agrupados por fecha de D0; el
+# ahora un t sobre CAR winsorizados con errores agrupados por MES de D0; el
 # t-test simple se conserva al lado para comparar.
+#
+# Por mes y no por día: el CAR a 20 días de dos eventos separados por un día
+# comparte 19 de sus 20 días, así que agrupar por día exacto seguía tratando
+# como independientes ventanas casi idénticas. Por mes queda solapamiento en
+# las fronteras entre meses, pero mucho menor; es la opción conservadora.
 WINSOR_PCT = 1.0  # recorte de colas: percentiles 1 y 99
 # Por debajo de este n, el percentil 1 cae entre las dos observaciones más
 # extremas y winsorizar solo deformaría la muestra: no se winsoriza.
@@ -103,8 +108,13 @@ def _winsorize(arr: np.ndarray) -> np.ndarray:
     return np.clip(arr, lo, hi)
 
 
+def _mes(d) -> object:
+    """Grupo de un evento: el mes de su D0 (ver la nota de arriba)."""
+    return (d.year, d.month) if hasattr(d, "year") else d
+
+
 def clustered_mean_test(values: np.ndarray, clusters: list) -> tuple[float | None, float | None, int]:
-    """t de la media contra 0 con errores agrupados por `clusters` (fecha de
+    """t de la media contra 0 con errores agrupados por `clusters` (mes de
     D0): var(media) = G/(G-1) · Σ_g (Σ_{i∈g} e_i)² / n², con G-1 grados de
     libertad. Con un evento por fecha coincide exactamente con el t-test
     simple. Devuelve (t, p, G); t y p None si no es computable."""
@@ -131,7 +141,12 @@ def bmp_test(scar_values: list) -> tuple[float | None, float | None, int]:
     t = media(SCAR) · √n / desviación(SCAR). Pondera cada evento por la
     precisión de su modelo y es robusto al aumento de varianza en el evento.
     Versión sin el ajuste por error de predicción de la ventana de evento.
-    Solo usa los eventos que tienen resid_std; devuelve (t, p, n_usados)."""
+    Solo usa los eventos que tienen resid_std; devuelve (t, p, n_usados).
+
+    Ojo: esos eventos son una SUBMUESTRA sesgada (los que conservan precios
+    de la ventana de estimación tras ops_prune y cuyo CAR sigue cuadrando),
+    así que el BMP no es directamente comparable con el contraste principal:
+    es una comprobación de robustez, no un sustituto."""
     arr = np.array([v for v in scar_values if v is not None], dtype=float)
     n = len(arr)
     if n < MIN_N_FOR_ANY_STATISTIC:
@@ -150,15 +165,16 @@ def compute_event_study_for_class(car_values: list[float], d0_dates: list | None
     percentiles, sigma, MDE y el contraste H0: media = 0.
 
     t_statistic / p_value / significant son el contraste PRINCIPAL: t sobre
-    CAR winsorizados (con n >= WINSOR_MIN_N) con errores agrupados por fecha
-    de D0 (H-19). Sin fechas, cada evento es su propio grupo y el resultado
+    CAR winsorizados (con n >= WINSOR_MIN_N) con errores agrupados por mes
+    de D0 (H-19); mean_winsorized_pct es la media que ese contraste prueba. Sin fechas, cada evento es su propio grupo y el resultado
     es el t-test simple. Al lado: el t-test simple de siempre
     (t_statistic_simple / p_value_simple) y el BMP sobre los eventos con
     CAR estandarizado (t_statistic_bmp / p_value_bmp / n_bmp)."""
     n = len(car_values)
     vacio = {
         "t_statistic_simple": None, "p_value_simple": None, "n_clusters": None,
-        "winsorized": False, "t_statistic_bmp": None, "p_value_bmp": None, "n_bmp": 0,
+        "winsorized": False, "mean_winsorized_pct": None,
+        "t_statistic_bmp": None, "p_value_bmp": None, "n_bmp": 0,
     }
     if n < MIN_N_FOR_ANY_STATISTIC:
         return {
@@ -175,7 +191,7 @@ def compute_event_study_for_class(car_values: list[float], d0_dates: list | None
     sigma = float(arr.std(ddof=1))
     p25, p75 = (float(x) for x in np.percentile(arr, [25, 75]))
     mde = compute_mde(sigma, n)
-    clusters = list(d0_dates) if d0_dates is not None else list(range(n))
+    clusters = [_mes(d) for d in d0_dates] if d0_dates is not None else list(range(n))
     wins = _winsorize(arr)
     t_bmp, p_bmp, n_bmp = bmp_test(scar_values or [])
 
@@ -196,7 +212,10 @@ def compute_event_study_for_class(car_values: list[float], d0_dates: list | None
         t_stat, p_value, n_clusters = clustered_mean_test(wins, clusters)
         significant = None if p_value is None else p_value < SIGNIFICANCE_ALPHA
         if significant is None:
-            conclusion = f"n={n} — todos los eventos en la misma fecha, sin contraste agrupado posible"
+            if n_clusters < 2:
+                conclusion = f"n={n} — todos los eventos en el mismo mes, sin contraste agrupado posible"
+            else:
+                conclusion = f"n={n} — sin dispersión entre meses tras winsorizar, contraste agrupado no aplicable"
 
     if significant is True:
         conclusion = f"Significativo (p={p_value:.4f} < {SIGNIFICANCE_ALPHA}) — el evento SÍ mueve el precio de forma no aleatoria"
@@ -223,6 +242,7 @@ def compute_event_study_for_class(car_values: list[float], d0_dates: list | None
         "p_value_simple": p_simple,
         "n_clusters": n_clusters,
         "winsorized": len(arr) >= WINSOR_MIN_N,
+        "mean_winsorized_pct": float(wins.mean()),
         "t_statistic_bmp": t_bmp,
         "p_value_bmp": p_bmp,
         "n_bmp": n_bmp,

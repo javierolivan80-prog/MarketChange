@@ -151,8 +151,8 @@ def _event_study_table(event_study: dict[str, dict]) -> str:
     # varias event_class se testean a la vez, así que un p-value crudo
     # "significativo" puede no serlo tras corregir por el número de clases.
     lines = [
-        "| Event Type | n | Median Return | σ | MDE | p-value (agrupado) | p-value (BH) | p simple | p BMP (n) | Conclusion |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Event Type | n | Median Return | Media winsorizada | σ | MDE | p-value (agrupado por mes) | p-value (BH) | p simple | p BMP, submuestra (n) | Conclusion |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for event_class, stats in sorted(event_study.items()):
         median = f"{stats['median_return_pct']:+.2f}%" if stats["median_return_pct"] is not None else "—"
@@ -165,9 +165,10 @@ def _event_study_table(event_study: dict[str, dict]) -> str:
         # Al lado del contraste principal (agrupado por fecha, BUGS_REPORT.md
         # H-19), el t-test simple de antes y el BMP, para ver cuánto cambia.
         p_simple = f"{stats['p_value_simple']:.4f}" if stats.get("p_value_simple") is not None else "—"
+        mean_w = f"{stats['mean_winsorized_pct']:+.2f}%" if stats.get("mean_winsorized_pct") is not None else "—"
         p_bmp = f"{stats['p_value_bmp']:.4f} ({stats.get('n_bmp', 0)})" if stats.get("p_value_bmp") is not None else f"— ({stats.get('n_bmp', 0)})"
         lines.append(
-            f"| {event_class} | {stats['n']} | {median} | {sigma} | {mde} | {p} | {p_bh} | {p_simple} | {p_bmp} | {mark} {stats['conclusion']} |"
+            f"| {event_class} | {stats['n']} | {median} | {mean_w} | {sigma} | {mde} | {p} | {p_bh} | {p_simple} | {p_bmp} | {mark} {stats['conclusion']} |"
         )
     return "\n".join(lines)
 

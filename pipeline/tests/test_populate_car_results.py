@@ -279,3 +279,8 @@ def test_populate_guarda_resid_std_y_rellena_los_antiguos(conn):
         filas = cur.fetchall()
     assert filas[0]["resid_std"] is None  # ventana de 5: el CAR no cuadra, no se mezcla
     assert filas[1]["resid_std"] is not None
+    # Lo que no se pudo completar queda marcado y no se reintenta cada noche.
+    assert fill_missing_resid_std(conn) == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM car_results WHERE event_id = %s AND resid_std_checked_at IS NULL", (event_id,))
+        assert cur.fetchone()["n"] == 0

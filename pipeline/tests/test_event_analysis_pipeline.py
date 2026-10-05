@@ -954,3 +954,69 @@ def test_el_analisis_guarda_la_decision_sin_ia_junto_a_la_real(conn, sin_techo_d
     # Sin análogos sembrados el control no tiene dirección: nunca opera.
     assert control["net_conviction"] == 0.0
     assert all(d["trade_decision"] == "NO_TRADE" for d in control["decisiones"].values())
+
+
+def _sembrar_analogos(conn, dates, n=30, car=0.05):
+    """n eventos pasados de la misma clase con su CAR, para que los análogos
+    den una dirección y una confianza no triviales."""
+    ids = []
+    for i in range(n):
+        eid = _seed_event(conn, f"9{i:03d}", f"AN{i}", dates[100 + i].date())
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO car_results (event_id, window_days, car, abnormal_volume_ratio, n_estimation_days) "
+                "VALUES (%s, 20, %s, 1.2, 200)",
+                (eid, car + 0.001 * (i % 3)),
+            )
+        ids.append(eid)
+    conn.commit()
+    return ids
+
+
+def test_el_control_guardado_sigue_a_los_analogos(conn, sin_techo_de_ev):
+    """Con 30 análogos positivos el control sin IA va en su dirección, y se
+    guarda junto a la decisión de la IA (que en el cliente simulado dice 0,6)."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    analogos = _sembrar_analogos(conn, dates)
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    with conn.cursor() as cur:  # solo se analiza el evento objetivo
+        cur.execute("UPDATE universe SET in_investable_universe = FALSE WHERE ticker LIKE 'AN%%'")
+    conn.commit()
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
+    eventos = [e for e in fetch_events_needing_analysis(conn) if e["event_id"] == objetivo]
+    conn = process_chunk(conn, client, eventos)
+    with conn.cursor() as cur:
+        cur.execute("SELECT net_conviction, decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        fila = cur.fetchone()
+    control = fila["decision_sin_ia"]
+    assert float(fila["net_conviction"]) == pytest.approx(0.6)
+    assert control["net_conviction"] == 1.0
+    assert control["n_analogues"] == len(analogos)
+    assert control["confidence_in_conviction"] > 40
+
+
+def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de_ev):
+    from pipeline.analyze.event_analysis_pipeline import (
+        backfill_decision_sin_ia,
+        fetch_events_needing_analysis,
+        process_chunk,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _sembrar_analogos(conn, dates)
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
+    eventos = [e for e in fetch_events_needing_analysis(conn) if e["event_id"] == objetivo]
+    conn = process_chunk(conn, client, eventos)
+    with conn.cursor() as cur:  # como si se hubiera analizado antes de existir el control
+        cur.execute("UPDATE event_analyses SET decision_sin_ia = NULL")
+    conn.commit()
+
+    assert backfill_decision_sin_ia(conn) == 1
+    assert backfill_decision_sin_ia(conn) == 0  # idempotente
+    with conn.cursor() as cur:
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        control = cur.fetchone()["decision_sin_ia"]
+    assert control["recalculado"] is True and control["net_conviction"] == 1.0

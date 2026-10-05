@@ -29,6 +29,7 @@ de orquestación para poder loguear progreso y no perder todo un backfill de
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from datetime import date, timedelta
@@ -44,6 +45,7 @@ from pipeline.analyze.abstention_engine import (
     objective_no_trade_reason,
 )
 from pipeline.analyze.adversarial_analyzer import (
+    SKIPPED_MODEL_VERSION,
     EventContext,
     build_bull_bear_batch,
     build_judge_batch,
@@ -704,6 +706,67 @@ def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -
     }
 
 
+def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
+    """Calcula el grupo de control de los análisis guardados antes de que
+    existiera (decision_sin_ia NULL), sin llamar a la IA: la decisión sin IA
+    solo usa Postgres (análogos, enrichment, novelty ya guardada).
+
+    Diferencia con el control calculado en el momento: los análogos se
+    vuelven a leer hoy con as_of = D0. Sigue sin haber look-ahead (solo
+    eventos cuya ventana terminó antes de D0), pero puede haber más CAR de
+    entonces calculados después. Se marca con "recalculado": true."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.event_id, e.cik, e.ticker, e.event_class, e.d0_close_date, u.sic_code,
+                   ea.novelty_score, ea.net_conviction, ea.confidence_in_conviction,
+                   ea.model_version_bull_bear, ea.abstention_decision
+            FROM event_analyses ea
+            JOIN events e ON e.event_id = ea.event_id
+            JOIN universe u ON u.cik = e.cik
+            WHERE ea.decision_sin_ia IS NULL
+            ORDER BY e.event_id
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        filas = cur.fetchall()
+    series_comunes: dict = {}
+    hechos = 0
+    for f in filas:
+        try:
+            skip_reason = None
+            if f["model_version_bull_bear"] == SKIPPED_MODEL_VERSION:
+                skip_reason = ((f["abstention_decision"] or {}).get("BALANCED") or {}).get("reason_if_no_trade") or "descartado antes de la IA"
+            enrichment = fetch_and_compute_enrichment(conn, f, series_comunes)
+            con_ia = AbstentionInputs(
+                novelty_score=float(f["novelty_score"]),
+                confidence_in_conviction=float(f["confidence_in_conviction"]),
+                net_conviction=float(f["net_conviction"]),
+                ev_by_strategy={},
+                had_survivorship_warning=enrichment.had_survivorship_warning,
+                beta_available=enrichment.beta_vs_spy is not None,
+                adv_usd_60d=enrichment.adv_usd_60d,
+                is_fda_crl_without_8k=check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"]),
+            )
+            impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
+            control = decision_sin_ia(con_ia, impact, skip_reason)
+            control["recalculado"] = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE event_analyses SET decision_sin_ia = %s WHERE event_id = %s",
+                    (json.dumps(control), f["event_id"]),
+                )
+            conn.commit()
+            hechos += 1
+        except Exception:
+            logger.exception("No se pudo calcular el control sin IA del evento %d", f["event_id"])
+            conn.rollback()
+    if hechos:
+        logger.info("Grupo de control calculado para %d análisis antiguos", hechos)
+    return hechos
+
+
 def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, judge_output,
                            net_conviction, confidence_in_conviction, impact, ev_result, decisions,
                            model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
@@ -922,6 +985,7 @@ if __name__ == "__main__":
     requeued = requeue_obsolete_skips(conn)
     if requeued:
         print(f"Vueltos a la cola: {requeued} eventos descartados antes de la IA por un motivo que ya no aplica")
+    backfill_decision_sin_ia(conn)
     cola = analysis_queue_summary(conn)
     print(
         f"Cola de la IA: {cola['pendientes']} eventos sin analizar; {cola['en_objetivo']} de "

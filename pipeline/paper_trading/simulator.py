@@ -103,7 +103,7 @@ def fetch_events_for_week(conn, version: str, week_start: date, week_end: date) 
                   AND e.d0_close_date BETWEEN %s AND %s
                 ORDER BY e.ticker, e.d0_close_date, abs(ea.ev_{version.lower()}) DESC, e.event_id
             ) unicos
-            ORDER BY d0_close_date, event_id
+            ORDER BY d0_close_date, abs(ev_{version.lower()}) DESC, event_id
             """,
             (week_start, week_end),
         )

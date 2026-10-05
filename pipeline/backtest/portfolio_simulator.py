@@ -515,7 +515,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
                 ORDER BY e.ticker, e.d0_close_date, abs(ea.{ev_col}) DESC, e.event_id
             ) unicos
-            ORDER BY d0_close_date, event_id
+            ORDER BY d0_close_date, abs({ev_col}) DESC, event_id
             """,
             {"start": start, "end": end},
         )

@@ -38,11 +38,20 @@ def test_eventos_amontonados_en_la_misma_fecha_dan_menos_significancia():
     assert p_agrupado > p_simple * 10
 
 
-def test_todos_en_la_misma_fecha_no_hay_contraste():
-    res = compute_event_study_for_class([0.01, 0.02, 0.03, 0.05], d0_dates=[date(2024, 1, 2)] * 4)
+def test_todos_en_el_mismo_mes_no_hay_contraste():
+    """Se agrupa por mes de D0: cuatro eventos de enero son un solo grupo."""
+    fechas = [date(2024, 1, 2), date(2024, 1, 9), date(2024, 1, 16), date(2024, 1, 30)]
+    res = compute_event_study_for_class([0.01, 0.02, 0.03, 0.05], d0_dates=fechas)
+    assert res["n_clusters"] == 1
     assert res["p_value"] is None and res["significant"] is None
     assert res["p_value_simple"] is not None  # el simple se sigue enseñando para comparar
-    assert "misma fecha" in res["conclusion"]
+    assert "mismo mes" in res["conclusion"]
+
+
+def test_agrupa_por_mes_de_d0():
+    fechas = [date(2024, 1, 2), date(2024, 1, 20), date(2024, 2, 5), date(2024, 3, 1), date(2024, 3, 28)]
+    res = compute_event_study_for_class([0.01, 0.03, -0.02, 0.04, 0.02], d0_dates=fechas)
+    assert res["n_clusters"] == 3
 
 
 def test_winsoriza_solo_con_muestra_grande():
@@ -52,6 +61,11 @@ def test_winsoriza_solo_con_muestra_grande():
     vals = list(rng.normal(0.0, 0.02, WINSOR_MIN_N)) + [5.0]  # un CAR de +500 %
     muchos = compute_event_study_for_class(vals, d0_dates=list(range(len(vals))))
     assert muchos["winsorized"] is True
+    # La media winsorizada recorta el +500 % al percentil 99; la cruda no.
+    arr = np.array(vals) * 100
+    tope = np.percentile(arr, 99)
+    assert muchos["mean_winsorized_pct"] == pytest.approx(np.clip(arr, np.percentile(arr, 1), tope).mean())
+    assert muchos["mean_winsorized_pct"] < muchos["mean_return_pct"] - 3
     # El atípico arrastra el t simple; el winsorizado apenas se mueve.
     assert abs(muchos["t_statistic"]) < abs(muchos["t_statistic_simple"])
 
@@ -97,7 +111,7 @@ class TestUnaObservacionPorEmpresaYDia:
         yield c
         c.close()
 
-    def _evento(self, conn, cik, ticker, d0, accession, car, resid_std=None):
+    def _evento(self, conn, cik, ticker, d0, accession, car, resid_std=None, clase="8K_2.02_EARNINGS"):
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
@@ -108,9 +122,9 @@ class TestUnaObservacionPorEmpresaYDia:
                 """INSERT INTO events (cik, ticker, source, is_satellite, event_class, item_codes,
                     accession_number, source_url, filed_at, d0_close_date, classification_method,
                     classification_confidence, raw_text_hash)
-                VALUES (%s,%s,'EDGAR',FALSE,'8K_2.02_EARNINGS',ARRAY['2.02'],%s,'https://x',%s,%s,'RULE',1.0,%s)
+                VALUES (%s,%s,'EDGAR',FALSE,%s,ARRAY['2.02'],%s,'https://x',%s,%s,'RULE',1.0,%s)
                 RETURNING event_id""",
-                (cik, ticker, accession, d0, d0, f"h-{accession}"),
+                (cik, ticker, clase, accession, d0, d0, f"h-{accession}"),
             )
             eid = cur.fetchone()["event_id"]
             cur.execute(
@@ -126,11 +140,15 @@ class TestUnaObservacionPorEmpresaYDia:
         d = date(2024, 1, 2)
         self._evento(conn, "1", "AAA", d, "a1", 0.05)
         self._evento(conn, "1", "AAA", d, "a1-enmienda", 0.05)  # misma empresa y día: mismo CAR
+        # El mismo día de AAA, pero en otra clase: cuenta en esa clase.
+        self._evento(conn, "1", "AAA", d, "a1-otra", 0.05, clase="8K_5.02_EXEC_CHANGE")
         for i in range(4):
-            self._evento(conn, str(10 + i), f"B{i}", d + timedelta(days=i + 1), f"b{i}", 0.01 * (i + 1))
-        res = run_event_study(conn, window_days=20)["8K_2.02_EARNINGS"]
-        assert res["n"] == 5
-        assert res["n_clusters"] == 5
+            # Dos en febrero, dos en marzo: con enero, tres grupos por mes.
+            self._evento(conn, str(10 + i), f"B{i}", date(2024, 2 + i // 2, 3 + i), f"b{i}", 0.01 * (i + 1))
+        res = run_event_study(conn, window_days=20)
+        assert res["8K_2.02_EARNINGS"]["n"] == 5
+        assert res["8K_2.02_EARNINGS"]["n_clusters"] == 3
+        assert res["8K_5.02_EXEC_CHANGE"]["n"] == 1
 
     def test_bmp_se_calcula_con_los_que_tienen_resid_std(self, conn):
         from pipeline.validation.event_study import run_event_study
