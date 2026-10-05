@@ -603,8 +603,21 @@ export interface SignalDetailData extends SignalFeedRow {
   n_historical_analogues: number | null;
   ev_calculation: EvCalculation | null;
   abstention_decision: AbstentionDecision | null;
+  /** Grupo de control: la decisión que se habría tomado SIN la IA (dirección
+   * y confianza de los análogos, mismo EV y misma abstención). null en los
+   * análisis anteriores a que existiera. */
+  decision_sin_ia: DecisionSinIa | null;
   company_name: string | null;
   technical: TechnicalPlan | null;
+}
+
+/** event_analyses.decision_sin_ia (pipeline: event_analysis_pipeline.decision_sin_ia). */
+export interface DecisionSinIa {
+  metodo: string;
+  net_conviction: number;
+  confidence_in_conviction: number;
+  n_analogues: number;
+  decisiones: AbstentionDecision;
 }
 
 export async function getEventClasses(): Promise<string[]> {
@@ -731,7 +744,7 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
       `, e.source_url, e.filed_at, ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
          ea.novelty_reasoning, ea.bull_analyst_output AS bull_output, ea.bear_analyst_output AS bear_output,
          ea.judge_output, ea.impact_estimation, ea.n_historical_analogues, ea.ev_calculation, ea.abstention_decision,
-         u.company_name, ta.direction AS tech_direction, ta.entry_price, ta.stop_price, ta.target_price, ta.target2_price,
+         ea.decision_sin_ia, u.company_name, ta.direction AS tech_direction, ta.entry_price, ta.stop_price, ta.target_price, ta.target2_price,
          ta.risk_reward, ta.position_size_pct, ta.timeframe_days, ta.details AS tech_details`
     )}
       LEFT JOIN universe u ON u.cik = e.cik
@@ -753,6 +766,7 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
     n_historical_analogues: r.n_historical_analogues,
     ev_calculation: r.ev_calculation,
     abstention_decision: r.abstention_decision,
+    decision_sin_ia: r.decision_sin_ia ?? null,
     company_name: r.company_name ?? null,
     technical:
       r.tech_confidence === null || r.tech_confidence === undefined

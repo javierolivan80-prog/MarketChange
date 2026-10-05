@@ -13,6 +13,7 @@ const REPLACEMENTS: [RegExp, string][] = [
   [/calibración=/g, "calibration="],
   [/ — muestra insuficiente para cualquier estadístico \(mínimo (\d+)\)/g, " — sample too small for any statistic (minimum $1)"],
   [/ — varianza cero en la muestra \(todos los CAR idénticos\), t-test no aplicable/g, " — zero variance in the sample (all CARs identical), t-test not applicable"],
+  [/ — todos los eventos en la misma fecha, sin contraste agrupado posible/g, " — all events on the same date, no clustered test possible"],
   [/^Significativo \(/g, "Significant ("],
   [/ — el evento SÍ mueve el precio de forma no aleatoria/g, " — the event DOES move the price in a non-random way"],
   [/^No significativo \(/g, "Not significant ("],
