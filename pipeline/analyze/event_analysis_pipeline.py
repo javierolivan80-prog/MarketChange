@@ -213,16 +213,35 @@ def spend_today_usd(conn) -> float:
 def registrar_batch(conn, kind: str):
     """Callback para run_batch_and_collect: apunta el batch en ai_batches nada
     más crearlo (H-24). Si apuntarlo falla, se avisa y se sigue: perder una
-    línea del libro no debe tirar un batch ya pagado."""
+    línea del libro no debe tirar un batch ya pagado.
+
+    El batch del Judge se crea DESPUÉS de esperar al de Bull/Bear (hasta ~20
+    min), y Neon cierra las conexiones ociosas: con `conn` muerta el apunte
+    fallaba y el gasto del Judge (~60 % del coste) no contaba para el tope
+    diario. Si `conn` no responde, se apunta con una conexión propia y
+    efímera; `conn` no se toca (la reconexión del chunk es cosa de
+    process_chunk)."""
+
+    def _insertar(c, batch_id: str, n_requests: int) -> None:
+        with c.cursor() as cur:
+            cur.execute(
+                "INSERT INTO ai_batches (batch_id, kind, n_requests) VALUES (%s, %s, %s) ON CONFLICT (batch_id) DO NOTHING",
+                (batch_id, kind, n_requests),
+            )
+        c.commit()
 
     def _registrar(batch_id: str, n_requests: int) -> None:
         try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ai_batches (batch_id, kind, n_requests) VALUES (%s, %s, %s) ON CONFLICT (batch_id) DO NOTHING",
-                    (batch_id, kind, n_requests),
-                )
-            conn.commit()
+            if _conexion_viva(conn):
+                _insertar(conn, batch_id, n_requests)
+                return
+            from pipeline.db.connection import get_connection
+
+            propia = get_connection()
+            try:
+                _insertar(propia, batch_id, n_requests)
+            finally:
+                propia.close()
         except Exception:
             logger.warning("No se pudo apuntar el batch %s en ai_batches", batch_id, exc_info=True)
             try:
