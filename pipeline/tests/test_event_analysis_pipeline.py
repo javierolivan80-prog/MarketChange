@@ -745,3 +745,21 @@ def test_el_desglose_por_request_cuadra_con_el_coste_por_evento():
     assert 2 * config.EST_COST_BULL_BEAR_REQUEST_USD + config.EST_COST_JUDGE_REQUEST_USD == pytest.approx(
         config.ANALYSIS_EST_COST_PER_EVENT_USD
     )
+
+
+def test_registrar_batch_apunta_aunque_la_conexion_haya_muerto_en_la_espera(conn):
+    """El batch del Judge se apunta DESPUÉS de esperar al de Bull/Bear (hasta
+    ~20 min), y Neon cierra las conexiones ociosas. Con la conexión muerta el
+    apunte fallaba en silencio y el gasto del Judge (~60 % del coste) no
+    contaba para el tope diario. Debe apuntarse con una conexión nueva."""
+    from pipeline.analyze.event_analysis_pipeline import registrar_batch
+    from pipeline.db.connection import get_connection
+
+    muerta = get_connection()
+    muerta.close()
+    registrar_batch(muerta, "judge")("batch_tras_espera", 7)
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT kind, n_requests FROM ai_batches WHERE batch_id = 'batch_tras_espera'")
+        fila = cur.fetchone()
+    assert fila is not None and fila["kind"] == "judge" and fila["n_requests"] == 7
