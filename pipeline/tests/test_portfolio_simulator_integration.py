@@ -493,8 +493,11 @@ class TestDrawdownCircuitBreaker:
             circuit_breaker_pct=0.005, circuit_breaker_pause_sessions=3,
         )
         curva = self._curve(conn, "test-breaker-1")
-        assert [curva[cal[i]] for i in (2, 3, 4)] == [True, True, True]  # 3 sesiones de pausa
-        assert curva[cal[5]] is False and curva[cal[6]] is False          # reanuda, no vuelve a saltar
+        # El freno mira la equity al cierre ANTERIOR (las entradas son a la
+        # apertura): el hundimiento de cal[2] lo dispara en cal[3].
+        assert curva[cal[2]] is False
+        assert [curva[cal[i]] for i in (3, 4, 5)] == [True, True, True]  # 3 sesiones de pausa
+        assert curva[cal[6]] is False and curva[cal[7]] is False          # reanuda, no vuelve a saltar
         assert result["n_days_circuit_breaker_active"] == 3
 
         operadas = self._trades(conn, "test-breaker-1")
@@ -514,13 +517,36 @@ class TestDrawdownCircuitBreaker:
         self._seed_main(conn, cal, precios)
         self._seed_signal(conn, "3", "FULL", cal[5], cal[6:])
 
-        simulate_portfolio(
+        result = simulate_portfolio(
             conn, "AGGRESSIVE", run_batch_tag="test-breaker-2", starting_capital=100_000.0,
             circuit_breaker_pct=0.005, circuit_breaker_pause_sessions=1,
         )
+        assert result["n_days_circuit_breaker_active"] == 1  # el freno saltó de verdad
         operadas = self._trades(conn, "test-breaker-2")
         normal = compute_position_size_pct(80.0, STRATEGIES["AGGRESSIVE"])
         assert operadas["FULL"] == pytest.approx(normal, rel=1e-6)
+
+
+    def test_a_medio_tamano_un_nuevo_disparo_se_mide_contra_el_nivel_al_reanudar(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 10)
+        # MAIN (20 % de la cartera) entra a 100 y cierra en 96: el freno salta
+        # en cal[3] (1 sesión de pausa) y reanuda en cal[4] con la equity de
+        # entonces (~99.200). En cal[4] toca su stop (95): la equity cae a
+        # ~98.880, un 0,32 % por debajo del nivel al reanudar -> nueva pausa
+        # en cal[5], aunque frente al máximo (100.000) ya estuviera por debajo.
+        precios = {1: (100.0, 101.0, 99.0, 100.0), 2: (96.0, 97.0, 95.8, 96.0), 3: (96.0, 97.0, 95.8, 96.0),
+                   4: (96.0, 96.5, 94.0, 94.5)}
+        for i in range(5, 10):
+            precios[i] = (94.5, 95.0, 94.0, 94.5)
+        self._seed_main(conn, cal, precios)
+        simulate_portfolio(
+            conn, "AGGRESSIVE", run_batch_tag="test-breaker-3", starting_capital=100_000.0,
+            circuit_breaker_pct=0.003, circuit_breaker_pause_sessions=1,
+        )
+        curva = self._curve(conn, "test-breaker-3")
+        assert [curva[cal[i]] for i in (3, 4, 5)] == [True, False, True]
 
 
 class TestEntrySessionEvaluated:
@@ -556,7 +582,41 @@ class TestEntrySessionEvaluated:
             t = cur.fetchone()
         assert t["exit_reason"] == "STOP_LOSS"
         assert t["exit_date"] == t["entry_date"] == cal[1]
-        assert float(t["actual_move_pct"]) < 0
+        assert float(t["actual_move_pct"]) == pytest.approx(-1.5)  # al nivel del stop (98,5), no al mínimo del día
+
+    def test_un_stop_del_mismo_dia_no_libera_hueco_para_otra_entrada_a_la_misma_apertura(self, conn):
+        """Revisión adversarial: lo que se cierra a media sesión no puede
+        dejar sitio a otra entrada ejecutada a la apertura de esa sesión."""
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 8)
+        # Tres señales Agresivas el mismo día (máximo 2 a la vez). A, la de
+        # mayor |EV|, entra primero y toca su stop (-5 %) en la misma sesión.
+        for cik, ticker, ev in (("1", "AAA", 0.03), ("2", "BBB", 0.02), ("3", "CCC", 0.01)):
+            _seed_event_with_analysis(
+                conn, cik, ticker, cal[0],
+                trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
+                net_conviction=0.7, confidence=80.0, ev_conservative=0.0, ev_aggressive=ev, ev_balanced=0.0,
+            )
+        with conn.cursor() as cur:
+            for d in cal[1:]:
+                low = 90.0 if d == cal[1] else 99.5
+                cur.execute(
+                    "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning) "
+                    "VALUES ('AAA', %s, 100, 100, 100.5, %s, 1.0, 100000, FALSE)",
+                    (d, low),
+                )
+        conn.commit()
+        _seed_price_series(conn, "BBB", cal[1:], [100.0] * 7)
+        _seed_price_series(conn, "CCC", cal[1:], [100.0] * 7)
+
+        simulate_portfolio(conn, "AGGRESSIVE", run_batch_tag="test-slots", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT e.ticker FROM portfolio_trades pt JOIN events e ON e.event_id = pt.event_id WHERE pt.run_batch_tag='test-slots'"
+            )
+            operadas = {r["ticker"] for r in cur.fetchall()}
+        assert operadas == {"AAA", "BBB"}
 
 
 class TestPositionSizeCappedByADV:
@@ -729,3 +789,21 @@ def test_deslizamiento_usa_la_capitalizacion_en_d0_sin_look_ahead(conn):
     plan = {p["ticker"]: p for p in _build_entry_plan(conn, "BALANCED", eventos, {})}
     assert plan["BIG"]["slippage_bps_por_lado"] == 10.0
     assert plan["GROW"]["slippage_bps_por_lado"] == 25.0
+
+
+def test_un_contrasplit_posterior_no_convierte_en_grande_a_una_empresa_pequena(conn):
+    """Sesgo de H-04: el precio de D0 viene reexpresado por splits
+    posteriores. Si la capitalización actual es pequeña, manda la menor."""
+    from pipeline.backtest.portfolio_simulator import _build_entry_plan, fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    dias = _business_days(d0, 5)
+    _seed_price_series(conn, "RS", dias, [100.0] * 5)  # reexpresado: en D0 cotizaba a ~10
+    _seed_event_with_analysis(conn, "1", "RS", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('1', '2023-12-31', '2024-02-15', '10-K', 200000000)")  # 200 M × 100 = 20.000 M$ aparentes
+        cur.execute("UPDATE universe SET market_cap_last_usd = 1500000000 WHERE cik = '1'")  # hoy: 1.500 M$
+    conn.commit()
+    plan = _build_entry_plan(conn, "BALANCED", fetch_events_for_version(conn, "BALANCED"), {})
+    assert plan[0]["slippage_bps_por_lado"] == 25.0

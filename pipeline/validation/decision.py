@@ -5,6 +5,8 @@ poder probarse con fixtures a mano, mismo patrón que
 portfolio_report.py:generate_recommendation."""
 from __future__ import annotations
 
+from pipeline.backtest.portfolio_metrics import INSUFFICIENT_SAMPLE_THRESHOLD
+
 GREENLIGHT_MIN_WIN_RATE = 0.55
 GREENLIGHT_MIN_SHARPE = 1.0
 GREENLIGHT_MIN_CALIBRATION = 0.6
@@ -16,7 +18,7 @@ GREENLIGHT_MIN_TRADES = 300
 # enseña como "Fiabilidad media". Por debajo de este mínimo no hay muestra
 # para juzgar nada: C. 20 es el mismo mínimo que ya usa el informe de
 # cartera (decisión del usuario, auditoría 2026-10-06).
-MIN_TRADES_FOR_VERDICT = 20
+MIN_TRADES_FOR_VERDICT = INSUFFICIENT_SAMPLE_THRESHOLD
 
 REDLIGHT_MAX_SHARPE = 0.7
 REDLIGHT_MIN_WIN_RATE = 0.50

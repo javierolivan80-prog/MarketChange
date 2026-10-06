@@ -54,6 +54,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pipeline.analyze.ev_engine import EV_THRESHOLDS
 from pipeline.analyze.ev_engine import position_size_pct as _ev_engine_position_size_pct
 
 EXECUTION_STYLES = ("CONSERVATIVE", "AGGRESSIVE")
@@ -98,7 +99,9 @@ STRATEGIES: dict[str, StrategyConfig] = {
         stop_loss_pct=1.5,
         trailing_stop_tiers=None,
         confidence_threshold=70.0,
-        ev_threshold=0.002,
+        # Mismo umbral que la decisión (ev_engine.EV_THRESHOLDS, H-21):
+        # Conservadora exige más que Agresiva. Antes 0,002 aquí, al revés.
+        ev_threshold=EV_THRESHOLDS["CONSERVATIVE"],
         max_concurrent=3,
     ),
     "AGGRESSIVE": StrategyConfig(
@@ -110,7 +113,7 @@ STRATEGIES: dict[str, StrategyConfig] = {
         stop_loss_pct=5.0,
         trailing_stop_tiers=generate_trailing_stop_tiers(),  # ver nota 2 del docstring
         confidence_threshold=50.0,
-        ev_threshold=0.005,
+        ev_threshold=EV_THRESHOLDS["AGGRESSIVE"],
         max_concurrent=2,
     ),
 }
@@ -141,7 +144,9 @@ def classify_balanced_execution_style(confidence: float, ev_conservative: float,
     None: se asume que el caller ya sabe (por trade_decision_balanced) que
     este evento SÍ se opera; esta función solo decide el estilo."""
     cons = STRATEGIES["CONSERVATIVE"]
-    if confidence >= cons.confidence_threshold and ev_conservative >= cons.ev_threshold:
+    # |EV|, no el EV con signo (mismo fallo que H-22): un SHORT tiene EV
+    # negativo y antes iba siempre al estilo Agresivo.
+    if confidence >= cons.confidence_threshold and abs(ev_conservative) >= cons.ev_threshold:
         return "CONSERVATIVE"
     return "AGGRESSIVE"
 

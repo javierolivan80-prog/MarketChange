@@ -858,7 +858,18 @@ ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
 -- apertura, así que un stop u objetivo tocado ese mismo día es una salida
 -- legítima (exit_date = entry_date); salir ANTES de entrar sigue prohibido.
 -- Las bases ya creadas tenían "exit_date > entry_date": se reemplaza.
-ALTER TABLE portfolio_trades DROP CONSTRAINT IF EXISTS chk_portfolio_no_lookahead;
-ALTER TABLE portfolio_trades ADD CONSTRAINT chk_portfolio_no_lookahead CHECK (exit_date >= entry_date);
-ALTER TABLE paper_trades DROP CONSTRAINT IF EXISTS chk_paper_no_lookahead;
-ALTER TABLE paper_trades ADD CONSTRAINT chk_paper_no_lookahead CHECK (exit_date IS NULL OR exit_date >= entry_date);
+-- Solo si aún tiene la forma antigua: así no se bloquea ni se recorre la
+-- tabla en cada pasada que aplica el schema.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_portfolio_no_lookahead'
+               AND pg_get_constraintdef(oid) LIKE '%exit_date > entry_date%') THEN
+        ALTER TABLE portfolio_trades DROP CONSTRAINT chk_portfolio_no_lookahead;
+        ALTER TABLE portfolio_trades ADD CONSTRAINT chk_portfolio_no_lookahead CHECK (exit_date >= entry_date);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_paper_no_lookahead'
+               AND pg_get_constraintdef(oid) LIKE '%exit_date > entry_date%') THEN
+        ALTER TABLE paper_trades DROP CONSTRAINT chk_paper_no_lookahead;
+        ALTER TABLE paper_trades ADD CONSTRAINT chk_paper_no_lookahead CHECK (exit_date IS NULL OR exit_date >= entry_date);
+    END IF;
+END $$;

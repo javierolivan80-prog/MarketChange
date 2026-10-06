@@ -72,17 +72,27 @@ logger = logging.getLogger(__name__)
 COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
 
 # Capitalización en D0 para el deslizamiento (H-32): acciones del último 10-K
-# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × cierre de
-# D0. Limitación conocida (H-04): close_raw viene reexpresado por splits
-# posteriores y las acciones XBRL son las de entonces; alrededor de un split
-# la cifra puede desviarse, lo que solo importa cerca del umbral de 10.000 M$.
+# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × cierre de D0.
+#
+# Sesgo conocido (H-04): close_raw viene reexpresado por splits POSTERIORES y
+# las acciones XBRL son las de entonces. Un contrasplit 1:10 posterior
+# multiplica por 10 el precio de D0 y convertiría en "grande" (10 pb) a una
+# microcap en apuros, justo el caso más arriesgado. Para no favorecer ese
+# error se toma la MENOR de esa cifra y la capitalización actual
+# (universe.market_cap_last_usd, acciones y precio de hoy, consistentes entre
+# sí): el error que queda va hacia el deslizamiento alto (25 pb), el
+# conservador. Sin cifra en D0 no se usa la de hoy: NULL, que también es 25 pb.
 MARKET_CAP_D0_SQL = """
-    (SELECT f.shares_outstanding FROM fundamentals f
-      WHERE f.cik = e.cik AND f.filed_at <= e.d0_close_date AND f.shares_outstanding IS NOT NULL
-      ORDER BY f.filed_at DESC LIMIT 1)
-  * (SELECT p.close_raw FROM prices p
-      WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date
-      ORDER BY p.trade_date DESC LIMIT 1)
+    (SELECT CASE WHEN cap_d0 IS NULL THEN NULL ELSE LEAST(cap_d0, u.market_cap_last_usd) END
+       FROM (SELECT
+               (SELECT f.shares_outstanding FROM fundamentals f
+                 WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
+                   AND f.shares_outstanding IS NOT NULL
+                 ORDER BY f.filed_at DESC LIMIT 1)
+             * (SELECT p.close_raw FROM prices p
+                 WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date
+                 ORDER BY p.trade_date DESC LIMIT 1) AS cap_d0) c
+       LEFT JOIN universe u ON u.cik = e.cik)
 """
 
 # Circuit-breaker de drawdown de cartera (hallazgo de la auditoría — protección
@@ -896,6 +906,7 @@ def simulate_portfolio(
     equity_rows: list[dict] = []
     peak_equity = starting_capital  # ver DRAWDOWN_CIRCUIT_BREAKER_PCT arriba
     n_days_circuit_breaker_active = 0
+    n_days_reduced_size = 0
     # Estado del freno (H-10): sesiones de pausa que quedan, si se opera a
     # medio tamaño y el nivel de equity al reanudar.
     pause_sessions_left = 0
@@ -912,6 +923,14 @@ def simulate_portfolio(
         return total
 
     for today in master_calendar:
+        # Estado AL ABRIR: las entradas se ejecutan a la apertura, así que su
+        # tamaño, el freno, los huecos libres y el dinero disponible salen de
+        # cómo estaba la cartera al cierre anterior, no de salidas que pasan
+        # DESPUÉS dentro de la sesión (revisión adversarial, Tanda 2).
+        cash_al_abrir = cash
+        equity_al_abrir = equity_rows[-1]["balance"] if equity_rows else starting_capital
+        ocupados_al_abrir = {s: len(v) for s, v in open_positions.items()}
+
         # 1) Salidas — se procesan antes que las entradas del mismo día.
         for style in ("CONSERVATIVE", "AGGRESSIVE"):
             still_open = []
@@ -1013,9 +1032,9 @@ def simulate_portfolio(
                         still_open.append(pos)
                 open_positions[style] = still_open
 
-        # 2) Entradas — dimensionadas contra la equity de HOY tras las salidas
-        # de hoy (spec: "rebalance: noche antes de apertura").
-        equity_for_sizing = cash + portfolio_mtm(today)
+        # 2) Entradas — dimensionadas contra la equity al cierre anterior
+        # (spec: "rebalance: noche antes de apertura").
+        equity_for_sizing = equity_al_abrir
         # Freno de pérdidas (H-10, ver DRAWDOWN_CIRCUIT_BREAKER_PCT): pausa,
         # después medio tamaño hasta un nuevo máximo.
         if pause_sessions_left > 0:
@@ -1041,11 +1060,15 @@ def simulate_portfolio(
         if circuit_breaker_active:
             n_days_circuit_breaker_active += 1
         else:
+            if reduced_size:
+                n_days_reduced_size += 1
+            nuevas_hoy: dict[str, list[OpenPosition]] = {"CONSERVATIVE": [], "AGGRESSIVE": []}
+            gastado_hoy = 0.0
             for plan in entries_by_date.get(today, []):
                 style = plan["execution_style"]
-                if len(open_positions[style]) >= max_concurrent[style]:
-                    continue  # sin hueco — la señal se descarta (max_concurrent del spec)
-                if thesis_memory_enabled and any(p.ticker == plan["ticker"] for p in open_positions[style]):
+                if ocupados_al_abrir[style] + len(nuevas_hoy[style]) >= max_concurrent[style]:
+                    continue  # sin hueco al abrir — la señal se descarta (max_concurrent del spec)
+                if thesis_memory_enabled and any(p.ticker == plan["ticker"] for p in open_positions[style] + nuevas_hoy[style]):
                     # Ya hay una tesis abierta en este ticker/estilo: el
                     # evento nuevo se reconcilia contra ELLA (paso 1.5), no
                     # abre una segunda posición independiente (ajuste
@@ -1064,10 +1087,12 @@ def simulate_portfolio(
                     slippage_bps_por_lado=plan.get("slippage_bps_por_lado", SLIPPAGE_BPS_PER_SIDE_SMALL),
                     size_multiplier=CIRCUIT_BREAKER_REDUCED_SIZE if reduced_size else 1.0,
                 )
-                if pos.position_size_dollars > cash:
-                    logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)
-                    pos.position_size_dollars = max(cash, 0.0)
+                disponible = cash_al_abrir - gastado_hoy
+                if pos.position_size_dollars > disponible:
+                    logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, disponible)
+                    pos.position_size_dollars = max(disponible, 0.0)
                 cash -= pos.position_size_dollars
+                gastado_hoy += pos.position_size_dollars
                 if thesis_memory_enabled:
                     expected_move_pct = abs(
                         estimate_impact_for_event(conn, plan["event_class"], plan["d0_close_date"], plan["event_id"], window_days=20).expected_magnitude_pct
@@ -1090,25 +1115,31 @@ def simulate_portfolio(
                     pos.thesis_created_at_date = today
                     pos.thesis_origin_event_class = plan["event_class"]
                     pos.thesis_expiry_date = thesis_expiry_date
-                # La sesión de entrada también cuenta (BUGS_REPORT.md H-31):
-                # se entra a la apertura, así que todo el rango del día es
-                # posterior a la entrada y un stop u objetivo tocado ese mismo
-                # día se ejecuta ese día. Antes se ignoraba hasta el día
-                # siguiente.
-                if bar["high_raw"] is not None and bar["low_raw"] is not None and bar["close_raw"] is not None:
-                    step_position_forward(
-                        pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today,
-                        open_=pos.entry_price,
-                    )
-                if pos.remaining_fraction <= 1e-9:
-                    record = consolidate_trade_record(pos)
-                    record["version"] = version
-                    record["run_batch_tag"] = run_batch_tag
-                    completed_trades.append(record)
-                    cash += pos.position_size_dollars + record["pnl_abs"]
-                    _maybe_close_thesis(conn, pos, record)
-                    continue
-                open_positions[style].append(pos)
+                nuevas_hoy[style].append(pos)
+
+            # La sesión de entrada también cuenta (BUGS_REPORT.md H-31): se
+            # entra a la apertura, así que todo el rango del día es posterior
+            # a la entrada y un stop u objetivo tocado ese día se ejecuta ese
+            # día. Va DESPUÉS de abrir todas las entradas del día: lo que se
+            # cierra a media sesión no puede liberar hueco ni dinero para otra
+            # entrada a la misma apertura.
+            for style, nuevas in nuevas_hoy.items():
+                for pos in nuevas:
+                    bar = ticker_cache[pos.ticker].get(today)
+                    if bar["high_raw"] is not None and bar["low_raw"] is not None and bar["close_raw"] is not None:
+                        step_position_forward(
+                            pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today,
+                            open_=pos.entry_price,
+                        )
+                    if pos.remaining_fraction <= 1e-9:
+                        record = consolidate_trade_record(pos)
+                        record["version"] = version
+                        record["run_batch_tag"] = run_batch_tag
+                        completed_trades.append(record)
+                        cash += pos.position_size_dollars + record["pnl_abs"]
+                        _maybe_close_thesis(conn, pos, record)
+                    else:
+                        open_positions[style].append(pos)
 
         # 3) Curva de equity de hoy (tras salidas Y entradas de hoy, si el
         # circuit-breaker no las bloqueó).
@@ -1140,6 +1171,7 @@ def simulate_portfolio(
         "n_trades": len(completed_trades),
         "n_equity_days": len(equity_rows),
         "n_days_circuit_breaker_active": n_days_circuit_breaker_active,
+        "n_days_reduced_size": n_days_reduced_size,
     }
 
 
