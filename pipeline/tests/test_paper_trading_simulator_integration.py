@@ -193,9 +193,11 @@ def test_paper_trading_solo_con_eventos_posteriores_al_corte_de_los_modelos(conn
     antes = _seed_event(conn, "1", "AAA", date(2026, 1, 30), "LONG", 0.8, 80, 0.03)
     justo_despues = _seed_event(conn, "2", "BBB", date(2026, 2, 2), "LONG", 0.8, 80, 0.03)
     desconocido = _seed_event(conn, "3", "CCC", date(2026, 2, 2), "LONG", 0.8, 80, 0.03, modelo_judge="claude-otro")
+    # El nombre con fecha que a veces devuelve la API se reconoce, como en config.
+    con_fecha = _seed_event(conn, "4", "DDD", date(2026, 2, 2), "LONG", 0.8, 80, 0.03, modelo_judge="claude-sonnet-4-6-20260217")
     desde, hasta = date(2026, 1, 26), date(2026, 2, 6)
-    assert [r["event_id"] for r in fetch_events_for_week(conn, "BALANCED", desde, hasta)] == [justo_despues]
-    assert [r["event_id"] for r in fetch_all_events_for_week(conn, desde, hasta)] == [justo_despues]
+    assert [r["event_id"] for r in fetch_events_for_week(conn, "BALANCED", desde, hasta)] == [justo_despues, con_fecha]
+    assert sorted(r["event_id"] for r in fetch_all_events_for_week(conn, desde, hasta)) == [justo_despues, con_fecha]
     assert antes and desconocido
 
 

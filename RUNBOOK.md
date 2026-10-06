@@ -308,7 +308,8 @@ lo muestra. En local: `python -m pipeline.backtest.portfolio_report --oos
 --motivo "..."` (también queda apuntado).
 
 Requiere que `event_analyses` tenga filas con la regla histórica rellena
-(Fase 2/3.8 y `backfill_decision_sin_ia`) y precios con `open_raw` (yfinance_backfill.py ya lo descarga —
+(Fase 2/3.8; el propio comando la rellena antes de simular, sin la IA, y el
+informe guarda en `cobertura_regla` cuántos análisis la tienen) y precios con `open_raw` (yfinance_backfill.py ya lo descarga —
 ver §3.6 más arriba). Corre **4 versiones** (Conservative/Aggressive/Balanced,
 del spec original, más **DYNAMIC**, añadida después — ver nota 5 del
 docstring de `pipeline/backtest/portfolio_strategies.py`: reutiliza el mismo

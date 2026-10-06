@@ -71,8 +71,16 @@ def date_bounds(sample: str | None) -> tuple[date | None, date | None]:
 
 def tag_suffix(sample: str | None) -> str:
     """Sufijo para run_batch_tag/nombres de fichero — visible incluso si
-    alguien solo mira el nombre del run sin abrir el contenido."""
-    return "-OOS" if sample == SAMPLE_OOS else ""
+    alguien solo mira el nombre del run sin abrir el contenido.
+
+    En GitHub Actions el OOS lleva además el id de la corrida (GITHUB_RUN_ID,
+    el mismo para los dos pasos del workflow): dos lanzamientos el mismo día y
+    con el mismo commit no comparten tag, así que el segundo no pisa el
+    informe del primero y oos_runs los cuenta como dos (H-07)."""
+    if sample != SAMPLE_OOS:
+        return ""
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    return f"-OOS-{run_id}" if run_id else "-OOS"
 
 
 def git_sha_corto() -> str:

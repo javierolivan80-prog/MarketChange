@@ -15,9 +15,12 @@ on:
         description: "Por qué se mira el OOS ahora (queda registrado en oos_runs)"
         required: true
 
-# El mismo grupo que la pasada nocturna: no escriben a la vez en la base.
+# Grupo propio: GitHub solo guarda UNA corrida pendiente por grupo, así que
+# compartir el de la pasada nocturna haría que un OOS en cola y el cron se
+# cancelaran entre sí. Escribe con su propio tag (-OOS-<id de corrida>), sin
+# pisar nada de la nocturna.
 concurrency:
-  group: nightly-pipeline
+  group: oos-manual
   cancel-in-progress: false
 
 jobs:
@@ -32,6 +35,10 @@ jobs:
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
       - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
+      - name: Asegurar el esquema (oos_runs)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -c "from pipeline.db.connection import get_connection, init_schema; init_schema(get_connection())"
       - name: Backtest de cartera Out-of-Sample
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

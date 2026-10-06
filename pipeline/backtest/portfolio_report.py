@@ -27,6 +27,7 @@ from pipeline.backtest.portfolio_metrics import (
 )
 from pipeline.backtest.portfolio_simulator import VERSIONS, simulate_portfolio
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
+from pipeline.analyze.event_analysis_pipeline import cobertura_regla_sin_ia, rellenar_regla_sin_ia
 from pipeline.backtest.sample_split import (
     OOS_WARNING,
     SAMPLE_IN_SAMPLE,
@@ -203,6 +204,9 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
         "sample": sample,
         # De dónde sale cada decisión (H-06): la regla sin IA, no la IA.
         "decision_source": "regla_historica_sin_ia",
+        # Análisis con la regla ya calculada: con pendientes, el backtest es
+        # parcial (lo dice aquí, no solo en el log).
+        "cobertura_regla": cobertura_regla_sin_ia(conn),
         "versions": version_reports,
         "bias_report": bias_report,
         "recommendation": recommendation,
@@ -322,6 +326,11 @@ if __name__ == "__main__":
     tag = f"{date.today().isoformat()}-{git_sha_corto()}{tag_suffix(sample)}"
 
     conn = get_connection()
+    # La regla sin IA de los análisis pendientes, antes de simular: sin ella
+    # un análisis no entra en el backtest (H-06). No usa la IA, así que no
+    # depende de que el paso de análisis haya podido correr.
+    relleno = rellenar_regla_sin_ia(conn)
+    print(f"Regla sin IA: {relleno['con_regla']} de {relleno['analisis']} análisis ({relleno['rellenados']} rellenados ahora)")
     if sample == SAMPLE_OOS:
         vistas = registrar_oos(conn, tag, "backtest", args.motivo)
         print(f"OOS mirado {vistas} vez/veces antes de esta (ver oos_runs)")

@@ -76,10 +76,17 @@ def test_a_single_date_is_never_in_both_partitions():
         assert in_in_sample or in_oos, f"{d} no cae en ninguna partición"
 
 
-def test_tag_suffix_only_for_oos():
+def test_tag_suffix_only_for_oos(monkeypatch):
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
     assert tag_suffix(SAMPLE_OOS) == "-OOS"
     assert tag_suffix(SAMPLE_IN_SAMPLE) == ""
     assert tag_suffix(None) == ""
+
+
+def test_tag_suffix_oos_distingue_cada_lanzamiento_en_actions(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "123456")
+    assert tag_suffix(SAMPLE_OOS) == "-OOS-123456"
+    assert tag_suffix(SAMPLE_IN_SAMPLE) == ""
 
 
 # ---------------------------------------------------------------------------

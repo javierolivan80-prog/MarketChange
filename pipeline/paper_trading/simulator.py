@@ -61,9 +61,17 @@ VERSIONS = ("BALANCED",)
 # modelos que los analizaron (BUGS_REPORT.md H-06): el paper trading mide la
 # IA, y antes del corte pudo haber leído qué pasó. Un modelo sin corte en
 # config.MODEL_TRAINING_CUTOFF deja el evento fuera (NULL en la comparación).
+# El nombre del modelo se busca como en config.fecha_corte_modelo: exacto o
+# con sufijo de fecha (claude-haiku-4-5-20251001).
 POSTERIOR_AL_CORTE_SQL = """
-    e.d0_close_date > (%(cortes)s::jsonb ->> ea.model_version_bull_bear)::date
-    AND e.d0_close_date > (%(cortes)s::jsonb ->> ea.model_version_judge)::date
+    e.d0_close_date > (
+        SELECT max(c.value::date) FROM jsonb_each_text(%(cortes)s::jsonb) c
+        WHERE ea.model_version_bull_bear = c.key OR ea.model_version_bull_bear LIKE c.key || '-%%'
+    )
+    AND e.d0_close_date > (
+        SELECT max(c.value::date) FROM jsonb_each_text(%(cortes)s::jsonb) c
+        WHERE ea.model_version_judge = c.key OR ea.model_version_judge LIKE c.key || '-%%'
+    )
 """
 
 

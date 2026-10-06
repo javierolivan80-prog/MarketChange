@@ -1086,3 +1086,36 @@ def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de
     assert control["metodo"] == "analogos_signo_v3" and control["confidence_in_conviction"] == pytest.approx(80.0)
     assert control["regla_historica"]["confidence_in_conviction"] == 100.0
     assert control["regla_historica"]["net_conviction"] == 1.0
+
+
+def test_rellenar_regla_sin_ia_no_se_atasca_con_un_analisis_que_falla(conn, sin_techo_de_ev, monkeypatch):
+    """H-06 (revisión): el relleno corre por tandas hasta acabar, sin la IA;
+    un análisis que falla no se reintenta en la misma corrida ni tapona la
+    cola, y queda contado como pendiente en la cobertura."""
+    from pipeline.analyze import event_analysis_pipeline as eap
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _sembrar_analogos(conn, dates)
+    a = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    b = _seed_event(conn, "1", "TESTCO", dates[281].date())
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
+    eventos = [e for e in eap.fetch_events_needing_analysis(conn) if e["event_id"] in (a, b)]
+    conn = eap.process_chunk(conn, client, eventos)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET decision_sin_ia = NULL")
+        cur.execute("SELECT count(*) AS n FROM event_analyses")
+        total = cur.fetchone()["n"]
+    conn.commit()
+
+    original = eap.estimate_impact_for_event
+
+    def falla_con_b(c, event_class, d0, event_id, window_days=20):
+        if event_id == b:
+            raise RuntimeError("dato roto")
+        return original(c, event_class, d0, event_id, window_days=window_days)
+
+    monkeypatch.setattr(eap, "estimate_impact_for_event", falla_con_b)
+    resultado = eap.rellenar_regla_sin_ia(conn, tanda=1)
+    assert resultado["fallidos"] == 1
+    assert resultado["pendientes"] == 1 and resultado["con_regla"] == total - 1
+    assert eap.cobertura_regla_sin_ia(conn)["pendientes"] == 1

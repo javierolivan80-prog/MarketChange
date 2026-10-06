@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import replace
 from datetime import date, timedelta
 
@@ -729,7 +730,7 @@ def regla_historica(con_ia: AbstentionInputs, impact, skip_reason: str | None) -
     }
 
 
-def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
+def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = None) -> int:
     """Calcula el grupo de control de los análisis guardados antes de que
     existiera, o con una regla anterior (`metodo` distinto del actual), sin
     llamar a la IA: la decisión sin IA
@@ -738,7 +739,11 @@ def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
     Diferencia con el control calculado en el momento: los análogos se
     vuelven a leer hoy con as_of = D0. Sigue sin haber look-ahead (solo
     eventos cuya ventana terminó antes de D0), pero puede haber más CAR de
-    entonces calculados después. Se marca con "recalculado": true."""
+    entonces calculados después. Se marca con "recalculado": true.
+
+    `fallidos`: event_id que ya fallaron en esta corrida; no se vuelven a
+    pedir y se añaden los que fallen ahora (ver rellenar_regla_sin_ia)."""
+    excluir = list(fallidos or ())
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -748,11 +753,12 @@ def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
             FROM event_analyses ea
             JOIN events e ON e.event_id = ea.event_id
             JOIN universe u ON u.cik = e.cik
-            WHERE ea.decision_sin_ia IS NULL OR ea.decision_sin_ia->>'metodo' IS DISTINCT FROM %s
+            WHERE (ea.decision_sin_ia IS NULL OR ea.decision_sin_ia->>'metodo' IS DISTINCT FROM %s)
+              AND NOT (ea.event_id = ANY(%s))
             ORDER BY e.event_id
             LIMIT %s
             """,
-            (METODO_SIN_IA, limit),
+            (METODO_SIN_IA, excluir, limit),
         )
         filas = cur.fetchall()
     series_comunes: dict = {}
@@ -786,9 +792,48 @@ def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
         except Exception:
             logger.exception("No se pudo calcular el control sin IA del evento %d", f["event_id"])
             conn.rollback()
+            if fallidos is not None:
+                fallidos.add(f["event_id"])
     if hechos:
         logger.info("Grupo de control calculado para %d análisis antiguos", hechos)
     return hechos
+
+
+def cobertura_regla_sin_ia(conn) -> dict:
+    """Cuántos análisis tienen ya la regla del método actual. El backtest
+    histórico solo ve los que la tienen (H-06): si faltan, es parcial."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS analisis, "
+            "count(*) FILTER (WHERE decision_sin_ia->>'metodo' = %s) AS con_regla FROM event_analyses",
+            (METODO_SIN_IA,),
+        )
+        fila = cur.fetchone()
+    return {"analisis": fila["analisis"], "con_regla": fila["con_regla"], "pendientes": fila["analisis"] - fila["con_regla"]}
+
+
+def rellenar_regla_sin_ia(conn, max_segundos: float = 900, tanda: int = 500) -> dict:
+    """Rellena el control y la regla sin IA de todos los análisis pendientes,
+    por tandas, hasta acabar o agotar `max_segundos`. No llama a la IA, así
+    que no depende de ANTHROPIC_API_KEY: lo lanza el paso de backtest antes
+    de simular. Un análisis que falla no se reintenta en esta corrida (no
+    tapona la cola); queda pendiente y se cuenta en la cobertura."""
+    inicio = time.monotonic()
+    fallidos: set = set()
+    hechos = 0
+    while time.monotonic() - inicio < max_segundos:
+        antes = len(fallidos)
+        n = backfill_decision_sin_ia(conn, limit=tanda, fallidos=fallidos)
+        hechos += n
+        if n == 0 and len(fallidos) == antes:
+            break
+    cobertura = cobertura_regla_sin_ia(conn)
+    if cobertura["pendientes"]:
+        logger.warning(
+            "Regla sin IA: %d de %d análisis siguen sin ella (%d fallaron en esta corrida); el backtest histórico será parcial",
+            cobertura["pendientes"], cobertura["analisis"], len(fallidos),
+        )
+    return {**cobertura, "rellenados": hechos, "fallidos": len(fallidos)}
 
 
 def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, judge_output,

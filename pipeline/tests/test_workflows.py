@@ -34,8 +34,17 @@ def test_el_oos_solo_se_lanza_a_mano_y_con_motivo():
     assert "schedule:" not in texto and "push:" not in texto and "pull_request:" not in texto
     assert re.search(r"motivo:\s*\n\s*description:.*\n\s*required: true", texto)
     assert texto.count("--oos --motivo") == 2
-    # El mismo grupo de concurrencia que la pasada nocturna.
-    assert "group: nightly-pipeline" in texto
+    # Grupo propio: compartir el de la nocturna cancelaría una de las dos.
+    assert "group: oos-manual" in texto
+    assert "init_schema" in texto
+
+
+def test_ningun_workflow_llama_al_oos_desde_otro():
+    for wf in WORKFLOWS.glob("*.yml"):
+        if wf.name == "oos_manual.yml":
+            continue
+        texto = _sin_comentarios(wf.read_text(encoding="utf-8"))
+        assert "oos_manual" not in texto, wf.name
 
 
 def _cli(modulo: str, *args: str) -> subprocess.CompletedProcess:
