@@ -50,6 +50,14 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
       - `analizar_antes_del_corte`, que lanza el paso de backtest sin la clave de la API, les guarda una fila con la decisión de la IA en NO_TRADE («anterior a la fecha de corte») y la regla sin IA calculada. Así entran gratis en el backtest histórico.
       - Esas filas (modelo `SIN_IA_ANTES_DEL_CORTE`) no sirven de caché a la IA, no cuentan como gasto y no entran en los resúmenes de abstenciones de la semana.
       - El escenario «confianza −20 %» y la calibración de la confianza del histórico salen como «no aplica»: la regla sin IA tiene la confianza fija y no hay nada que medir.
+      - Revisión adversarial:
+        - Sin fecha de corte conocida no se guarda nada como «antes del corte», porque esas filas quedarían fuera de la IA para siempre.
+        - Si el corte se mueve hacia atrás, `requeue_obsolete_skips` devuelve esas filas a la cola. Son filas sin IA y gratis de recalcular.
+        - En el detalle de un evento anterior al corte, la app enseña la regla sin IA en vez del control, que no tenía sentido sin la IA.
+        - La frescura de Inicio, `compute_day3_stats` y el diagnóstico excluyen esas filas.
+        - El OOS manual ya no escribe.
+        - Los presupuestos de tiempo bajan a 300 s (anteriores al corte) y 600 s (relleno). Hay que medir el efecto en el nightly, que va por ~157 de 180 min.
+      - **Abierto (SOSPECHA):** los eventos anteriores al corte que la IA ya analizó antes de este cambio conservan su análisis de IA. No afectan al backtest (que usa la regla) ni al paper trading (filtrado). Pasarlos a «sin IA» exige borrar esas filas: queda pendiente de la aprobación del usuario.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

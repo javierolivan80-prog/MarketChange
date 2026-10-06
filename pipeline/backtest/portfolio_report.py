@@ -342,10 +342,12 @@ if __name__ == "__main__":
     # Eventos anteriores al corte de los modelos: se guardan con la regla sin
     # IA, gratis (no van a la IA). Después, la regla de los análisis que
     # aún no la tengan.
-    nuevos = analizar_antes_del_corte(conn)
-    print(f"Anteriores al corte: {nuevos} eventos guardados con la regla sin IA")
-    relleno = rellenar_regla_sin_ia(conn)
-    print(f"Regla sin IA: {relleno['con_regla']} de {relleno['analisis']} análisis ({relleno['rellenados']} rellenados ahora)")
+    # Solo en la pasada In-Sample: el OOS manual solo consulta.
+    if sample != SAMPLE_OOS:
+        nuevos = analizar_antes_del_corte(conn)
+        print(f"Anteriores al corte: {nuevos} eventos guardados con la regla sin IA")
+        relleno = rellenar_regla_sin_ia(conn)
+        print(f"Regla sin IA: {relleno['con_regla']} de {relleno['analisis']} análisis ({relleno['rellenados']} rellenados ahora)")
     if sample == SAMPLE_OOS:
         vistas = registrar_oos(conn, tag, "backtest", args.motivo)
         print(f"OOS mirado {vistas} vez/veces antes de esta (ver oos_runs)")

@@ -633,6 +633,8 @@ export interface DecisionSinIa {
   confidence_in_conviction: number;
   n_analogues: number;
   decisiones: AbstentionDecision;
+  /** La regla del backtest histórico: signo de los análogos y confianza fija (H-06). */
+  regla_historica?: { net_conviction: number; confidence_in_conviction: number; decisiones: AbstentionDecision };
 }
 
 export async function getEventClasses(): Promise<string[]> {
@@ -946,7 +948,10 @@ export async function getRecentTradeSignals(version: StrategyVersion, limit = 5)
 export async function getPipelineFreshness(): Promise<{ last_analyzed_at: string | null; analyzed_last_24h: number }> {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT max(analyzed_at) AS last, count(*) FILTER (WHERE analyzed_at > now() - interval '24 hours') AS n24 FROM event_analyses`
+    // Sin las filas anteriores al corte: las escribe el paso de backtest, no el
+    // de la IA, y harían parecer vivo un análisis caído (H-06).
+    `SELECT max(analyzed_at) AS last, count(*) FILTER (WHERE analyzed_at > now() - interval '24 hours') AS n24
+     FROM event_analyses ea WHERE ${ANALIZADO_POR_LA_COLA}`
   );
   const last = rows[0]?.last;
   return {

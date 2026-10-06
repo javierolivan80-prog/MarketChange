@@ -73,7 +73,13 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
         ["Sharpe", ...VERSIONS.map((v) => fmtNum(report.versions[v].equity_metrics.sharpe_ratio))],
         [t("Peor caída", "Max drawdown"), ...VERSIONS.map((v) => fmtPct(report.versions[v].equity_metrics.max_drawdown))],
         [t("Calibración", "Calibration"), ...VERSIONS.map((v) => fmtNum(report.versions[v].calibration.calibration_score))],
-        [t("Calibración (correl.)", "Calibration (correl.)"), ...VERSIONS.map((v) => fmtNum(report.versions[v].confidence_calibration.correlation))],
+        [
+          t("Calibración (correl.)", "Calibration (correl.)"),
+          // H-06: la regla sin IA tiene la confianza fija; no hay nada que calibrar.
+          ...VERSIONS.map((v) =>
+            report.versions[v].confidence_calibration.no_aplica ? t("no aplica", "n/a") : fmtNum(report.versions[v].confidence_calibration.correlation),
+          ),
+        ],
       ],
       styles: { fontSize: 8 },
       headStyles: { fillColor: [30, 41, 59] },

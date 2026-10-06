@@ -1248,3 +1248,40 @@ def test_el_gasto_estimado_no_cuenta_las_filas_sin_ia(conn, corte_real, sin_tech
     _con_capitalizacion(conn)
     assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
     assert spend_today_usd(conn) == 0
+
+
+def test_sin_corte_conocido_no_se_guarda_nada_como_anterior_al_corte(conn, monkeypatch):
+    """Sin corte no se sabe qué es anterior: guardarlo como tal lo dejaría
+    fuera de la IA para siempre."""
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import analizar_antes_del_corte
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_event(conn, "1", "TESTCO", dates[280].date())
+    _con_capitalizacion(conn)
+    monkeypatch.setattr(config, "AI_VALIDATION_START", None)
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM event_analyses")
+        assert cur.fetchone()["n"] == 0
+
+
+def test_si_el_corte_se_mueve_atras_las_filas_sin_ia_vuelven_a_la_cola(conn, monkeypatch, sin_techo_de_ev):
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import (
+        analizar_antes_del_corte,
+        fetch_events_needing_analysis,
+        requeue_obsolete_skips,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    viejo = _seed_event(conn, "1", "TESTCO", dates[200].date())
+    reciente = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    _con_capitalizacion(conn)
+    monkeypatch.setattr(config, "AI_VALIDATION_START", dates[300].date())
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 2
+    assert requeue_obsolete_skips(conn) == 0  # los dos siguen siendo anteriores
+    monkeypatch.setattr(config, "AI_VALIDATION_START", dates[250].date())
+    assert requeue_obsolete_skips(conn) == 1
+    pendientes = {e["event_id"] for e in fetch_events_needing_analysis(conn)}
+    assert reciente in pendientes and viejo not in pendientes

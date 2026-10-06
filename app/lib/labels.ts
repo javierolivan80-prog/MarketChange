@@ -134,3 +134,7 @@ const RELIABILITY_EN: Record<"A" | "B" | "C", { title: string; summary: string }
 export function reliability(locale: Locale = "es"): Record<"A" | "B" | "C", { title: string; summary: string }> {
   return locale === "en" ? RELIABILITY_EN : RELIABILITY;
 }
+
+/** Modelo guardado para los eventos anteriores a la fecha de corte de los
+ * modelos, que no pasan por la IA (pipeline: adversarial_analyzer.MODELO_ANTES_DEL_CORTE, H-06). */
+export const MODELO_ANTES_DEL_CORTE = "SIN_IA_ANTES_DEL_CORTE";

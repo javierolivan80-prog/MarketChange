@@ -410,10 +410,11 @@ def process_chunk(conn, client, event_rows: list[dict]):
     """
     # Eventos anteriores al corte de los modelos (H-06): nunca van a la IA
     # (ni de caché), solo se calcula la regla sin IA. Sin corte conocido
-    # (AI_VALIDATION_START None), ninguno va a la IA.
+    # (AI_VALIDATION_START None) no se sabe dónde está la frontera: ni
+    # run_pipeline ni analizar_antes_del_corte llaman entonces a esta función.
     inicio_ia = config.AI_VALIDATION_START
     antes_del_corte = {
-        ev["event_id"] for ev in event_rows if inicio_ia is None or ev["d0_close_date"] < inicio_ia
+        ev["event_id"] for ev in event_rows if inicio_ia is not None and ev["d0_close_date"] < inicio_ia
     }
     cache_hits = get_cached_analyses_batch(conn, [ev for ev in event_rows if ev["event_id"] not in antes_del_corte])
     needs_llm = [ev for ev in event_rows if ev["event_id"] not in cache_hits]
@@ -877,7 +878,7 @@ def cobertura_regla_sin_ia(conn) -> dict:
     return {"analisis": fila["analisis"], "con_regla": fila["con_regla"], "pendientes": fila["analisis"] - fila["con_regla"]}
 
 
-def rellenar_regla_sin_ia(conn, max_segundos: float = 900, tanda: int = 500) -> dict:
+def rellenar_regla_sin_ia(conn, max_segundos: float = 600, tanda: int = 500) -> dict:
     """Rellena el control y la regla sin IA de todos los análisis pendientes,
     por tandas, hasta acabar o agotar `max_segundos`. No llama a la IA, así
     que no depende de ANTHROPIC_API_KEY: lo lanza el paso de backtest antes
@@ -1019,7 +1020,7 @@ def run_pipeline(
     return total, conn
 
 
-def analizar_antes_del_corte(conn, max_segundos: float = 600, min_market_cap: float | None = None) -> int:
+def analizar_antes_del_corte(conn, max_segundos: float = 300, min_market_cap: float | None = None) -> int:
     """Eventos con D0 anterior al corte de los modelos (H-06; decisión del
     usuario, 2026-10-06): no se mandan a la IA, que pudo haber leído qué pasó
     y no se puede validar con ellos. Se guarda su fila de análisis con la
@@ -1030,12 +1031,18 @@ def analizar_antes_del_corte(conn, max_segundos: float = 600, min_market_cap: fl
     depende de ANTHROPIC_API_KEY: lo lanza el paso de backtest, por tandas
     hasta acabar o agotar `max_segundos`. Devuelve cuántos guardó."""
     min_market_cap = config.ANALYSIS_MIN_MARKET_CAP_USD if min_market_cap is None else min_market_cap
+    inicio_ia = config.AI_VALIDATION_START
+    if inicio_ia is None:
+        # Sin corte conocido no se sabe qué eventos son anteriores: guardarlos
+        # como «antes del corte» los dejaría fuera de la IA para siempre.
+        logger.warning("Algún modelo configurado no tiene fecha de corte: no se guarda ningún evento como anterior al corte")
+        return 0
     inicio = time.monotonic()
     intentados: set[int] = set()
     while time.monotonic() - inicio < max_segundos:
         tanda = fetch_events_needing_analysis(
             conn, CHUNK_SIZE, min_market_cap=min_market_cap, require_d0_bar=True,
-            exclude_ids=intentados, d0_antes_de=config.AI_VALIDATION_START or date.max,
+            exclude_ids=intentados, d0_antes_de=inicio_ia,
         )
         if not tanda:
             break
@@ -1068,7 +1075,11 @@ OBSOLETE_SKIP_REASON_PREFIXES = ("sin datos de high/low", "proxy de spread")
 def requeue_obsolete_skips(conn) -> int:
     """Borra de event_analyses los descartes pre-IA con un motivo de
     OBSOLETE_SKIP_REASON_PREFIXES para que vuelvan a la cola. Idempotente:
-    tras la primera pasada no queda ninguno (la cola ya no los produce)."""
+    tras la primera pasada no queda ninguno (la cola ya no los produce).
+
+    También las filas «anteriores al corte» (H-06) cuyo D0 ya no es anterior
+    al corte vigente, si este se movió hacia atrás: sin esto no volverían
+    nunca a la IA. Son filas sin IA y gratis de recalcular."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -1079,6 +1090,16 @@ def requeue_obsolete_skips(conn) -> int:
             ([f"{p}%" for p in OBSOLETE_SKIP_REASON_PREFIXES],),
         )
         n = cur.rowcount
+        if config.AI_VALIDATION_START is not None:
+            cur.execute(
+                """
+                DELETE FROM event_analyses ea USING events e
+                WHERE e.event_id = ea.event_id AND ea.model_version_bull_bear = %s
+                  AND e.d0_close_date >= %s
+                """,
+                (MODELO_ANTES_DEL_CORTE, config.AI_VALIDATION_START),
+            )
+            n += cur.rowcount
     conn.commit()
     return n
 
@@ -1103,19 +1124,21 @@ def compute_day3_stats(conn) -> dict:
     resultado fuera de muestra, no una que se recalibra mirando el propio
     resultado)."""
     stats: dict = {}
+    # Sin las filas anteriores al corte, que no pasaron por la IA (H-06).
+    solo_cola = f"model_version_bull_bear <> '{MODELO_ANTES_DEL_CORTE}'"
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) AS n FROM event_analyses")
+        cur.execute(f"SELECT count(*) AS n FROM event_analyses WHERE {solo_cola}")
         total = cur.fetchone()["n"]
         stats["total_analyzed"] = total
 
-        cur.execute("SELECT avg(novelty_score) AS avg_novelty, avg(confidence_in_conviction) AS avg_confidence, avg(ev_balanced) AS avg_ev_balanced FROM event_analyses")
+        cur.execute(f"SELECT avg(novelty_score) AS avg_novelty, avg(confidence_in_conviction) AS avg_confidence, avg(ev_balanced) AS avg_ev_balanced FROM event_analyses WHERE {solo_cola}")
         row = cur.fetchone()
         stats["avg_novelty_score"] = float(row["avg_novelty"]) if row["avg_novelty"] is not None else None
         stats["avg_confidence_in_conviction"] = float(row["avg_confidence"]) if row["avg_confidence"] is not None else None
         stats["avg_ev_balanced"] = float(row["avg_ev_balanced"]) if row["avg_ev_balanced"] is not None else None
 
         for strategy, column in [("CONSERVATIVE", "trade_decision_conservative"), ("AGGRESSIVE", "trade_decision_aggressive"), ("BALANCED", "trade_decision_balanced")]:
-            cur.execute(f"SELECT count(*) AS n FROM event_analyses WHERE {column} != 'NO_TRADE'")
+            cur.execute(f"SELECT count(*) AS n FROM event_analyses WHERE {column} != 'NO_TRADE' AND {solo_cola}")
             trade_count = cur.fetchone()["n"]
             pct = (trade_count / total * 100) if total else 0.0
             stats[f"pct_trade_{strategy.lower()}"] = pct
