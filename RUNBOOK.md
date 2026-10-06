@@ -292,8 +292,24 @@ en la numeración de este repo (la Fase 3 ya la ocupa la extracción de texto de
 filings, §3.4-§3.5) — se usa "Fase 4" en el resto de esta sección para no
 confundir los dos.
 
-Requiere que `event_analyses` tenga filas con `trade_decision_* != 'NO_TRADE'`
-(Fase 2/3.8) y precios con `open_raw` (yfinance_backfill.py ya lo descarga —
+**Decide la regla sin IA, no la IA (BUGS_REPORT.md H-06).** Casi todo el
+histórico es anterior a la fecha de corte de entrenamiento de los modelos
+(`config.MODEL_TRAINING_CUTOFF`), que pudieron haber leído qué pasó después.
+Por eso el backtest lee `event_analyses.decision_sin_ia -> regla_historica`:
+signo de los análogos y confianza fija en 100, por la misma fórmula de EV y
+abstención. La IA se valida solo con eventos posteriores al corte (paper
+trading, §3.10).
+
+**Solo In-Sample cada noche (H-07).** Sin flags, el comando mira hasta
+`config.IN_SAMPLE_END`. El Out-of-Sample se evalúa una vez y a mano: pestaña
+Actions → «OOS manual» → Run workflow, con un motivo. Cada lanzamiento queda
+apuntado en la tabla `oos_runs`; el informe lleva el sufijo `-OOS` y la app no
+lo muestra. En local: `python -m pipeline.backtest.portfolio_report --oos
+--motivo "..."` (también queda apuntado).
+
+Requiere que `event_analyses` tenga filas con la regla histórica rellena
+(Fase 2/3.8; el propio comando la rellena antes de simular, sin la IA, y el
+informe guarda en `cobertura_regla` cuántos análisis la tienen) y precios con `open_raw` (yfinance_backfill.py ya lo descarga —
 ver §3.6 más arriba). Corre **4 versiones** (Conservative/Aggressive/Balanced,
 del spec original, más **DYNAMIC**, añadida después — ver nota 5 del
 docstring de `pipeline/backtest/portfolio_strategies.py`: reutiliza el mismo
@@ -438,6 +454,11 @@ detalle** — ver las cabeceras de módulo para el razonamiento completo:
   recorta, se reporta tal cual.
 
 ### 3.10 Paper trading simulado (spec "Fase 4 — Paper Trading simulado")
+
+**Una sola estrategia, Equilibrada, y solo eventos posteriores al corte de
+los modelos** (H-06): el paper trading es donde se mide la IA, y antes del
+corte pudo haber leído el desenlace. Las filas antiguas de Conservadora y
+Agresiva se conservan en `paper_trades`, pero ya no se simulan.
 
 Simula la ÚLTIMA SEMANA COMPLETA (lunes-viernes) de datos disponibles como si
 fuera "futura": entrada D+1, hold hasta TP/SL o fin de semana, log con status

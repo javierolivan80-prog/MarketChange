@@ -16,7 +16,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 from pipeline.backtest.portfolio_report import run_full_backtest
-from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, git_sha_corto, tag_suffix
+from pipeline.backtest.sample_split import (
+    OOS_WARNING,
+    SAMPLE_IN_SAMPLE,
+    SAMPLE_OOS,
+    git_sha_corto,
+    registrar_oos,
+    tag_suffix,
+)
 from pipeline.backtest.sensitivity import run_sensitivity_analysis
 from pipeline.validation.decision import generate_decision
 from pipeline.validation.event_study import run_event_study
@@ -564,33 +571,34 @@ if __name__ == "__main__":
             "corrida ya dejó en la BD (ver persist_validation_report)."
         ),
     )
-    _sample_group = parser.add_mutually_exclusive_group()
-    _sample_group.add_argument(
+    parser.add_argument(
         "--oos",
         action="store_true",
         help=(
-            "SOLO invocación manual — nunca en el cron nocturno (ver "
-            "nightly_pipeline.yml, que usa --full-range). Corre sobre "
-            "Out-of-Sample en vez del default IN_SAMPLE — ver el mismo flag en "
-            "backtest/portfolio_report.py. Con --persist-only, tiene que "
-            "coincidir con el --oos/--full-range (o su ausencia) de la corrida "
-            "de portfolio_report.py de este mismo run_batch_tag, o el tag no "
-            "coincidirá y se recalculará todo."
+            "SOLO a mano, con el workflow oos_manual.yml — nunca en el cron "
+            "nocturno, que mira solo el In-Sample (BUGS_REPORT.md H-07). Ver el "
+            "mismo flag en backtest/portfolio_report.py. Con --persist-only, "
+            "tiene que coincidir con el --oos (o su ausencia) de la corrida de "
+            "portfolio_report.py de este mismo run_batch_tag, o el tag no "
+            "coincidirá y se recalculará todo. Exige --motivo."
         ),
     )
-    _sample_group.add_argument(
-        "--full-range",
-        action="store_true",
-        help=(
-            "Sin partición In-Sample/Out-of-Sample (sample=None) — el mismo "
-            "flag y el mismo razonamiento que backtest/portfolio_report.py. Es "
-            "lo que usa el cron nocturno."
-        ),
-    )
+    parser.add_argument("--motivo", help="por qué se mira el OOS (obligatorio con --oos)")
     args = parser.parse_args()
-    sample = None if args.full_range else (SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE)
+    if args.oos and not (args.motivo or "").strip():
+        parser.error("--oos exige --motivo")
+    sample = SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE
 
     conn = get_connection()
+    if sample == SAMPLE_OOS:
+        # El mismo tag con el que se guarda cada camino (persist / informe).
+        tag_oos = (
+            f"{date.today().isoformat()}-{git_sha_corto()}{tag_suffix(sample)}"
+            if args.persist_only
+            else f"validation-{date.today().isoformat()}{tag_suffix(sample)}"
+        )
+        vistas = registrar_oos(conn, tag_oos, "validacion", args.motivo)
+        print(f"OOS mirado {vistas} vez/veces antes de esta (ver oos_runs)")
 
     if args.persist_only:
         # Mismo esquema de tag (incluido el sufijo -OOS) que

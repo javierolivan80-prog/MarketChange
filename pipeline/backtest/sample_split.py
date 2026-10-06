@@ -45,6 +45,11 @@ OOS_START: date = date.fromisoformat(config.OOS_START)
 # ni "colarse" a mirarlo sin darse cuenta de qué se está mirando.
 OOS_WARNING = "OUT-OF-SAMPLE — NO USAR PARA AJUSTAR PARÁMETROS"
 
+# Para las consultas del «último informe»: un OOS lanzado a mano no es el
+# informe de cada noche y no debe salir en la app ni en las comparaciones
+# (BUGS_REPORT.md H-07). Se aplica sobre una columna report_json.
+NO_ES_OOS_SQL = "report_json->>'sample' IS DISTINCT FROM 'oos'"
+
 
 def validate_sample(sample: str | None) -> None:
     if sample is not None and sample not in SAMPLES:
@@ -66,8 +71,16 @@ def date_bounds(sample: str | None) -> tuple[date | None, date | None]:
 
 def tag_suffix(sample: str | None) -> str:
     """Sufijo para run_batch_tag/nombres de fichero — visible incluso si
-    alguien solo mira el nombre del run sin abrir el contenido."""
-    return "-OOS" if sample == SAMPLE_OOS else ""
+    alguien solo mira el nombre del run sin abrir el contenido.
+
+    En GitHub Actions el OOS lleva además el id de la corrida (GITHUB_RUN_ID,
+    el mismo para los dos pasos del workflow): dos lanzamientos el mismo día y
+    con el mismo commit no comparten tag, así que el segundo no pisa el
+    informe del primero y oos_runs los cuenta como dos (H-07)."""
+    if sample != SAMPLE_OOS:
+        return ""
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    return f"-OOS-{run_id}" if run_id else "-OOS"
 
 
 def git_sha_corto() -> str:
@@ -101,3 +114,19 @@ def git_sha_corto() -> str:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     except Exception:
         return "unknown"
+
+
+def registrar_oos(conn, run_batch_tag: str, paso: str, motivo: str) -> int:
+    """Apunta en oos_runs que se ha mirado el OOS (H-07) y devuelve cuántas
+    veces se había mirado antes. `paso`: 'backtest' o 'validacion'."""
+    if not motivo or not motivo.strip():
+        raise ValueError("mirar el OOS exige un motivo")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(DISTINCT run_batch_tag) AS n FROM oos_runs WHERE run_batch_tag <> %s", (run_batch_tag,))
+        antes = cur.fetchone()["n"]
+        cur.execute(
+            "INSERT INTO oos_runs (run_batch_tag, paso, git_sha, lanzado_por, motivo) VALUES (%s, %s, %s, %s, %s)",
+            (run_batch_tag, paso, git_sha_corto(), os.environ.get("GITHUB_ACTOR"), motivo.strip()),
+        )
+    conn.commit()
+    return antes

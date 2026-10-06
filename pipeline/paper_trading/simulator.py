@@ -33,6 +33,7 @@ parciales:
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, timedelta
 
@@ -51,7 +52,31 @@ from pipeline.backtest.portfolio_strategies import (
 
 logger = logging.getLogger(__name__)
 
-VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED")
+# Una sola estrategia fija en paper trading: la Equilibrada (decisión del
+# usuario, auditoría 2026-10-05). Probar tres a la vez y quedarse con la que
+# mejor salga es elegir mirando los resultados.
+VERSIONS = ("BALANCED",)
+
+# Solo cuentan los eventos posteriores al corte de entrenamiento de los
+# modelos que los analizaron (BUGS_REPORT.md H-06): el paper trading mide la
+# IA, y antes del corte pudo haber leído qué pasó. Un modelo sin corte en
+# config.MODEL_TRAINING_CUTOFF deja el evento fuera (NULL en la comparación).
+# El nombre del modelo se busca como en config.fecha_corte_modelo: exacto o
+# con sufijo de fecha (claude-haiku-4-5-20251001).
+POSTERIOR_AL_CORTE_SQL = """
+    e.d0_close_date > (
+        SELECT max(c.value::date) FROM jsonb_each_text(%(cortes)s::jsonb) c
+        WHERE ea.model_version_bull_bear = c.key OR ea.model_version_bull_bear LIKE c.key || '-%%'
+    )
+    AND e.d0_close_date > (
+        SELECT max(c.value::date) FROM jsonb_each_text(%(cortes)s::jsonb) c
+        WHERE ea.model_version_judge = c.key OR ea.model_version_judge LIKE c.key || '-%%'
+    )
+"""
+
+
+def cortes_json() -> str:
+    return json.dumps({m: c.isoformat() for m, c in app_config.MODEL_TRAINING_CUTOFF.items()})
 
 # Mapeo entre los motivos de cierre de step_position_forward (compartidos con
 # el backtest histórico) y el vocabulario del log de paper trading del spec.
@@ -103,12 +128,13 @@ def fetch_events_for_week(conn, version: str, week_start: date, week_end: date) 
                 FROM events e
                 JOIN event_analyses ea ON ea.event_id = e.event_id
                 WHERE ea.{trade_decision_col} != 'NO_TRADE'
-                  AND e.d0_close_date BETWEEN %s AND %s
+                  AND e.d0_close_date BETWEEN %(desde)s AND %(hasta)s
+                  AND {POSTERIOR_AL_CORTE_SQL}
                 ORDER BY e.ticker, e.d0_close_date, abs(ea.ev_{version.lower()}) DESC, e.event_id
             ) unicos
             ORDER BY d0_close_date, abs(ev_{version.lower()}) DESC, event_id
             """,
-            (week_start, week_end),
+            {"desde": week_start, "hasta": week_end, "cortes": cortes_json()},
         )
         return cur.fetchall()
 
@@ -117,10 +143,11 @@ def fetch_all_events_for_week(conn, week_start: date, week_end: date) -> list[di
     """TODOS los eventos analizados de la semana, con o sin trade_decision —
     para la comparación predicción-vs-real (spec: "Guardar esto para TODOS
     los eventos de la semana"), que evalúa la calidad de la señal cruda
-    independientemente de si pasó el filtro de EV/confianza para operarse."""
+    independientemente de si pasó el filtro de EV/confianza para operarse.
+    Como en fetch_events_for_week, solo eventos posteriores al corte."""
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT e.event_id, e.ticker, e.event_class, e.d0_close_date,
                    ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
                    ea.confidence_in_conviction AS confidence,
@@ -129,10 +156,11 @@ def fetch_all_events_for_week(conn, week_start: date, week_end: date) -> list[di
                    ea.trade_decision_balanced
             FROM events e
             JOIN event_analyses ea ON ea.event_id = e.event_id
-            WHERE e.d0_close_date BETWEEN %s AND %s
+            WHERE e.d0_close_date BETWEEN %(desde)s AND %(hasta)s
+              AND {POSTERIOR_AL_CORTE_SQL}
             ORDER BY e.d0_close_date
             """,
-            (week_start, week_end),
+            {"desde": week_start, "hasta": week_end, "cortes": cortes_json()},
         )
         return cur.fetchall()
 

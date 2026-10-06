@@ -562,6 +562,22 @@ CREATE TABLE IF NOT EXISTS validation_reports (
 );
 
 -- ============================================================================
+-- oos_runs: registro de cada vez que alguien mira el Out-of-Sample
+-- (BUGS_REPORT.md H-07). El OOS solo se lanza a mano (workflow
+-- oos_manual.yml); cada lanzamiento queda aquí con fecha, tag, commit, quién
+-- y por qué, para que se sepa cuántas veces se ha mirado.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS oos_runs (
+    oos_run_id      SERIAL PRIMARY KEY,
+    run_batch_tag   TEXT NOT NULL,
+    paso            TEXT NOT NULL,
+    git_sha         TEXT NOT NULL,
+    lanzado_por     TEXT,
+    motivo          TEXT NOT NULL,
+    lanzado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================================
 -- notified_at (event_analyses): marca de "ya se avisó por Telegram de esta
 -- señal" (pipeline/notify/signals_notifier.py). Vía ALTER, no en el CREATE
 -- TABLE de arriba — mismo motivo que high_low_range_pct/filing_text más

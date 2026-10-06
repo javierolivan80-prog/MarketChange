@@ -8,6 +8,8 @@ from datetime import date, timedelta
 
 import pytest
 
+from pipeline.tests.regla_historica import copiar_a_regla_historica
+
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
 
@@ -79,6 +81,7 @@ def _seed_event_with_analysis(
             (event_id, net_conviction, confidence, ev_conservative, ev_aggressive, ev_balanced,
              trade_decision_conservative, trade_decision_aggressive, trade_decision_balanced),
         )
+        copiar_a_regla_historica(cur, event_id)
     conn.commit()
     return event_id
 
@@ -761,6 +764,39 @@ def test_una_operacion_por_empresa_y_dia(conn):
     # Mismo día: primero el de mayor |EV| (orden en que se reparten los huecos).
     ids = [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")]
     assert ids == [b, otro]
+
+
+def test_el_backtest_decide_con_la_regla_historica_no_con_la_ia(conn):
+    """H-06: el backtest lee la decisión de la regla sin IA, no la de la IA.
+    Si la IA dice LONG y la regla NO_TRADE, no se opera; al revés, sí, y con
+    la dirección, el EV y la confianza de la regla."""
+    from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    solo_ia = _seed_event_with_analysis(conn, "1", "AAA", d0, "LONG", "LONG", "LONG", 0.9, 90, 0.04, 0.04, 0.04)
+    solo_regla = _seed_event_with_analysis(conn, "2", "BBB", d0, "NO_TRADE", "NO_TRADE", "NO_TRADE", 0.0, 10, 0.0, 0.0, 0.0)
+    sin_regla = _seed_event_with_analysis(conn, "3", "CCC", d0, "LONG", "LONG", "LONG", 0.9, 90, 0.04, 0.04, 0.04)
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE event_analyses SET decision_sin_ia = jsonb_set(decision_sin_ia, '{regla_historica,decisiones,BALANCED,trade_decision}', '"NO_TRADE"')
+               WHERE event_id = %s""",
+            (solo_ia,),
+        )
+        cur.execute(
+            """UPDATE event_analyses SET decision_sin_ia = '{"regla_historica": {"net_conviction": -1.0,
+                   "confidence_in_conviction": 100.0, "ev_conservative": -0.02, "ev_balanced": -0.03,
+                   "ev_aggressive": -0.05, "decisiones": {"BALANCED": {"trade_decision": "SHORT"}}}}'
+               WHERE event_id = %s""",
+            (solo_regla,),
+        )
+        # Pendiente del relleno: sin regla histórica, no entra.
+        cur.execute("UPDATE event_analyses SET decision_sin_ia = NULL WHERE event_id = %s", (sin_regla,))
+    conn.commit()
+    filas = fetch_events_for_version(conn, "BALANCED")
+    assert [f["event_id"] for f in filas] == [solo_regla]
+    fila = filas[0]
+    assert fila["trade_decision"] == "SHORT" and fila["prediction"] == -1.0
+    assert fila["confidence"] == 100.0 and fila["ev_balanced"] == pytest.approx(-0.03)
 
 
 def test_deslizamiento_usa_la_capitalizacion_en_d0_sin_look_ahead(conn):

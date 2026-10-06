@@ -27,7 +27,15 @@ from pipeline.backtest.portfolio_metrics import (
 )
 from pipeline.backtest.portfolio_simulator import VERSIONS, simulate_portfolio
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
-from pipeline.backtest.sample_split import OOS_WARNING, SAMPLE_IN_SAMPLE, SAMPLE_OOS, git_sha_corto, tag_suffix
+from pipeline.analyze.event_analysis_pipeline import cobertura_regla_sin_ia, rellenar_regla_sin_ia
+from pipeline.backtest.sample_split import (
+    OOS_WARNING,
+    SAMPLE_IN_SAMPLE,
+    SAMPLE_OOS,
+    git_sha_corto,
+    registrar_oos,
+    tag_suffix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +202,11 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
         "run_batch_tag": run_batch_tag,
         "starting_capital": starting_capital,
         "sample": sample,
+        # De dónde sale cada decisión (H-06): la regla sin IA, no la IA.
+        "decision_source": "regla_historica_sin_ia",
+        # Análisis con la regla ya calculada: con pendientes, el backtest es
+        # parcial (lo dice aquí, no solo en el log).
+        "cobertura_regla": cobertura_regla_sin_ia(conn),
         "versions": version_reports,
         "bias_report": bias_report,
         "recommendation": recommendation,
@@ -284,33 +297,23 @@ if __name__ == "__main__":
     from pipeline.db.connection import get_connection
 
     parser = argparse.ArgumentParser()
-    _sample_group = parser.add_mutually_exclusive_group()
-    _sample_group.add_argument(
+    parser.add_argument(
         "--oos",
         action="store_true",
         help=(
-            "SOLO invocación manual — nunca en el cron nocturno (ver "
-            "nightly_pipeline.yml, que usa --full-range). Corre sobre "
-            "Out-of-Sample (config.OOS_START en adelante) en vez del default "
-            "IN_SAMPLE. Ver ARCHITECTURE_LEAN.md T6: se evalúa UNA SOLA VEZ — "
-            "si ajustas parámetros después de mirar este resultado, el holdout "
-            "ya no vale para nada."
+            "SOLO a mano, con el workflow oos_manual.yml — nunca en el cron "
+            "nocturno, que mira solo el In-Sample (BUGS_REPORT.md H-07). Corre "
+            "sobre Out-of-Sample (config.OOS_START en adelante). Ver "
+            "ARCHITECTURE_LEAN.md T6: se evalúa UNA SOLA VEZ — si ajustas "
+            "parámetros después de mirar este resultado, el holdout ya no vale "
+            "para nada. Exige --motivo y queda apuntado en oos_runs."
         ),
     )
-    _sample_group.add_argument(
-        "--full-range",
-        action="store_true",
-        help=(
-            "Sin partición In-Sample/Out-of-Sample — todo el rango de eventos "
-            "disponible (sample=None, el comportamiento de antes de que este "
-            "split existiera). Es lo que usa el cron nocturno: el split OOS es "
-            "un concepto de VALIDACIÓN de investigación (evaluar una vez, no "
-            "reajustar), no algo que deba capar para siempre lo que ve el "
-            "pipeline de producción según van llegando eventos reales."
-        ),
-    )
+    parser.add_argument("--motivo", help="por qué se mira el OOS (obligatorio con --oos)")
     args = parser.parse_args()
-    sample = None if args.full_range else (SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE)
+    if args.oos and not (args.motivo or "").strip():
+        parser.error("--oos exige --motivo")
+    sample = SAMPLE_OOS if args.oos else SAMPLE_IN_SAMPLE
 
     # run_batch_tag: fecha + git sha corto, igual que backtest_runs (Fase 1,
     # T9 de ARCHITECTURE_LEAN.md — reproducibilidad). Sufijo -OOS visible en
@@ -323,6 +326,14 @@ if __name__ == "__main__":
     tag = f"{date.today().isoformat()}-{git_sha_corto()}{tag_suffix(sample)}"
 
     conn = get_connection()
+    # La regla sin IA de los análisis pendientes, antes de simular: sin ella
+    # un análisis no entra en el backtest (H-06). No usa la IA, así que no
+    # depende de que el paso de análisis haya podido correr.
+    relleno = rellenar_regla_sin_ia(conn)
+    print(f"Regla sin IA: {relleno['con_regla']} de {relleno['analisis']} análisis ({relleno['rellenados']} rellenados ahora)")
+    if sample == SAMPLE_OOS:
+        vistas = registrar_oos(conn, tag, "backtest", args.motivo)
+        print(f"OOS mirado {vistas} vez/veces antes de esta (ver oos_runs)")
     report = run_full_backtest(conn, run_batch_tag=tag, sample=sample)
 
     if sample == SAMPLE_OOS:

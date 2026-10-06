@@ -537,25 +537,22 @@ jobs:
       # pierde es el resto del trabajo.
       - name: Backtest de cartera (4 versiones — portfolio_simulator.py)
         if: ${{ !cancelled() }}
-        # Corre las 4 versiones sobre TODOS los eventos con trade_decision de
-        # event_analyses. Es acumulativo por diseño de simulate_portfolio
+        # Corre las 4 versiones sobre los eventos In-Sample con la decisión de
+        # la regla sin IA (decision_sin_ia -> regla_historica, H-06: la IA no
+        # se puede validar antes del corte de sus modelos). Es acumulativo por diseño de simulate_portfolio
         # (usa fetch_events_for_version, no filtra por "nuevos desde ayer"),
         # así que reejecutarlo cada noche recalcula la cartera completa con
         # el run_batch_tag del día — no es incremental como los pasos previos.
         #
-        # --full-range (sample=None, sin partición In-Sample/Out-of-Sample):
-        # el split OOS (pipeline/backtest/sample_split.py, config.IN_SAMPLE_END/
-        # OOS_START) es un concepto de VALIDACIÓN de investigación — "ajusta
-        # parámetros solo mirando IN_SAMPLE, evalúa OOS una única vez"
-        # (ARCHITECTURE_LEAN.md T6) — no algo que deba capar para siempre lo
-        # que ve el pipeline de producción según van llegando eventos reales.
-        # Sin este flag, el cron dejaría de reflejar en portfolio_reports
-        # cualquier evento posterior a config.IN_SAMPLE_END. --oos y
-        # --sample in_sample quedan como flags de invocación MANUAL
-        # (investigación), nunca para este workflow.
+        # Solo In-Sample (hasta config.IN_SAMPLE_END), sin flags: el OOS se
+        # evalúa UNA vez y a mano, con el workflow oos_manual.yml, que lo
+        # deja apuntado en oos_runs (BUGS_REPORT.md H-07; decisión del
+        # usuario, auditoría 2026-10-05). Mirarlo cada noche convertía el
+        # holdout en una muestra más con la que ajustar.
+        # test_workflows.py falla si este workflow vuelve a mirar el OOS.
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m pipeline.backtest.portfolio_report --full-range
+        run: python -m pipeline.backtest.portfolio_report
 
       - name: Validación estadística (Fase 6 — event study, sensibilidad, veredicto)
         if: ${{ !cancelled() }}
@@ -567,14 +564,12 @@ jobs:
         # el job (mismo motivo por el que price_backfill_manual no escribe
         # nada a disco tampoco). Ver pipeline/validation/report.py:persist_validation_report.
         #
-        # --full-range: tiene que coincidir con el flag del paso de backtest
-        # de arriba (mismo run_batch_tag exacto, ver tag_suffix en
-        # sample_split.py) — si uno lleva --oos/--sample in_sample y el otro
-        # no, los tags no coinciden y persist_validation_report recalcularía
-        # el backtest entero en vez de reutilizar el de este mismo run.
+        # Solo In-Sample, igual que el paso de backtest de arriba (mismo
+        # run_batch_tag exacto, ver tag_suffix en sample_split.py): así
+        # best_version sale solo del In-Sample (H-07).
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m pipeline.validation.report --persist-only --full-range
+        run: python -m pipeline.validation.report --persist-only
 
       - name: Paper trading semanal (Fase 4 — paper_trading/report.py)
         if: ${{ !cancelled() }}

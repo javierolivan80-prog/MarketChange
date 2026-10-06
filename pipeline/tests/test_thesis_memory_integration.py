@@ -13,6 +13,7 @@ from datetime import date, timedelta
 import pytest
 
 from pipeline import config
+from pipeline.tests.regla_historica import copiar_a_regla_historica
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -86,6 +87,7 @@ def _seed_event_with_analysis(
             (event_id, net_conviction, confidence, ev_conservative, ev_aggressive, ev_balanced,
              trade_decision_conservative, trade_decision_aggressive, trade_decision_balanced),
         )
+        copiar_a_regla_historica(cur, event_id)
     conn.commit()
     return event_id
 

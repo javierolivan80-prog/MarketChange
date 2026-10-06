@@ -12,6 +12,7 @@ from pipeline.backtest.sensitivity import (
     apply_confidence_haircut,
     apply_extra_cost_bps,
 )
+from pipeline.tests.regla_historica import copiar_a_regla_historica
 
 pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -130,6 +131,7 @@ class TestSensitivityIntegration:
                     'claude-haiku-4-5', 'claude-sonnet-4-6')""",
                 (event_id, confidence, ev, ev, ev, decision, decision, decision),
             )
+            copiar_a_regla_historica(cur, event_id)
             cur.execute(
                 "INSERT INTO event_enrichment (event_id, vix_d0) VALUES (%s, %s) "
                 "ON CONFLICT (event_id) DO UPDATE SET vix_d0 = EXCLUDED.vix_d0",

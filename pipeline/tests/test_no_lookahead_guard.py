@@ -57,7 +57,7 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ),
     (
         "event_analysis_pipeline.py",
-        "WHERE ea.decision_sin_ia IS NULL",
+        "WHERE (ea.decision_sin_ia IS NULL",
     ): (
         "Cola de trabajo del relleno del grupo de control: qué análisis "
         "antiguos no tienen decisión sin IA. No aporta información al cálculo "

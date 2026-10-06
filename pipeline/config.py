@@ -4,6 +4,7 @@ Todo lo que necesita un secreto o vía de red vive aquí, léido de entorno.
 Nada se hardcodea. Ver RUNBOOK.md para qué variables hay que definir y dónde.
 """
 import os
+from datetime import date, timedelta
 
 # --- Base de datos ---
 # Postgres alojado (Neon/Supabase free tier recomendado — ver RUNBOOK.md).
@@ -176,6 +177,46 @@ def batch_cost_usd(uso: dict) -> float | None:
     )
     coste = (tokens_entrada * entrada + uso.get("output_tokens", 0) * salida) / 1_000_000
     return round(coste * BATCH_PRICE_FACTOR, 6)
+
+
+# --- Fecha de corte de cada modelo (BUGS_REPORT.md H-06) ---
+# Fin de los DATOS DE ENTRENAMIENTO de cada modelo («Training data cutoff» de
+# su página en platform.claude.com/docs/en/models, consultada el 2026-10-06).
+# Se usa la de entrenamiento y no la de «conocimiento fiable», que es anterior:
+# es la más estricta (decisión del usuario, auditoría 2026-10-06). La
+# documentación da el mes; se toma su último día.
+# Un evento solo sirve para validar la IA si su D0 es POSTERIOR al corte de
+# TODOS los modelos que lo analizaron: si no, el modelo pudo haber leído qué
+# pasó después. Si se cambia de modelo, añadir aquí su corte: un modelo sin
+# corte conocido no valida nada (nunca se supone que es posterior).
+MODEL_TRAINING_CUTOFF = {
+    "claude-haiku-4-5": date(2025, 7, 31),
+    "claude-sonnet-4-6": date(2026, 1, 31),
+}
+
+
+def fecha_corte_modelo(model: str | None) -> date | None:
+    """Corte de `model` (por prefijo, como el precio), o None si no se conoce."""
+    if not model:
+        return None
+    for nombre, corte in MODEL_TRAINING_CUTOFF.items():
+        if model == nombre or model.startswith(nombre + "-"):
+            return corte
+    return None
+
+
+def primer_d0_validable_ia(*models: str | None) -> date | None:
+    """Primer D0 con el que se puede validar un análisis hecho con `models`
+    (el día siguiente al corte más tardío). None si alguno no tiene corte
+    conocido: ese análisis no sirve para validar la IA."""
+    cortes = [fecha_corte_modelo(m) for m in models]
+    if not cortes or any(c is None for c in cortes):
+        return None
+    return max(cortes) + timedelta(days=1)
+
+
+# Primer D0 validable con los modelos configurados hoy.
+AI_VALIDATION_START = primer_d0_validable_ia(ANALYZER_MODEL, JUDGE_MODEL)
 
 # Cota máxima de espera al polling de la Batch API (IMPROVEMENT_PLAN.md R6 +
 # M1) — sin esto, adversarial_analyzer.run_batch_and_collect hacía

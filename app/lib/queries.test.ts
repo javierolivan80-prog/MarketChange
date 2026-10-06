@@ -165,6 +165,21 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal(await getRecommendedVersion(), "AGGRESSIVE");
   });
 
+  test("un OOS lanzado a mano no sustituye al informe de cada noche (H-07)", async () => {
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO validation_reports (run_batch_tag, report_json, created_at) VALUES
+         ('is', '{"sample": "in_sample", "best_version": "CONSERVATIVE"}', now() - interval '1 day'),
+         ('oos', '{"sample": "oos", "best_version": "AGGRESSIVE"}', now())`
+    );
+    assert.equal(await getRecommendedVersion(), "CONSERVATIVE");
+    const a = await seedEvent({ ticker: "OOS", d0: "2026-01-01", decisions: ["LONG", "LONG", "LONG"] });
+    await seedPortfolioRun("is-run", 2, [a], { sample: "in_sample", versions: {} });
+    await seedPortfolioRun("oos-run", 1, [a], { sample: "oos", versions: {} });
+    const [row] = await getSignalsFeed({ limit: 5 });
+    assert.equal(row.pnl_pct, 2); // el de la corrida in-sample (pnl = daysAgo)
+  });
+
   test("resumen de abstenciones agrupado por motivo", async () => {
     await seedEvent({ ticker: "E1", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "novelty_score=10 < 20 (evento completamente descontado por el mercado)" });
     await seedEvent({ ticker: "E2", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "|ev|=0.10% < umbral balanced (1.0%) + buffer 50bps = 1.50% (EV insuficiente hasta después de fees)" });
@@ -215,7 +230,7 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
 
   test("Inicio lee solo las rutas JSON que necesita", async () => {
     await seedPortfolioRun("run-1", 1, [], {
-      sample: "oos",
+      sample: "in_sample",
       versions: {
         AGGRESSIVE: {
           trade_metrics: { total_trades: 7 },
@@ -229,7 +244,7 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
        VALUES ('p1', '2026-01-05', '2026-01-09', '{"versions": {"BALANCED": {"n_open_positions": 2}, "AGGRESSIVE": {"n_open_positions": 3}}}')`
     );
     const s = await getHomeSummary("AGGRESSIVE");
-    assert.equal(s.portfolio?.sample, "oos");
+    assert.equal(s.portfolio?.sample, "in_sample");
     assert.equal(s.portfolio?.trade_metrics?.total_trades, 7);
     assert.equal(s.open_paper_positions, 5);
     assert.equal(s.validation, null);
