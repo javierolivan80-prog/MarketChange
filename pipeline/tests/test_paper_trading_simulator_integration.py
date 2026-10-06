@@ -73,6 +73,12 @@ def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_convic
             """,
             (event_id, net_conviction, confidence, ev, ev, ev, decision, decision, decision, modelo_judge),
         )
+        # Precio de D0 (por encima del mínimo de 5 $) si el test no siembra su serie.
+        cur.execute(
+            "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume) "
+            "VALUES (%s, %s, 50, 50, 50.5, 49.5, 1.0, 100000) ON CONFLICT (ticker, trade_date) DO NOTHING",
+            (ticker, d0),
+        )
     conn.commit()
     return event_id
 

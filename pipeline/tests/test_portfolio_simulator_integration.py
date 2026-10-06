@@ -81,6 +81,12 @@ def _seed_event_with_analysis(
             (event_id, net_conviction, confidence, ev_conservative, ev_aggressive, ev_balanced,
              trade_decision_conservative, trade_decision_aggressive, trade_decision_balanced),
         )
+        # Precio de D0 (por encima del mínimo de 5 $) si el test no siembra su serie.
+        cur.execute(
+            "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume) "
+            "VALUES (%s, %s, 50, 50, 50.5, 49.5, 1.0, 100000) ON CONFLICT (ticker, trade_date) DO NOTHING",
+            (ticker, d0),
+        )
         copiar_a_regla_historica(cur, event_id)
     conn.commit()
     return event_id
@@ -634,7 +640,9 @@ class TestPositionSizeCappedByADV:
             for d in dates:
                 cur.execute(
                     "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, volume, adj_factor, survivorship_warning) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, 1.0, FALSE)",
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, 1.0, FALSE) "
+                    "ON CONFLICT (ticker, trade_date) DO UPDATE SET open_raw = EXCLUDED.open_raw, close_raw = EXCLUDED.close_raw, "
+                    "high_raw = EXCLUDED.high_raw, low_raw = EXCLUDED.low_raw, volume = EXCLUDED.volume",
                     (ticker, d, close, close, close * 1.01, close * 0.99, volume),
                 )
         conn.commit()
@@ -894,3 +902,23 @@ def test_actualizar_splits_pide_primero_los_no_revisados_y_aisla_fallos(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT ticker, split_date, ratio FROM splits")
         assert [(r["ticker"], r["split_date"], float(r["ratio"])) for r in cur.fetchall()] == [("AAA", date(2024, 6, 3), 2.0)]
+
+
+def test_precio_negociado_en_d0_por_debajo_de_5_dolares_no_entra(conn):
+    """Decisión del usuario (2026-10-06): mínimo de 5 $ con el precio que se
+    negociaba en D0, no con el de hoy. Contrasplit 1:10 posterior: Yahoo
+    enseña 30 $, se negociaba a 3 $ → fuera."""
+    from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+    from pipeline.ingest.splits import guardar_splits
+
+    d0 = date(2024, 3, 4)
+    _seed_price_series(conn, "RS", _business_days(d0, 3), [30.0] * 3)
+    _seed_price_series(conn, "OK", _business_days(d0, 3), [30.0] * 3)
+    _seed_event_with_analysis(conn, "1", "RS", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    ok = _seed_event_with_analysis(conn, "2", "OK", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE prices SET captured_at = '2025-06-01'")
+    conn.commit()
+    guardar_splits(conn, "RS", [(date(2024, 9, 2), 0.1)])
+    guardar_splits(conn, "OK", [])
+    assert [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")] == [ok]

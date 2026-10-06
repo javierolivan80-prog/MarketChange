@@ -528,6 +528,17 @@ VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC")
 # criterio de SI operar que Balanced. Solo cambia el sizing.
 _TRADE_DECISION_SOURCE_VERSION = {"DYNAMIC": "BALANCED"}
 
+# Precio mínimo en D0 (config.MIN_PRICE_USD, ARCHITECTURE_LEAN.md §10) con el
+# precio NEGOCIADO de entonces (H-04; decisión del usuario, 2026-10-06), no
+# el de hoy, que es el que usa el universo. Sin historial de splits revisado
+# se usa close_raw (lo único disponible) hasta que llegue.
+PRECIO_D0_MINIMO_SQL = """
+    (SELECT coalesce(""" + PRECIO_NEGOCIADO_SQL + """, p.close_raw)
+       FROM prices p
+      WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date AND p.close_raw IS NOT NULL
+      ORDER BY p.trade_date DESC LIMIT 1) >= """ + str(float(config.MIN_PRICE_USD)) + """
+"""
+
 # Calidad de precios (calidad_precios.py; decisión del usuario, 2026-10-06):
 # una operación cuya ventana (D0 hasta el máximo de días de tenencia, 20
 # sesiones, con margen en días naturales) toca una vela marcada se excluye.
@@ -585,6 +596,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                 ) rh
                 WHERE rh.decision != 'NO_TRADE'
                   AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
+                  AND {PRECIO_D0_MINIMO_SQL}
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
                 ORDER BY e.ticker, e.d0_close_date, abs(rh.{ev_col}) DESC, e.event_id
