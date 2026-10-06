@@ -118,7 +118,7 @@ QUERIES: list[tuple[str, str]] = [
                round(avg(abs(net_conviction)), 2) AS media_abs_conviccion,
                round(max(abs(ev_aggressive)) * 100, 3) AS max_abs_ev_aggr_pct,
                round(avg(abs(ev_balanced)) * 100, 3) AS media_abs_ev_bal_pct
-        FROM event_analyses WHERE model_version_bull_bear <> 'SKIPPED_OBJECTIVE_NO_TRADE'"""),
+        FROM event_analyses WHERE model_version_bull_bear NOT IN ('SKIPPED_OBJECTIVE_NO_TRADE', 'SIN_IA_ANTES_DEL_CORTE')"""),
     ("App — informes (Cartera, Fiabilidad, Historial, Largo plazo)", """
         SELECT 'portfolio_reports' AS tabla, count(*) AS n, max(created_at) AS ultimo FROM portfolio_reports
         UNION ALL SELECT 'validation_reports', count(*), max(created_at) FROM validation_reports

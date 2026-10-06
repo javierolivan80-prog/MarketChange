@@ -196,6 +196,18 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     ]);
   });
 
+  test("los eventos anteriores al corte (solo regla sin IA) no cuentan en el resumen de abstenciones", async () => {
+    await seedEvent({ ticker: "N1", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "|ev|=0.10% < umbral" });
+    const viejo = await seedEvent({ ticker: "V1", d0: "2022-01-03", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"] });
+    await getPool().query(
+      `UPDATE event_analyses SET model_version_bull_bear = 'SIN_IA_ANTES_DEL_CORTE', model_version_judge = 'SIN_IA_ANTES_DEL_CORTE' WHERE event_id = $1`,
+      [viejo]
+    );
+    const s = await getAbstentionSummary("BALANCED", 7);
+    assert.equal(s.analyzed, 1);
+    assert.deepEqual(s.reasons, [{ category: "low_ev", n: 1 }]);
+  });
+
   test("resumen de abstenciones sin descartes devuelve los totales", async () => {
     await seedEvent({ ticker: "T1", d0: "2026-01-01", decisions: ["LONG", "LONG", "LONG"] });
     const s = await getAbstentionSummary("BALANCED", 7);

@@ -120,6 +120,7 @@ def test_run_full_backtest_end_to_end_produces_complete_report(conn):
     assert report["decision_source"] == "regla_historica_sin_ia"  # H-06
     cons = report["versions"]["CONSERVATIVE"]
     assert cons["trade_metrics"]["total_trades"] > 0
+    assert cons["confidence_calibration"]["no_aplica"].startswith("no aplica")  # H-06
     assert cons["no_lookahead_violations"] == []
     assert "recommendation" not in cons  # la recomendación es del reporte global, no por versión
 

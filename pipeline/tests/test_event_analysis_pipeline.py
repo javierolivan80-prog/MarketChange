@@ -23,6 +23,23 @@ from pipeline.tests.fake_batch_api import validar_requests_como_la_api
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
 
+@pytest.fixture(autouse=True)
+def ia_sin_fecha_de_corte(monkeypatch):
+    """Los datos de prueba son de 2021, anteriores al corte real de los
+    modelos (H-06). Para probar el camino CON IA, el corte se adelanta; los
+    tests del camino sin IA lo vuelven a poner con `corte_real`."""
+    from pipeline import config
+
+    monkeypatch.setattr(config, "AI_VALIDATION_START", date(2000, 1, 3))
+
+
+@pytest.fixture
+def corte_real(monkeypatch):
+    from pipeline import config
+
+    monkeypatch.setattr(config, "AI_VALIDATION_START", config.primer_d0_validable_ia(config.ANALYZER_MODEL, config.JUDGE_MODEL))
+
+
 class _ScriptedBatchesClient:
     """Responde con JSON válido para cualquier custom_id de bull/bear/judge,
     inspeccionando la request real en vez de una lista fija — así sirve para
@@ -1119,3 +1136,115 @@ def test_rellenar_regla_sin_ia_no_se_atasca_con_un_analisis_que_falla(conn, sin_
     assert resultado["fallidos"] == 1
     assert resultado["pendientes"] == 1 and resultado["con_regla"] == total - 1
     assert eap.cobertura_regla_sin_ia(conn)["pendientes"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Eventos anteriores a la fecha de corte de los modelos (H-06, Tanda 3b):
+# no van a la IA; se guardan con la regla sin IA, gratis.
+# ---------------------------------------------------------------------------
+
+
+def _con_capitalizacion(conn):
+    """La cola filtra por capitalización actual (como la de la IA)."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE universe SET market_cap_last_usd = 1e12, in_investable_universe = TRUE")
+    conn.commit()
+
+
+def test_un_evento_anterior_al_corte_no_va_a_la_ia_y_guarda_la_regla(conn, corte_real, sin_techo_de_ev):
+    from pipeline.analyze.adversarial_analyzer import MODELO_ANTES_DEL_CORTE
+    from pipeline.analyze.event_analysis_pipeline import (
+        MOTIVO_ANTES_DEL_CORTE,
+        analizar_antes_del_corte,
+        fetch_events_needing_analysis,
+        run_pipeline,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    analogos = _sembrar_analogos(conn, dates)
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    _con_capitalizacion(conn)
+    with conn.cursor() as cur:  # solo se analiza el evento objetivo
+        cur.execute("UPDATE universe SET in_investable_universe = FALSE WHERE ticker LIKE 'AN%%'")
+    conn.commit()
+
+    # La cola de la IA no lo ve: no se llama a la IA aunque haya cliente.
+    scripted = _ScriptedBatchesClient()
+    procesados, conn = run_pipeline(conn, SimpleNamespace(messages=SimpleNamespace(batches=scripted)), min_market_cap=0, require_d0_bar=True)
+    assert procesados == 0 and scripted.call_count == 0
+
+    # Sin cliente ni clave: se guarda con la regla sin IA.
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 0  # ya no está en la cola
+    assert [e for e in fetch_events_needing_analysis(conn) if e["event_id"] == objetivo] == []
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM event_analyses WHERE event_id = %s", (objetivo,))
+        fila = cur.fetchone()
+    assert fila["model_version_bull_bear"] == MODELO_ANTES_DEL_CORTE == fila["model_version_judge"]
+    assert {fila["trade_decision_conservative"], fila["trade_decision_balanced"], fila["trade_decision_aggressive"]} == {"NO_TRADE"}
+    assert fila["abstention_decision"]["BALANCED"]["reason_if_no_trade"] == MOTIVO_ANTES_DEL_CORTE
+    regla = fila["decision_sin_ia"]["regla_historica"]
+    # La regla decide con los análogos, no con el motivo del corte.
+    assert regla["net_conviction"] == 1.0 and regla["confidence_in_conviction"] == 100.0
+    assert regla["decisiones"]["BALANCED"]["reason_if_no_trade"] != MOTIVO_ANTES_DEL_CORTE
+    assert fila["decision_sin_ia"]["n_analogues"] == len(analogos)
+
+
+def test_el_relleno_de_una_fila_anterior_al_corte_no_la_descarta_por_el_corte(conn, corte_real, sin_techo_de_ev):
+    from pipeline.analyze.event_analysis_pipeline import (
+        MOTIVO_ANTES_DEL_CORTE,
+        analizar_antes_del_corte,
+        backfill_decision_sin_ia,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _sembrar_analogos(conn, dates)
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    _con_capitalizacion(conn)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE universe SET in_investable_universe = FALSE WHERE ticker LIKE 'AN%%'")
+    conn.commit()
+    analizar_antes_del_corte(conn, min_market_cap=0)
+    with conn.cursor() as cur:
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        antes = cur.fetchone()["decision_sin_ia"]["regla_historica"]
+        cur.execute("""UPDATE event_analyses SET decision_sin_ia = '{"metodo": "viejo"}' WHERE event_id = %s""", (objetivo,))
+    conn.commit()
+    assert backfill_decision_sin_ia(conn) >= 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        despues = cur.fetchone()["decision_sin_ia"]["regla_historica"]
+    assert despues["decisiones"]["BALANCED"]["reason_if_no_trade"] != MOTIVO_ANTES_DEL_CORTE
+    assert despues["decisiones"] == antes["decisiones"]
+
+
+def test_una_fila_anterior_al_corte_no_sirve_de_cache_para_la_ia(conn, monkeypatch, sin_techo_de_ev):
+    """Mismo ticker y clase, un día después y ya tras el corte: la IA analiza
+    de verdad, no copia la fila sin IA del día anterior."""
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import analizar_antes_del_corte, run_pipeline
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    a = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    b = _seed_event(conn, "1", "TESTCO", dates[281].date())
+    _con_capitalizacion(conn)
+    monkeypatch.setattr(config, "AI_VALIDATION_START", dates[281].date())
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
+    scripted = _ScriptedBatchesClient()
+    _, conn = run_pipeline(conn, SimpleNamespace(messages=SimpleNamespace(batches=scripted)), min_market_cap=0, require_d0_bar=True)
+    assert scripted.call_count == 2  # Bull/Bear y Judge
+    with conn.cursor() as cur:
+        cur.execute("SELECT event_id, from_cache, model_version_judge FROM event_analyses ORDER BY event_id")
+        filas = {r["event_id"]: r for r in cur.fetchall()}
+    assert filas[b]["from_cache"] is False and filas[b]["model_version_judge"] == config.JUDGE_MODEL
+    assert a in filas
+
+
+def test_el_gasto_estimado_no_cuenta_las_filas_sin_ia(conn, corte_real, sin_techo_de_ev):
+    from pipeline.analyze.event_analysis_pipeline import analizar_antes_del_corte, spend_today_usd
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_event(conn, "1", "TESTCO", dates[280].date())
+    _con_capitalizacion(conn)
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
+    assert spend_today_usd(conn) == 0

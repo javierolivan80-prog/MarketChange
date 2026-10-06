@@ -27,7 +27,12 @@ from pipeline.backtest.portfolio_metrics import (
 )
 from pipeline.backtest.portfolio_simulator import VERSIONS, simulate_portfolio
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
-from pipeline.analyze.event_analysis_pipeline import cobertura_regla_sin_ia, rellenar_regla_sin_ia
+from pipeline.analyze.event_analysis_pipeline import (
+    analizar_antes_del_corte,
+    cobertura_regla_sin_ia,
+    rellenar_regla_sin_ia,
+)
+from pipeline.backtest.sensitivity import NO_APLICA_CONFIANZA
 from pipeline.backtest.sample_split import (
     OOS_WARNING,
     SAMPLE_IN_SAMPLE,
@@ -116,6 +121,11 @@ def build_version_report(conn, version: str, run_batch_tag: str, starting_capita
         "confidence",
         "won",
     )
+    # El histórico decide con la regla sin IA, con la confianza fija en 100
+    # (H-06): todos los trades caen en un tramo y esto no mide nada. Se marca
+    # «no aplica» en vez de enseñar un resultado vacío (decisión del usuario,
+    # 2026-10-06).
+    confidence_calibration["no_aplica"] = NO_APLICA_CONFIANZA
 
     return {
         "version": version,
@@ -329,6 +339,11 @@ if __name__ == "__main__":
     # La regla sin IA de los análisis pendientes, antes de simular: sin ella
     # un análisis no entra en el backtest (H-06). No usa la IA, así que no
     # depende de que el paso de análisis haya podido correr.
+    # Eventos anteriores al corte de los modelos: se guardan con la regla sin
+    # IA, gratis (no van a la IA). Después, la regla de los análisis que
+    # aún no la tengan.
+    nuevos = analizar_antes_del_corte(conn)
+    print(f"Anteriores al corte: {nuevos} eventos guardados con la regla sin IA")
     relleno = rellenar_regla_sin_ia(conn)
     print(f"Regla sin IA: {relleno['con_regla']} de {relleno['analisis']} análisis ({relleno['rellenados']} rellenados ahora)")
     if sample == SAMPLE_OOS:

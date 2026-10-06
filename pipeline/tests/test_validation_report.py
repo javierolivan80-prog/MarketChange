@@ -444,6 +444,18 @@ def _sensitivity_fixture(**overrides) -> dict:
     return {"run_batch_tag": "t", "scenarios": base_scenarios}
 
 
+def test_sensitivity_table_escenario_que_no_aplica():
+    """H-06: el escenario de confianza no aplica a la regla sin IA."""
+    from pipeline.validation.report import _sensitivity_table
+
+    escenarios = _sensitivity_fixture()["scenarios"]
+    for v in escenarios.values():
+        v["confidence_minus_20pct"] = {"no_aplica": "no aplica: x"}
+    tabla = _sensitivity_table({"run_batch_tag": "t", "scenarios": escenarios})
+    fila = next(linea for linea in tabla.splitlines() if linea.startswith("| Modelo reduce confidence"))
+    assert fila.count("no aplica") == 3 and fila.endswith("| — |")
+
+
 def test_sensitivity_table_incluye_columna_balanced():
     """IMPROVEMENT_PLAN.md R13: BALANCED puede ser best_version en PARTE 6,
     así que su fila de sensibilidad tiene que verse en la tabla, no solo

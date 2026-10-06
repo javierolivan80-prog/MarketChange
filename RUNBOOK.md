@@ -309,7 +309,11 @@ lo muestra. En local: `python -m pipeline.backtest.portfolio_report --oos
 
 Requiere que `event_analyses` tenga filas con la regla histórica rellena
 (Fase 2/3.8; el propio comando la rellena antes de simular, sin la IA, y el
-informe guarda en `cobertura_regla` cuántos análisis la tienen) y precios con `open_raw` (yfinance_backfill.py ya lo descarga —
+informe guarda en `cobertura_regla` cuántos análisis la tienen) y precios.
+Los eventos con D0 anterior al corte no pasan por la IA: este mismo comando
+los guarda primero con la regla sin IA (`analizar_antes_del_corte`, modelo
+`SIN_IA_ANTES_DEL_CORTE`), gratis y sin la clave de la API. La cola de la IA
+solo lleva eventos desde `config.AI_VALIDATION_START`. Requiere también precios con `open_raw` (yfinance_backfill.py ya lo descarga —
 ver §3.6 más arriba). Corre **4 versiones** (Conservative/Aggressive/Balanced,
 del spec original, más **DYNAMIC**, añadida después — ver nota 5 del
 docstring de `pipeline/backtest/portfolio_strategies.py`: reutiliza el mismo
