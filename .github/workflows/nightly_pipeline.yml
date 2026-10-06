@@ -489,6 +489,15 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.universe_maintenance --list 25
 
+      - name: Historial de splits (precio negociado, H-04)
+        # Por tandas (SPLITS_MAX_TICKERS, 400 por defecto): primero los
+        # tickers con eventos que nunca se revisaron, después los que se han
+        # vuelto a descargar. Un fallo de Yahoo deja el ticker para mañana.
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ingest.splits
+
       - name: Calcular CAR de eventos pendientes (insumo de historical_analogues.py)
         # Sin este paso, analyze/historical_analogues.py siempre vería
         # n_analogues=0 — car_results no se llena solo (ver su docstring).

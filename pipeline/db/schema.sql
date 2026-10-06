@@ -904,3 +904,22 @@ CREATE TABLE IF NOT EXISTS calidad_precios_revision (
     ticker        TEXT PRIMARY KEY,
     revisado_en   TIMESTAMPTZ NOT NULL
 );
+
+-- ============================================================================
+-- splits: historial de splits por ticker (BUGS_REPORT.md H-04). Yahoo da el
+-- Close ajustado por los splits posteriores a la fecha de descarga; con el
+-- historial se recupera el precio negociado de verdad:
+--   negociado(D) = close_raw(D) × Π ratio de los splits en (D, captured_at].
+-- ratio = acciones nuevas por acción vieja (2 en un 2:1; 0,02 en un 1:50).
+-- splits_revision: cuándo se pidió el historial de cada ticker.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS splits (
+    ticker      TEXT NOT NULL,
+    split_date  DATE NOT NULL,
+    ratio       NUMERIC NOT NULL CHECK (ratio > 0),
+    PRIMARY KEY (ticker, split_date)
+);
+CREATE TABLE IF NOT EXISTS splits_revision (
+    ticker       TEXT PRIMARY KEY,
+    revisado_en  TIMESTAMPTZ NOT NULL
+);

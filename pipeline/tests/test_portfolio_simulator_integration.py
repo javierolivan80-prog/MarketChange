@@ -21,7 +21,7 @@ def conn():
     init_schema(c)
     with c.cursor() as cur:
         cur.execute(
-            "TRUNCATE portfolio_trades, portfolio_equity_curve, car_results, backtest_runs, "
+            "TRUNCATE splits, splits_revision, portfolio_trades, portfolio_equity_curve, car_results, backtest_runs, "
             "event_analyses, event_enrichment, events, prices, fama_french_factors, universe "
             "RESTART IDENTITY CASCADE"
         )
@@ -843,3 +843,54 @@ def test_un_contrasplit_posterior_no_convierte_en_grande_a_una_empresa_pequena(c
     conn.commit()
     plan = _build_entry_plan(conn, "BALANCED", fetch_events_for_version(conn, "BALANCED"), {})
     assert plan[0]["slippage_bps_por_lado"] == 25.0
+
+
+def test_con_el_historial_de_splits_la_capitalizacion_usa_el_precio_negociado(conn):
+    """H-04: con los splits revisados, la capitalización de D0 es acciones de
+    entonces × precio negociado de entonces, sin acotar por la de hoy.
+    Contrasplit 1:10 después de D0: Yahoo enseña 100 $, se negociaba a 10 $.
+    Un split anterior a la descarga pero también anterior a D0 no cuenta."""
+    from pipeline.backtest.portfolio_simulator import _build_entry_plan, fetch_events_for_version
+    from pipeline.ingest.splits import guardar_splits
+
+    d0 = date(2024, 3, 4)
+    dias = _business_days(d0, 5)
+    _seed_price_series(conn, "RS", dias, [100.0] * 5)
+    _seed_price_series(conn, "BIG", dias, [100.0] * 5)
+    _seed_event_with_analysis(conn, "1", "RS", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    _seed_event_with_analysis(conn, "2", "BIG", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        # RS: 200 M acciones × 10 $ = 2.000 M$ (pequeña), aunque Yahoo enseñe 100 $.
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('1', '2023-12-31', '2024-02-15', '10-K', 200000000), "
+                    "('2', '2023-12-31', '2024-02-15', '10-K', 200000000)")
+        # Hoy las dos parecen enormes: no debe mandar la de hoy si hay historial.
+        cur.execute("UPDATE universe SET market_cap_last_usd = 1e12")
+        cur.execute("UPDATE prices SET captured_at = '2025-06-01'")
+    conn.commit()
+    guardar_splits(conn, "RS", [(date(2024, 9, 1), 0.1)])
+    guardar_splits(conn, "BIG", [(date(2020, 1, 2), 2.0)])  # anterior a D0: no cambia nada
+    plan = {p["ticker"]: p for p in _build_entry_plan(conn, "BALANCED", fetch_events_for_version(conn, "BALANCED"), {})}
+    assert plan["RS"]["slippage_bps_por_lado"] == 25.0
+    assert plan["BIG"]["slippage_bps_por_lado"] == 10.0  # 20.000 M$ de verdad
+
+
+def test_actualizar_splits_pide_primero_los_no_revisados_y_aisla_fallos(conn):
+    from pipeline.ingest.splits import actualizar_splits, tickers_por_revisar
+
+    d0 = date(2024, 3, 4)
+    for t in ("AAA", "BBB"):
+        _seed_price_series(conn, t, _business_days(d0, 3), [10.0] * 3)
+    _seed_event_with_analysis(conn, "1", "AAA", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    _seed_event_with_analysis(conn, "2", "BBB", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+
+    def pedir(ticker):
+        if ticker == "BBB":
+            raise RuntimeError("Yahoo no responde")
+        return [(date(2024, 6, 3), 2.0)]
+
+    assert actualizar_splits(conn, pedir=pedir) == {"revisados": 1, "fallidos": 1}
+    assert tickers_por_revisar(conn, 10) == ["BBB"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT ticker, split_date, ratio FROM splits")
+        assert [(r["ticker"], r["split_date"], float(r["ratio"])) for r in cur.fetchall()] == [("AAA", date(2024, 6, 3), 2.0)]

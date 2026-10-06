@@ -66,32 +66,38 @@ from pipeline.backtest.portfolio_strategies import (
     compute_position_size_pct,
 )
 from pipeline.backtest.sample_split import date_bounds
+from pipeline.ingest.splits import PRECIO_NEGOCIADO_SQL
 
 logger = logging.getLogger(__name__)
 
 COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
 
 # Capitalización en D0 para el deslizamiento (H-32): acciones del último 10-K
-# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × cierre de D0.
+# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × precio
+# NEGOCIADO en D0 (H-04, ingest/splits.py): close_raw viene reexpresado por
+# los splits posteriores y las acciones XBRL son las de entonces.
 #
-# Sesgo conocido (H-04): close_raw viene reexpresado por splits POSTERIORES y
-# las acciones XBRL son las de entonces. Un contrasplit 1:10 posterior
-# multiplica por 10 el precio de D0 y convertiría en "grande" (10 pb) a una
-# microcap en apuros, justo el caso más arriesgado. Para no favorecer ese
-# error se toma la MENOR de esa cifra y la capitalización actual
-# (universe.market_cap_last_usd, acciones y precio de hoy, consistentes entre
-# sí): el error que queda va hacia el deslizamiento alto (25 pb), el
-# conservador. Sin cifra en D0 no se usa la de hoy: NULL, que también es 25 pb.
+# Si el ticker aún no tiene el historial de splits revisado no hay precio
+# negociado: se usa close_raw y, para no favorecer el error (un contrasplit
+# 1:10 posterior multiplica por 10 el precio de D0 y convertiría en "grande"
+# a una microcap en apuros), se toma la MENOR de esa cifra y la capitalización
+# actual (universe.market_cap_last_usd): el error que queda va hacia el
+# deslizamiento alto (25 pb), el conservador. Sin cifra en D0 no se usa la de
+# hoy: NULL, que también es 25 pb.
 MARKET_CAP_D0_SQL = """
-    (SELECT CASE WHEN cap_d0 IS NULL THEN NULL ELSE LEAST(cap_d0, u.market_cap_last_usd) END
-       FROM (SELECT
-               (SELECT f.shares_outstanding FROM fundamentals f
-                 WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
-                   AND f.shares_outstanding IS NOT NULL
-                 ORDER BY f.filed_at DESC LIMIT 1)
-             * (SELECT p.close_raw FROM prices p
-                 WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date
-                 ORDER BY p.trade_date DESC LIMIT 1) AS cap_d0) c
+    (SELECT CASE WHEN a.acciones IS NULL OR d0.cierre IS NULL THEN NULL
+                 WHEN d0.negociado IS NOT NULL THEN a.acciones * d0.negociado
+                 ELSE LEAST(a.acciones * d0.cierre, u.market_cap_last_usd) END
+       FROM (SELECT (SELECT f.shares_outstanding FROM fundamentals f
+                      WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
+                        AND f.shares_outstanding IS NOT NULL
+                      ORDER BY f.filed_at DESC LIMIT 1) AS acciones) a
+       LEFT JOIN LATERAL (
+           SELECT p.close_raw AS cierre, """ + PRECIO_NEGOCIADO_SQL + """ AS negociado
+           FROM prices p
+           WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date AND p.close_raw IS NOT NULL
+           ORDER BY p.trade_date DESC LIMIT 1
+       ) d0 ON TRUE
        LEFT JOIN universe u ON u.cik = e.cik)
 """
 
