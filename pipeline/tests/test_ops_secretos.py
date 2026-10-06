@@ -5,8 +5,8 @@ from pipeline.ops_secretos import SECRETOS, main, secretos_que_faltan
 def test_detecta_los_que_faltan_y_los_vacios():
     entorno = {n: "x" for n in SECRETOS}
     entorno["TELEGRAM_CHAT_ID"] = "  "
-    del entorno["BACKUP_PASSPHRASE"]
-    assert set(secretos_que_faltan(entorno)) == {"TELEGRAM_CHAT_ID", "BACKUP_PASSPHRASE"}
+    del entorno["ANTHROPIC_API_KEY"]
+    assert set(secretos_que_faltan(entorno)) == {"TELEGRAM_CHAT_ID", "ANTHROPIC_API_KEY"}
 
 
 def test_nunca_imprime_el_valor(monkeypatch, capsys):

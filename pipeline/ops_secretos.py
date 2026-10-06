@@ -18,8 +18,10 @@ SECRETOS = {
     "ANTHROPIC_API_KEY": "el análisis con IA (las señales nuevas)",
     "TELEGRAM_BOT_TOKEN": "los avisos de Telegram (señales, salidas, fallos, gasto al 80 %)",
     "TELEGRAM_CHAT_ID": "los avisos de Telegram (señales, salidas, fallos, gasto al 80 %)",
-    "BACKUP_PASSPHRASE": "el backup semanal cifrado (backup.yml)",
 }
+# BACKUP_PASSPHRASE no se comprueba aquí: no se pasa al job nocturno para no
+# ampliar dónde está expuesta. Lo comprueba el propio backup.yml, que falla
+# con un error claro si falta.
 
 
 def secretos_que_faltan(entorno: dict | None = None) -> dict[str, str]:

@@ -64,3 +64,13 @@ def test_si_el_envio_falla_se_reintenta_en_la_siguiente_corrida(conn, enviados):
     resultado["ok"] = True
     assert avisar_si_gasto_alto(conn, 9.0, hoy=hoy) is True
     assert len(mensajes) == 2
+
+
+def test_nunca_lanza_aunque_falle_la_base(enviados):
+    from pipeline.db.connection import get_connection
+    from pipeline.notify.gasto_notifier import avisar_si_gasto_alto
+
+    cerrada = get_connection()
+    cerrada.close()
+    assert avisar_si_gasto_alto(cerrada, 9.0, hoy=date(2026, 10, 6)) is False
+    assert enviados[0] == []

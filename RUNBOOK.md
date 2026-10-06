@@ -799,8 +799,12 @@ desde Actions → «Backup semanal» → Run workflow):
 - Coste: 0 € (repositorio público), unos 2-5 minutos por copia.
 - El repositorio es **público**: cualquier usuario de GitHub puede descargar
   los artefactos. Por eso, sin `BACKUP_PASSPHRASE` el job falla y no sube nada.
-- **Guarda la contraseña fuera de GitHub** (gestor de contraseñas): GitHub no
-  deja volver a leer un secreto, y sin ella los backups no se pueden abrir.
+- La contraseña debe tener al menos 16 caracteres. **Guárdala fuera de
+  GitHub** (gestor de contraseñas): GitHub no deja volver a leer un secreto, y
+  sin ella los backups no se pueden abrir.
+- Conexión: si `DATABASE_URL` pasa por el pooler (Neon «-pooler», Supabase
+  puerto 6543), pg_dump no funciona: crea el secreto `BACKUP_DATABASE_URL` con
+  la conexión directa. Si no existe, se usa `DATABASE_URL`.
 
 **Restaurar** (en un ordenador con PostgreSQL y gpg):
 
@@ -813,8 +817,9 @@ pg_restore --no-owner -d "postgresql://USUARIO:CLAVE@HOST/BASE_NUEVA" marketchan
 ```
 
 **Secretos**: cada pasada del nightly comprueba (sin enseñar su valor) que
-existen `DATABASE_URL`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_CHAT_ID` y `BACKUP_PASSPHRASE`, y deja un aviso en el resumen del run
+existen `DATABASE_URL`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN` y
+`TELEGRAM_CHAT_ID` (`BACKUP_PASSPHRASE` lo comprueba el propio backup, para no
+pasarla al nightly), y deja un aviso en el resumen del run
 por cada uno que falte (`pipeline/ops_secretos.py`).
 
 **Aviso de gasto**: cuando el gasto de IA del día llega al 80 % del tope
