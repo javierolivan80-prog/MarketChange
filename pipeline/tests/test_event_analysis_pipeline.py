@@ -1285,3 +1285,28 @@ def test_si_el_corte_se_mueve_atras_las_filas_sin_ia_vuelven_a_la_cola(conn, mon
     assert requeue_obsolete_skips(conn) == 1
     pendientes = {e["event_id"] for e in fetch_events_needing_analysis(conn)}
     assert reciente in pendientes and viejo not in pendientes
+
+
+def test_el_analisis_guarda_el_enrichment_con_el_vix(conn, sin_techo_de_ev):
+    """H-23: event_enrichment no se escribía nunca y el filtro VIX del plan
+    técnico leía una tabla vacía. Ahora se guarda con cada análisis, y el
+    relleno lo añade a los antiguos."""
+    from pipeline.analyze.event_analysis_pipeline import backfill_decision_sin_ia, fetch_events_needing_analysis, process_chunk
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
+    conn = process_chunk(conn, client, [e for e in fetch_events_needing_analysis(conn) if e["event_id"] == objetivo])
+    with conn.cursor() as cur:
+        cur.execute("SELECT vix_d0, price_d0, adv_usd_60d FROM event_enrichment WHERE event_id = %s", (objetivo,))
+        fila = cur.fetchone()
+    assert fila is not None and fila["vix_d0"] is not None and fila["price_d0"] is not None
+
+    with conn.cursor() as cur:  # como un análisis de antes del arreglo
+        cur.execute("DELETE FROM event_enrichment")
+    conn.commit()
+    assert backfill_decision_sin_ia(conn) == 1
+    assert backfill_decision_sin_ia(conn) == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM event_enrichment WHERE vix_d0 IS NOT NULL")
+        assert cur.fetchone()["n"] == 1
