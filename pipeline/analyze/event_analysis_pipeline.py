@@ -1173,6 +1173,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     from pipeline import config
     from pipeline.db.connection import get_connection
+    from pipeline.notify.gasto_notifier import avisar_si_gasto_alto
 
     # Comprobación por delante, antes de tocar la base de datos. Sin esto, la
     # falta de la clave sale como un TypeError desde las tripas del SDK
@@ -1208,6 +1209,8 @@ if __name__ == "__main__":
     # cuenta lo ya incurrido; presupuesto_eventos es cuánto MÁS cabe hoy. El
     # tope efectivo de esta corrida es el más bajo de los dos.
     gasto_hoy_usd = spend_today_usd(conn)
+    # Aviso por Telegram al 80 % del tope (Tanda 5), una vez al día.
+    avisar_si_gasto_alto(conn, gasto_hoy_usd)
     presupuesto_eventos = remaining_daily_budget_events(conn)
     print(
         f"Gasto de hoy: ~{gasto_hoy_usd} $ de {config.DAILY_SPEND_CAP_USD:.2f} $ "
@@ -1256,6 +1259,7 @@ if __name__ == "__main__":
         )
         raise SystemExit(0)
     print(f"Procesados {processed} eventos")
+    avisar_si_gasto_alto(conn, spend_today_usd(conn))  # con lo gastado en esta corrida
 
     stats = compute_day3_stats(conn)
     print(json.dumps(stats, indent=2))

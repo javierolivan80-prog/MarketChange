@@ -1,0 +1,104 @@
+name: Backup semanal
+# Copia de seguridad de la base de datos (Tanda 5; decisión del usuario,
+# 2026-10-06): pg_dump comprimido y CIFRADO (AES-256, gpg simétrico) con el
+# secreto BACKUP_PASSPHRASE, guardado como artefacto de Actions 90 días
+# (~13 copias). Coste: 0 € (repositorio público: minutos y almacenamiento de
+# artefactos gratis), ~2-5 min por copia.
+#
+# El repositorio es PÚBLICO: cualquier usuario de GitHub puede descargar sus
+# artefactos. Por eso, sin BACKUP_PASSPHRASE el job FALLA y no sube nada:
+# nunca se publica la base de datos sin cifrar. Si se pierde la contraseña,
+# los backups no se pueden abrir. Restaurar: RUNBOOK.md, «Backup y restauración».
+run-name: Backup semanal
+
+on:
+  schedule:
+    - cron: "17 4 * * 0"   # domingo 04:17 UTC, fuera de las pasadas del nightly
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+# Solo lee el repositorio y sube el artefacto.
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Comprobar el secreto de cifrado
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          LIMPIA="$(printf '%s' "$BACKUP_PASSPHRASE" | tr -d '[:space:]')"
+          if [ "${#LIMPIA}" -lt 16 ]; then
+            echo "::error title=BACKUP_PASSPHRASE ausente o corta::Hace falta una contraseña de al menos 16 caracteres (el repo es público y no se sube nada sin cifrar bien). Añádela en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      # Conexión: BACKUP_DATABASE_URL si existe (la DIRECTA, sin pooler: pg_dump
+      # no funciona por el pooler de Neon «-pooler» ni por el modo transacción
+      # de Supabase, puerto 6543); si no, DATABASE_URL. Sin saltos de línea
+      # finales, como hace config.py. Los errores de conexión se resumen sin
+      # host ni usuario: los logs de este repo son públicos.
+      - name: Preparar la conexión
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          URL="${BACKUP_DATABASE_URL:-$DATABASE_URL}"
+          URL="$(printf '%s' "$URL" | tr -d '\r\n')"
+          if [ -z "$URL" ]; then
+            echo "::error title=Falta DATABASE_URL::No hay URL de la base de datos."
+            exit 1
+          fi
+          echo "::add-mask::$URL"
+          echo "PGURL=$URL" >> "$GITHUB_ENV"
+
+      - name: Instalar pg_dump de la misma versión que el servidor
+        run: |
+          set -o pipefail
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          if ! VERSION=$(psql "$PGURL" -tAc "SHOW server_version_num" 2>/tmp/psql.err | cut -c1-2); then
+            echo "::error title=Sin conexión a la base de datos::$(tail -1 /tmp/psql.err | sed -E 's/"[^"]*"/"…"/g')"
+            exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+$ ]]; then
+            echo "::error title=Versión de PostgreSQL desconocida::No se pudo leer la versión del servidor."
+            exit 1
+          fi
+          echo "Servidor PostgreSQL $VERSION"
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-$VERSION" >/dev/null
+          echo "PG_DUMP=/usr/lib/postgresql/$VERSION/bin/pg_dump" >> "$GITHUB_ENV"
+
+      - name: pg_dump cifrado
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -o pipefail
+          FICHERO="marketchange-$(date -u +%Y-%m-%d).dump.gpg"
+          # gpg sin comprimir: el dump ya va comprimido.
+          if ! "$PG_DUMP" --format=custom --compress=9 --no-owner --no-privileges "$PGURL" 2>/tmp/pg_dump.err \
+            | gpg --batch --yes --symmetric --cipher-algo AES256 --compress-algo none \
+                  --passphrase-fd 3 3<<<"$BACKUP_PASSPHRASE" -o "$FICHERO"; then
+            echo "::error title=pg_dump falló::$(tail -1 /tmp/pg_dump.err | sed -E 's/"[^"]*"/"…"/g')"
+            rm -f "$FICHERO"
+            exit 1
+          fi
+          ls -lh "$FICHERO"
+          echo "FICHERO=$FICHERO" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FICHERO }}
+          path: ${{ env.FICHERO }}
+          retention-days: 90
+          if-no-files-found: error

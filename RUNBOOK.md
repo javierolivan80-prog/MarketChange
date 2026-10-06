@@ -787,3 +787,41 @@ descargados) que este sandbox no puede obtener para escribir contra ellas
 con confianza, o piezas de UI (sliders sin backend, WebSockets) que
 quedaron fuera del alcance por no aportar nada real en un POC. Escribirlas
 a ciegas habría sido peor que dejarlas explícitas aquí.
+
+
+## Backup y restauración (Tanda 5)
+
+**Backup semanal** (`.github/workflows/backup.yml`, domingos 04:17 UTC, o a mano
+desde Actions → «Backup semanal» → Run workflow):
+
+- `pg_dump` comprimido y cifrado con AES-256 (gpg simétrico) usando el secreto
+  `BACKUP_PASSPHRASE`. Se guarda como artefacto de Actions 90 días (~13 copias).
+- Coste: 0 € (repositorio público), unos 2-5 minutos por copia.
+- El repositorio es **público**: cualquier usuario de GitHub puede descargar
+  los artefactos. Por eso, sin `BACKUP_PASSPHRASE` el job falla y no sube nada.
+- La contraseña debe tener al menos 16 caracteres. **Guárdala fuera de
+  GitHub** (gestor de contraseñas): GitHub no deja volver a leer un secreto, y
+  sin ella los backups no se pueden abrir.
+- Conexión: si `DATABASE_URL` pasa por el pooler (Neon «-pooler», Supabase
+  puerto 6543), pg_dump no funciona: crea el secreto `BACKUP_DATABASE_URL` con
+  la conexión directa. Si no existe, se usa `DATABASE_URL`.
+
+**Restaurar** (en un ordenador con PostgreSQL y gpg):
+
+```bash
+# 1. Descarga el artefacto desde la pestaña Actions y descomprime el .zip.
+# 2. Descifra y restaura en una base VACÍA (nunca encima de la de producción
+#    sin pensarlo: pg_restore no pregunta).
+gpg --decrypt marketchange-AAAA-MM-DD.dump.gpg > marketchange.dump   # pide la contraseña
+pg_restore --no-owner -d "postgresql://USUARIO:CLAVE@HOST/BASE_NUEVA" marketchange.dump
+```
+
+**Secretos**: cada pasada del nightly comprueba (sin enseñar su valor) que
+existen `DATABASE_URL`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN` y
+`TELEGRAM_CHAT_ID` (`BACKUP_PASSPHRASE` lo comprueba el propio backup, para no
+pasarla al nightly), y deja un aviso en el resumen del run
+por cada uno que falte (`pipeline/ops_secretos.py`).
+
+**Aviso de gasto**: cuando el gasto de IA del día llega al 80 % del tope
+(`DAILY_SPEND_CAP_EUR`), llega un mensaje por Telegram, como mucho uno al día
+(`pipeline/notify/gasto_notifier.py`).
