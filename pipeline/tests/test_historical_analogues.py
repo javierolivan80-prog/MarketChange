@@ -167,6 +167,25 @@ class TestAgainstRealPostgres:
         # Solo el evento pasado debe aparecer; el futuro (2024-06-01) queda excluido.
         assert [float(a["car"]) for a in analogues] == [pytest.approx(0.05)]
 
+    def test_la_misma_empresa_el_mismo_dia_es_un_solo_analogo(self):
+        """BUGS_REPORT.md H-20: dos filings de la misma empresa el mismo día
+        tienen el mismo CAR; contarlos dos veces inflaba n y el prior."""
+        from pipeline.analyze.historical_analogues import get_class_prior_mean, get_historical_analogues
+
+        self._insert_event("1", date(2023, 1, 10), car=0.05)
+        self._insert_event("9", date(2023, 1, 10), car=0.05)
+        self._insert_event("2", date(2023, 2, 10), car=-0.01)
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE events SET ticker = 'T1' WHERE cik = '9'")
+        self.conn.commit()
+
+        analogues = get_historical_analogues(
+            self.conn, "8K_2.02_EARNINGS", as_of_date=date(2024, 1, 1), exclude_event_id=999999, window_days=20
+        )
+        assert len(analogues) == 2
+        prior = get_class_prior_mean(self.conn, "8K_2.02_EARNINGS", 20, date(2024, 1, 1))
+        assert prior == pytest.approx((5.0 - 1.0) / 2)
+
     def test_analogues_exclude_the_event_itself(self):
         from pipeline.analyze.historical_analogues import get_historical_analogues
 

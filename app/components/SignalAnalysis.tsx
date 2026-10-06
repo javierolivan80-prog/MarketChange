@@ -57,6 +57,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
   const t = makeT(locale);
   const { bull_output: bull, bear_output: bear, judge_output: judge, novelty_reasoning: novelty, impact_estimation: impact, ev_calculation: ev, abstention_decision: abstention } = detail;
   const rec = abstention?.[recommended];
+  const sinIa = detail.decision_sin_ia;
   const recDecision = decisionOf(detail, recommended);
 
   return (
@@ -245,6 +246,14 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
 
       <div id="versiones" className="mt-4 scroll-mt-4 border-t border-border-subtle pt-3">
         <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">{t("Las tres estrategias", "The three strategies")}</h3>
+        {sinIa && (
+          <p className="mb-2 text-xs text-text-tertiary">
+            {t(
+              "«Sin IA» es el grupo de control: la misma decisión usando solo los análogos históricos. Comparar ambas es lo que dirá si la IA aporta algo.",
+              "“Without AI” is the control group: the same decision using only the historical analogues. Comparing both is what will show whether the AI adds anything."
+            )}
+          </p>
+        )}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {VERSION_ORDER.map((strategy) => {
             const d = abstention?.[strategy];
@@ -266,6 +275,12 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
                 ) : d?.reason_if_no_trade ? (
                   <p className="text-xs text-text-tertiary">{d.reason_if_no_trade}</p>
                 ) : null}
+                {sinIa?.decisiones?.[strategy] && (
+                  <p className="mt-1.5 flex items-center justify-between border-t border-border-subtle pt-1.5 text-xs text-text-tertiary">
+                    <span>{t("Sin IA", "Without AI")}</span>
+                    <DirectionBadge value={sinIa.decisiones[strategy].trade_decision} />
+                  </p>
+                )}
               </div>
             );
           })}

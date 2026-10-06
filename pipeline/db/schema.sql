@@ -165,6 +165,13 @@ CREATE TABLE IF NOT EXISTS car_results (
     computed_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, window_days)
 );
+-- Para el test BMP (H-19): desviación de los residuos del modelo en la
+-- ventana de estimación y nº de sesiones de la ventana de evento.
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS resid_std NUMERIC;
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS n_event_days INT;
+-- Marca de "ya se intentó completar resid_std": los que no se pueden (sin
+-- precios o con un CAR que ya no cuadra) no se reintentan cada noche.
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS resid_std_checked_at TIMESTAMPTZ;
 
 -- Soporta la query de analogues: por clase, ordenado por fecha, excluyendo
 -- eventos futuros respecto al evento que se está evaluando (ver
@@ -566,6 +573,14 @@ CREATE TABLE IF NOT EXISTS validation_reports (
 -- quedaron en NULL.
 -- ============================================================================
 ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+
+-- Grupo de control (auditoría, Tanda 1): la decisión que se habría tomado
+-- SIN la IA, con la misma Etapa 6, el mismo EV y la misma abstención, pero
+-- con la dirección y la confianza de los análogos en lugar de las del Judge.
+-- Comparar ambas sobre los mismos eventos es la única forma de saber si la IA
+-- añade algo. JSONB con los ingredientes en bruto (dirección, magnitud,
+-- confianza) para poder recalcular el control con otra regla sin re-analizar.
+ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS decision_sin_ia JSONB;
 
 -- ============================================================================
 -- notifications_sent: deduplicación de avisos que, a diferencia de una señal

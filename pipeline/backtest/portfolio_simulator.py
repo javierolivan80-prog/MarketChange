@@ -496,21 +496,26 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
     (que a su vez lee config.IN_SAMPLE_END / OOS_START)."""
     assert version in VERSIONS, f"versión desconocida: {version}"
     trade_decision_col = f"trade_decision_{_TRADE_DECISION_SOURCE_VERSION.get(version, version).lower()}"
+    ev_col = f"ev_{_TRADE_DECISION_SOURCE_VERSION.get(version, version).lower()}"
     start, end = date_bounds(sample)
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT e.event_id, e.ticker, e.d0_close_date, e.event_class,
-                   ea.{trade_decision_col} AS trade_decision,
-                   ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
-                   ea.confidence_in_conviction AS confidence,
-                   ea.net_conviction AS prediction
-            FROM events e
-            JOIN event_analyses ea ON ea.event_id = e.event_id
-            WHERE ea.{trade_decision_col} != 'NO_TRADE'
-              AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
-              AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
-            ORDER BY e.d0_close_date
+            SELECT * FROM (
+                SELECT DISTINCT ON (e.ticker, e.d0_close_date)
+                       e.event_id, e.ticker, e.d0_close_date, e.event_class,
+                       ea.{trade_decision_col} AS trade_decision,
+                       ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
+                       ea.confidence_in_conviction AS confidence,
+                       ea.net_conviction AS prediction
+                FROM events e
+                JOIN event_analyses ea ON ea.event_id = e.event_id
+                WHERE ea.{trade_decision_col} != 'NO_TRADE'
+                  AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
+                  AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
+                ORDER BY e.ticker, e.d0_close_date, abs(ea.{ev_col}) DESC, e.event_id
+            ) unicos
+            ORDER BY d0_close_date, abs({ev_col}) DESC, event_id
             """,
             {"start": start, "end": end},
         )

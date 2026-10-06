@@ -72,6 +72,11 @@ class CAREstimate:
     car: float
     abnormal_volume_ratio: float
     n_estimation_days: int
+    # Para el test BMP del event study (BUGS_REPORT.md H-19): desviación de
+    # los residuos del modelo en la ventana de estimación y nº de sesiones de
+    # la ventana de evento. CAR estandarizado = car / (resid_std * sqrt(n)).
+    resid_std: float | None = None
+    n_event_days: int | None = None
 
 
 def compute_car(
@@ -139,4 +144,6 @@ def compute_car(
         car=float(car),
         abnormal_volume_ratio=float(abnormal_volume_ratio) if not np.isnan(abnormal_volume_ratio) else None,
         n_estimation_days=fit.n_estimation_days,
+        resid_std=float(np.sqrt(fit.model.mse_resid)),
+        n_event_days=len(event_data),
     )

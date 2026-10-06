@@ -254,3 +254,33 @@ def test_reset_anula_las_ratios_de_volatilidad_calculadas_con_datos_futuros(conn
     assert filas[20]["car"] is not None  # el CAR se conserva
     assert [float(r["abnormal_volume_ratio"]) for w, r in filas.items() if w != 20] == [pytest.approx(1.2)]
     assert reset_lookahead_volume_ratios(conn) == 0
+
+
+def test_populate_guarda_resid_std_y_rellena_los_antiguos(conn):
+    """H-19: el test BMP necesita la desviación de los residuos de cada CAR.
+    Los CAR nuevos la traen; los guardados antes se completan si los precios
+    siguen dando el mismo CAR, y si no, se dejan sin ella."""
+    from pipeline.backtest.populate_car_results import fill_missing_resid_std, populate_missing_car_results
+
+    event_id = _seed(conn)
+    populate_missing_car_results(conn)
+    with conn.cursor() as cur:
+        cur.execute("SELECT resid_std, n_event_days FROM car_results WHERE event_id = %s", (event_id,))
+        assert all(r["resid_std"] is not None and r["n_event_days"] > 0 for r in cur.fetchall())
+        # Como si se hubieran guardado antes de existir las columnas; uno con
+        # un CAR que ya no cuadra con los precios actuales.
+        cur.execute("UPDATE car_results SET resid_std = NULL, n_event_days = NULL WHERE event_id = %s", (event_id,))
+        cur.execute("UPDATE car_results SET car = car + 0.5 WHERE event_id = %s AND window_days = 5", (event_id,))
+    conn.commit()
+
+    assert fill_missing_resid_std(conn) == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT window_days, resid_std FROM car_results WHERE event_id = %s ORDER BY window_days", (event_id,))
+        filas = cur.fetchall()
+    assert filas[0]["resid_std"] is None  # ventana de 5: el CAR no cuadra, no se mezcla
+    assert filas[1]["resid_std"] is not None
+    # Lo que no se pudo completar queda marcado y no se reintenta cada noche.
+    assert fill_missing_resid_std(conn) == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM car_results WHERE event_id = %s AND resid_std_checked_at IS NULL", (event_id,))
+        assert cur.fetchone()["n"] == 0

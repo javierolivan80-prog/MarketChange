@@ -263,7 +263,9 @@ export default async function FuncionaPage() {
                     <th className="py-2 pl-3 pr-4 font-medium">{t("Tipo de evento", "Event type")}</th>
                     <th className="py-2 pr-4 text-right font-medium">{t("Casos", "Cases")}</th>
                     <th className="py-2 pr-4 text-right font-medium">{t("Movimiento típico", "Typical move")}</th>
-                    <th className="py-2 pr-4 text-right font-medium">p-value</th>
+                    <th className="py-2 pr-4 text-right font-medium" title={t("Contraste agrupado por mes de D0, sobre CAR winsorizados", "Test clustered by month of D0, on winsorized CARs")}>
+                      {t("p-valor (por mes)", "p-value (by month)")}
+                    </th>
                     <th className="py-2 pr-4 text-center font-medium">{t("¿Es real?", "Is it real?")}</th>
                     <th className="py-2 pr-3 font-medium">{t("Explicación", "Explanation")}</th>
                   </tr>

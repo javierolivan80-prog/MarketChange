@@ -628,3 +628,24 @@ class TestNoLookaheadChecksum:
             trade = cur.fetchone()
         assert trade["entry_date"] > d0
         assert trade["exit_date"] > trade["entry_date"]
+
+
+def test_una_operacion_por_empresa_y_dia(conn):
+    """BUGS_REPORT.md H-20: dos eventos de la misma empresa el mismo día (un
+    8-K con varios Items) abrían dos posiciones sobre el mismo precio. Se
+    queda uno, el de mayor |EV| de la versión."""
+    from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    # Cada versión mira SU EV: A gana en Conservadora; B en Equilibrada (y
+    # en Dinámica, que usa la decisión y el EV de Equilibrada).
+    a = _seed_event_with_analysis(conn, "1", "AAA", d0, "LONG", "LONG", "LONG", 0.5, 70, 0.04, 0.01, 0.01)
+    b = _seed_event_with_analysis(conn, "2", "AAA", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.01, 0.01, 0.03)
+    otro = _seed_event_with_analysis(conn, "3", "BBB", d0, "LONG", "LONG", "LONG", 0.5, 70, 0.01, 0.01, 0.01)
+    esperado = {"CONSERVATIVE": a, "BALANCED": b, "DYNAMIC": b}
+    for version, ganador in esperado.items():
+        ids = [r["event_id"] for r in fetch_events_for_version(conn, version)]
+        assert sorted(ids) == sorted([ganador, otro]), version
+    # Mismo día: primero el de mayor |EV| (orden en que se reparten los huecos).
+    ids = [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")]
+    assert ids == [b, otro]

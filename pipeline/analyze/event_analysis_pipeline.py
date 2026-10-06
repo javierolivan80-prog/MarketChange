@@ -29,7 +29,9 @@ de orquestación para poder loguear progreso y no perder todo un backfill de
 """
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import replace
 from datetime import date, timedelta
 
 from pipeline import config
@@ -43,6 +45,7 @@ from pipeline.analyze.abstention_engine import (
     objective_no_trade_reason,
 )
 from pipeline.analyze.adversarial_analyzer import (
+    SKIPPED_MODEL_VERSION,
     EventContext,
     build_bull_bear_batch,
     build_judge_batch,
@@ -618,19 +621,41 @@ def _process_single_event(
     # --- Etapa 6: impact estimation (SIEMPRE fresco — depende de as_of_date) ---
     impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], event_id, window_days=20)
 
-    # --- Etapa 7: EV engine ---
-    ev_result = compute_ev(net_conviction, confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence)
-
-    # --- Etapa 8: abstention engine (is_fda_crl_without_8k ya calculado arriba) ---
+    # --- Etapas 7-8: EV y abstención (is_fda_crl_without_8k ya calculado arriba) ---
+    # La MISMA función decide con IA y sin IA (grupo de control): la única
+    # diferencia entre ambas es de dónde sale net_conviction.
     abstention_inputs = AbstentionInputs(
         novelty_score=novelty.score,
         confidence_in_conviction=confidence_in_conviction,
         net_conviction=net_conviction,
-        ev_by_strategy={"CONSERVATIVE": ev_result.ev_conservative, "BALANCED": ev_result.ev_balanced, "AGGRESSIVE": ev_result.ev_aggressive},
+        ev_by_strategy={},
         had_survivorship_warning=enrichment.had_survivorship_warning,
         beta_available=enrichment.beta_vs_spy is not None,
         adv_usd_60d=enrichment.adv_usd_60d,
         is_fda_crl_without_8k=is_fda_crl_without_8k,
+    )
+    ev_result, decisions = evaluar_decision(abstention_inputs, impact, skip_reason)
+    control = decision_sin_ia(abstention_inputs, impact, skip_reason)
+
+    _store_event_analysis(
+        conn, event_id, novelty, bull_output, bear_output, judge_output,
+        net_conviction, confidence_in_conviction, impact, ev_result, decisions,
+        model_bull_bear, model_judge, batch_bb, batch_judge, from_cache, control,
+    )
+
+
+def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None):
+    """Etapas 7-8: EV y abstención de las 3 estrategias a partir de
+    `entradas` (net_conviction, confidence_in_conviction y el resto de
+    insumos) y de la Etapa 6. La usan tanto la decisión con IA como el grupo
+    de control, para que ninguna fórmula, umbral o regla pueda divergir entre
+    las dos. Devuelve (EVResult, {estrategia: AbstentionDecision})."""
+    ev_result = compute_ev(
+        entradas.net_conviction, entradas.confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence
+    )
+    entradas = replace(
+        entradas,
+        ev_by_strategy={"CONSERVATIVE": ev_result.ev_conservative, "BALANCED": ev_result.ev_balanced, "AGGRESSIVE": ev_result.ev_aggressive},
     )
     if skip_reason is not None:
         # El evento se descartó ANTES de la IA por una regla objetiva. Sin
@@ -638,22 +663,113 @@ def _process_single_event(
         # antes que la objetiva y guardaba "no sabemos qué pasa" como motivo
         # en vez del real (BUGS_REPORT.md H-38: 188 de 200 en producción).
         decisions = {
-            strategy: AbstentionDecision("NO_TRADE", skip_reason, confidence_in_conviction)
+            strategy: AbstentionDecision("NO_TRADE", skip_reason, entradas.confidence_in_conviction)
             for strategy in STRATEGIES
         }
     else:
-        decisions = decide_all_strategies(abstention_inputs)
+        decisions = decide_all_strategies(entradas)
+    return ev_result, decisions
 
-    _store_event_analysis(
-        conn, event_id, novelty, bull_output, bear_output, judge_output,
-        net_conviction, confidence_in_conviction, impact, ev_result, decisions,
-        model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
-    )
+
+METODO_SIN_IA = "analogos_signo_v2"
+
+
+def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -> dict:
+    """Grupo de control: la decisión que se habría tomado SIN la dirección
+    de la IA.
+
+    Pasa por evaluar_decision, exactamente igual que la decisión real; lo
+    ÚNICO que cambia es net_conviction, que sale de los análogos en lugar del
+    debate: +1 / -1 según el signo del CAR esperado, o 0 si está a menos de
+    0,1 % de cero (ImpactEstimate.expected_direction). Todo lo demás, incluida
+    confidence_in_conviction, es lo mismo que recibió la decisión con IA
+    (decisión del usuario, auditoría 2026-10-05): así la comparación mide si
+    la DIRECCIÓN de la IA aporta, sin ventaja de construcción para ninguna.
+
+    `metodo` identifica la regla; los ingredientes se guardan en bruto para
+    poder recalcular con otra regla sin volver a analizar."""
+    net = float(impact.expected_direction)
+    ev, decisiones = evaluar_decision(replace(con_ia, net_conviction=net), impact, skip_reason)
+    return {
+        "metodo": METODO_SIN_IA,
+        "net_conviction": net,
+        "confidence_in_conviction": float(con_ia.confidence_in_conviction),
+        "expected_magnitude_pct": round(float(impact.expected_magnitude_pct), 4),
+        "impact_confidence": float(impact.confidence),
+        "n_analogues": impact.n_analogues,
+        "ev_conservative": ev.ev_conservative,
+        "ev_balanced": ev.ev_balanced,
+        "ev_aggressive": ev.ev_aggressive,
+        "decisiones": abstention_as_json(decisiones),
+    }
+
+
+def backfill_decision_sin_ia(conn, limit: int = 1000) -> int:
+    """Calcula el grupo de control de los análisis guardados antes de que
+    existiera, o con una regla anterior (`metodo` distinto del actual), sin
+    llamar a la IA: la decisión sin IA
+    solo usa Postgres (análogos, enrichment, novelty ya guardada).
+
+    Diferencia con el control calculado en el momento: los análogos se
+    vuelven a leer hoy con as_of = D0. Sigue sin haber look-ahead (solo
+    eventos cuya ventana terminó antes de D0), pero puede haber más CAR de
+    entonces calculados después. Se marca con "recalculado": true."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.event_id, e.cik, e.ticker, e.event_class, e.d0_close_date, u.sic_code,
+                   ea.novelty_score, ea.net_conviction, ea.confidence_in_conviction,
+                   ea.model_version_bull_bear, ea.abstention_decision
+            FROM event_analyses ea
+            JOIN events e ON e.event_id = ea.event_id
+            JOIN universe u ON u.cik = e.cik
+            WHERE ea.decision_sin_ia IS NULL OR ea.decision_sin_ia->>'metodo' IS DISTINCT FROM %s
+            ORDER BY e.event_id
+            LIMIT %s
+            """,
+            (METODO_SIN_IA, limit),
+        )
+        filas = cur.fetchall()
+    series_comunes: dict = {}
+    hechos = 0
+    for f in filas:
+        try:
+            skip_reason = None
+            if f["model_version_bull_bear"] == SKIPPED_MODEL_VERSION:
+                skip_reason = ((f["abstention_decision"] or {}).get("BALANCED") or {}).get("reason_if_no_trade") or "descartado antes de la IA"
+            enrichment = fetch_and_compute_enrichment(conn, f, series_comunes)
+            con_ia = AbstentionInputs(
+                novelty_score=float(f["novelty_score"]),
+                confidence_in_conviction=float(f["confidence_in_conviction"]),
+                net_conviction=float(f["net_conviction"]),
+                ev_by_strategy={},
+                had_survivorship_warning=enrichment.had_survivorship_warning,
+                beta_available=enrichment.beta_vs_spy is not None,
+                adv_usd_60d=enrichment.adv_usd_60d,
+                is_fda_crl_without_8k=check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"]),
+            )
+            impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
+            control = decision_sin_ia(con_ia, impact, skip_reason)
+            control["recalculado"] = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE event_analyses SET decision_sin_ia = %s WHERE event_id = %s",
+                    (json.dumps(control), f["event_id"]),
+                )
+            conn.commit()
+            hechos += 1
+        except Exception:
+            logger.exception("No se pudo calcular el control sin IA del evento %d", f["event_id"])
+            conn.rollback()
+    if hechos:
+        logger.info("Grupo de control calculado para %d análisis antiguos", hechos)
+    return hechos
 
 
 def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, judge_output,
                            net_conviction, confidence_in_conviction, impact, ev_result, decisions,
-                           model_bull_bear, model_judge, batch_bb, batch_judge, from_cache) -> None:
+                           model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
+                           control: dict | None = None) -> None:
     import json as _json
 
     with conn.cursor() as cur:
@@ -665,13 +781,13 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 n_historical_analogues, ev_calculation, ev_conservative, ev_aggressive, ev_balanced,
                 abstention_decision, trade_decision_conservative, trade_decision_aggressive,
                 trade_decision_balanced, model_version_bull_bear, model_version_judge,
-                batch_id_bull_bear, batch_id_judge, from_cache
+                batch_id_bull_bear, batch_id_judge, from_cache, decision_sin_ia
             ) VALUES (
                 %(event_id)s, %(novelty_score)s, %(novelty_reasoning)s, %(bull)s, %(bear)s,
                 %(judge)s, %(net_conviction)s, %(confidence)s, %(impact)s,
                 %(n_analogues)s, %(ev_calc)s, %(ev_cons)s, %(ev_aggr)s, %(ev_bal)s,
                 %(abstention)s, %(td_cons)s, %(td_aggr)s, %(td_bal)s, %(model_bb)s, %(model_j)s,
-                %(batch_bb)s, %(batch_j)s, %(from_cache)s
+                %(batch_bb)s, %(batch_j)s, %(from_cache)s, %(sin_ia)s
             )
             ON CONFLICT (event_id) DO UPDATE SET
                 novelty_score = EXCLUDED.novelty_score, novelty_reasoning = EXCLUDED.novelty_reasoning,
@@ -683,7 +799,8 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 ev_balanced = EXCLUDED.ev_balanced, abstention_decision = EXCLUDED.abstention_decision,
                 trade_decision_conservative = EXCLUDED.trade_decision_conservative,
                 trade_decision_aggressive = EXCLUDED.trade_decision_aggressive,
-                trade_decision_balanced = EXCLUDED.trade_decision_balanced, analyzed_at = now()
+                trade_decision_balanced = EXCLUDED.trade_decision_balanced,
+                decision_sin_ia = EXCLUDED.decision_sin_ia, analyzed_at = now()
             """,
             {
                 "event_id": event_id,
@@ -709,6 +826,7 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 "batch_bb": batch_bb,
                 "batch_j": batch_judge,
                 "from_cache": from_cache,
+                "sin_ia": _json.dumps(control) if control is not None else None,
             },
         )
     conn.commit()
@@ -866,6 +984,7 @@ if __name__ == "__main__":
     requeued = requeue_obsolete_skips(conn)
     if requeued:
         print(f"Vueltos a la cola: {requeued} eventos descartados antes de la IA por un motivo que ya no aplica")
+    backfill_decision_sin_ia(conn)
     cola = analysis_queue_summary(conn)
     print(
         f"Cola de la IA: {cola['pendientes']} eventos sin analizar; {cola['en_objetivo']} de "

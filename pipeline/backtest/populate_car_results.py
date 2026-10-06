@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pandas as pd
 
 from pipeline.backtest.backtester import compute_car
@@ -206,16 +207,86 @@ def _compute_page(conn, pending: list[dict], factor_returns: pd.DataFrame, ticke
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO car_results (event_id, window_days, car, abnormal_volume_ratio, n_estimation_days)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO car_results (event_id, window_days, car, abnormal_volume_ratio, n_estimation_days,
+                                             resid_std, n_event_days)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (event_id, window_days) DO UPDATE SET
                         car = EXCLUDED.car, abnormal_volume_ratio = EXCLUDED.abnormal_volume_ratio,
-                        n_estimation_days = EXCLUDED.n_estimation_days, computed_at = now()
+                        n_estimation_days = EXCLUDED.n_estimation_days, resid_std = EXCLUDED.resid_std,
+                        n_event_days = EXCLUDED.n_event_days, computed_at = now()
                     """,
-                    (row["event_id"], window_days, result.car, result.abnormal_volume_ratio, result.n_estimation_days),
+                    (row["event_id"], window_days, result.car, result.abnormal_volume_ratio, result.n_estimation_days,
+                     result.resid_std, result.n_event_days),
                 )
             stored += 1
     return stored
+
+
+# Cuántos eventos sin resid_std se intentan completar por corrida: el
+# histórico tiene decenas de miles y cada uno exige rehacer la regresión.
+FILL_RESID_STD_MAX_EVENTS = 5000
+
+
+def fill_missing_resid_std(conn, max_events: int = FILL_RESID_STD_MAX_EVENTS) -> int:
+    """Completa resid_std/n_event_days de los CAR guardados antes de que
+    existieran esas columnas (H-19), solo donde aún hay precios de la ventana
+    de estimación (ops_prune borra los antiguos de empresas no operadas).
+
+    No toca el CAR: si el recalculado no coincide con el guardado (precios
+    reajustados desde entonces), no se mezcla un resid_std de otra serie y la
+    fila se queda sin él."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT e.event_id, e.ticker, e.d0_close_date
+            FROM car_results cr
+            JOIN events e ON e.event_id = cr.event_id
+            WHERE cr.resid_std IS NULL AND cr.resid_std_checked_at IS NULL
+              AND EXISTS (SELECT 1 FROM prices p WHERE p.ticker = e.ticker
+                          AND p.trade_date <= e.d0_close_date - 200)
+            ORDER BY e.ticker, e.event_id
+            LIMIT %s
+            """,
+            (max_events,),
+        )
+        pending = cur.fetchall()
+    if not pending:
+        return 0
+    factor_returns = _load_factor_returns(conn)
+    ticker_cache: dict[str, pd.DataFrame] = {}
+    filled = skipped = 0
+    for row in pending:
+        ticker = row["ticker"]
+        if ticker not in ticker_cache:
+            # Ordenado por ticker: solo hace falta la serie del ticker actual
+            # en memoria, no la de miles.
+            ticker_cache.clear()
+            ticker_cache[ticker] = _load_ticker_returns(conn, ticker)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT window_days, car FROM car_results WHERE event_id = %s AND resid_std IS NULL",
+                (row["event_id"],),
+            )
+            stored = cur.fetchall()
+        for fila in stored:
+            result = compute_car(ticker_cache[ticker], factor_returns, row["d0_close_date"], fila["window_days"])
+            ok = result is not None and np.isclose(result.car, float(fila["car"]), rtol=1e-6, atol=1e-9)
+            with conn.cursor() as cur:
+                # Se marca como intentado también si no se pudo: si no, las
+                # mismas filas volverían cada noche y taparían a las demás.
+                cur.execute(
+                    "UPDATE car_results SET resid_std = %s, n_event_days = %s, resid_std_checked_at = now() "
+                    "WHERE event_id = %s AND window_days = %s",
+                    (result.resid_std if ok else None, result.n_event_days if ok else None,
+                     row["event_id"], fila["window_days"]),
+                )
+            if ok:
+                filled += 1
+            else:
+                skipped += 1
+        conn.commit()
+    logger.info("resid_std completado en %d CAR; %d sin precios iguales a los de entonces", filled, skipped)
+    return filled
 
 
 if __name__ == "__main__":
@@ -229,3 +300,4 @@ if __name__ == "__main__":
         print(f"{purged} CAR con la ventana incompleta borrados (se recalculan cuando la ventana esté completa)")
     n = populate_missing_car_results(conn)
     print(f"{n} filas de car_results calculadas/actualizadas")
+    fill_missing_resid_std(conn)

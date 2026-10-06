@@ -56,6 +56,15 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "analiza después con su propio as_of_date."
     ),
     (
+        "event_analysis_pipeline.py",
+        "WHERE ea.decision_sin_ia IS NULL",
+    ): (
+        "Cola de trabajo del relleno del grupo de control: qué análisis "
+        "antiguos no tienen decisión sin IA. No aporta información al cálculo "
+        "— cada control se calcula después con estimate_impact_for_event "
+        "(as_of = D0 del evento, acotado por d0_close_date)."
+    ),
+    (
         "adversarial_analyzer.py",
         "ea.analyzed_at >= now()",
     ): (

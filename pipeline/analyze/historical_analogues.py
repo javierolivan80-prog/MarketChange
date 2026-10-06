@@ -137,17 +137,22 @@ def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_e
     de los días POSTERIORES a la decisión. Se exige que esa ventana terminara
     antes de as_of_date (window_days en días naturales, como en
     backtester.compute_car).
+
+    Un análogo por (empresa, D0) (BUGS_REPORT.md H-20): dos filings de la
+    misma empresa el mismo día tienen el mismo CAR y contarlos dos veces
+    inflaba n, y con él el peso de los análogos y la confianza.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT cr.car, cr.abnormal_volume_ratio
+            SELECT DISTINCT ON (e.ticker, e.d0_close_date) cr.car, cr.abnormal_volume_ratio
             FROM car_results cr
             JOIN events e ON e.event_id = cr.event_id
             WHERE e.event_class = %(event_class)s
               AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
               AND cr.event_id != %(exclude_event_id)s
               AND cr.window_days = %(window_days)s
+            ORDER BY e.ticker, e.d0_close_date, e.event_id
             """,
             {
                 "event_class": event_class,
@@ -180,11 +185,15 @@ def get_class_prior_mean(conn, event_class: str, window_days: int, as_of_date: d
         cur.execute(
             """
             SELECT avg(car) * 100 AS mean_car_pct
-            FROM car_results cr
-            JOIN events e ON e.event_id = cr.event_id
-            WHERE e.event_class = %(event_class)s
-              AND cr.window_days = %(window_days)s
-              AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
+            FROM (
+                SELECT DISTINCT ON (e.ticker, e.d0_close_date) cr.car
+                FROM car_results cr
+                JOIN events e ON e.event_id = cr.event_id
+                WHERE e.event_class = %(event_class)s
+                  AND cr.window_days = %(window_days)s
+                  AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
+                ORDER BY e.ticker, e.d0_close_date, e.event_id
+            ) unicos
             """,
             {"event_class": event_class, "window_days": window_days, "as_of_date": as_of_date},
         )

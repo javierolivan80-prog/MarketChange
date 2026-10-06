@@ -169,3 +169,14 @@ def test_simulate_paper_trading_week_no_lookahead_entry_strictly_after_d0(conn):
 
     results = simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="ptw-4")
     assert results[0]["entry_date"] > d0
+
+
+def test_paper_trading_una_operacion_por_empresa_y_dia(conn):
+    """H-20, igual que en el backtest: la misma empresa el mismo día opera una vez."""
+    from pipeline.paper_trading.simulator import fetch_events_for_week
+
+    d0 = date(2024, 3, 4)
+    _seed_event(conn, "1", "AAA", d0, "LONG", 0.5, 70, 0.01)
+    fuerte = _seed_event(conn, "2", "AAA", d0, "LONG", 0.8, 80, 0.03)
+    filas = fetch_events_for_week(conn, "BALANCED", d0, d0)
+    assert [r["event_id"] for r in filas] == [fuerte]
