@@ -76,3 +76,13 @@ def test_el_backup_nunca_sube_la_base_sin_cifrar():
     assert re.search(r'FICHERO="[^"]*\.dump\.gpg"', texto)
     assert "retention-days: 90" in texto
     assert "schedule:" in texto and "workflow_dispatch:" in texto
+
+
+def test_la_prueba_de_humo_solo_se_lanza_a_mano():
+    """Tanda 6: gasta saldo de la API; nunca programada ni en push/PR."""
+    texto = _sin_comentarios((WORKFLOWS / "smoke.yml").read_text(encoding="utf-8"))
+    assert "workflow_dispatch:" in texto
+    assert "schedule:" not in texto and "push:" not in texto and "pull_request:" not in texto
+    for wf in WORKFLOWS.glob("*.yml"):
+        if wf.name != "smoke.yml":
+            assert "pipeline.analyze.smoke" not in _sin_comentarios(wf.read_text(encoding="utf-8")), wf.name

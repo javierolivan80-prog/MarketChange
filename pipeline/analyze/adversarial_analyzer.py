@@ -413,6 +413,9 @@ def run_batch_and_collect(
         "input_tokens": 0, "output_tokens": 0,
         "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
         "n_responses": 0,
+        # Requests sin resultado útil (Tanda 6, informe del smoke): errores de
+        # la API, respuestas cortadas por max_tokens y JSON ilegible.
+        "n_errores": 0, "n_cortadas": 0, "n_json_invalido": 0,
     }
     _leer_resultados(client, batch.id, results, uso)
     # Solo con la lectura COMPLETA: si se corta a mitad, un coste parcial
@@ -433,21 +436,25 @@ def _leer_resultados(client, batch_id: str, results: dict[str, dict], uso: dict)
             # (era el minimum/maximum del esquema — ver JUDGE_SCHEMA).
             detalle = getattr(result.result, "error", None)
             logger.warning("Request %s: %s%s", result.custom_id, result.result.type, f" — {detalle}" if detalle else "")
+            uso["n_errores"] = uso.get("n_errores", 0) + 1
             continue  # errored/expired/canceled: la API no los cobra
         _sumar_uso(uso, result.result.message)
         if getattr(result.result.message, "stop_reason", None) == "max_tokens":
             # Cortada a mitad: el JSON no se puede leer. Se dice por su nombre
             # (antes salía como "JSON inválido") para poder ajustar el tope.
             logger.warning("Request %s: respuesta cortada por max_tokens (%d)", result.custom_id, MAX_OUTPUT_TOKENS)
+            uso["n_cortadas"] = uso.get("n_cortadas", 0) + 1
             continue
         text = next((b.text for b in result.result.message.content if b.type == "text"), None)
         if text is None:
             logger.warning("Request %s sin bloque de texto en la respuesta", result.custom_id)
+            uso["n_json_invalido"] = uso.get("n_json_invalido", 0) + 1  # ilegible igual que un JSON roto
             continue
         try:
             results[result.custom_id] = json.loads(text)
         except json.JSONDecodeError:
             logger.warning("Request %s: JSON inválido pese a output_config.format: %r", result.custom_id, text[:200])
+            uso["n_json_invalido"] = uso.get("n_json_invalido", 0) + 1
 
 
 def get_cached_analysis(conn, ticker: str, event_class: str, as_of: date, within_hours: int = CACHE_WINDOW_HOURS) -> dict | None:

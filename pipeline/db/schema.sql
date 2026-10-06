@@ -869,6 +869,11 @@ ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS input_tokens BIGINT;
 ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS output_tokens BIGINT;
 ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS cost_usd NUMERIC;
 ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+-- Requests sin resultado útil (Tanda 6): errores, cortadas por max_tokens y
+-- JSON ilegible.
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS n_errores INT;
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS n_cortadas INT;
+ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS n_json_invalido INT;
 
 -- BUGS_REPORT.md H-31: la sesión de entrada también se evalúa. Se entra a la
 -- apertura, así que un stop u objetivo tocado ese mismo día es una salida
@@ -949,4 +954,15 @@ CREATE TABLE IF NOT EXISTS xbrl_descargas (
 CREATE TABLE IF NOT EXISTS avisos_enviados (
     clave       TEXT PRIMARY KEY,
     enviado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================================
+-- smoke_runs: informe de cada prueba de humo con la IA real (Tanda 6;
+-- event_analysis_pipeline --smoke N, workflow smoke.yml). Solo la lanza el
+-- usuario, a mano.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS smoke_runs (
+    smoke_run_id  SERIAL PRIMARY KEY,
+    lanzado_en    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    informe       JSONB NOT NULL
 );
