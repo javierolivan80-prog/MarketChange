@@ -416,7 +416,8 @@ class TestForcedCloseWithDataGap:
             trade = cur.fetchone()
         assert trade["exit_reason"] == "DATA_GAP"
         assert float(trade["exit_price"]) == float(trade["entry_price"])  # retorno plano
-        assert float(trade["pnl_pct"]) == pytest.approx(-COMMISSION_BPS_ROUND_TRIP / 100)  # solo la comisión
+        # Solo los costes: comisión + deslizamiento conservador (sin capitalización en D0, H-32).
+        assert float(trade["pnl_pct"]) == pytest.approx(-COMMISSION_BPS_ROUND_TRIP / 100 - 2 * 25.0 / 100)
 
 
 class TestDrawdownCircuitBreaker:
@@ -649,3 +650,31 @@ def test_una_operacion_por_empresa_y_dia(conn):
     # Mismo día: primero el de mayor |EV| (orden en que se reparten los huecos).
     ids = [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")]
     assert ids == [b, otro]
+
+
+def test_deslizamiento_usa_la_capitalizacion_en_d0_sin_look_ahead(conn):
+    """H-32: la capitalización para el deslizamiento es la de D0 (acciones
+    del último 10-K PUBLICADO antes de D0 × precio de D0), no la de hoy."""
+    from pipeline.backtest.portfolio_simulator import _build_entry_plan, fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    dias = _business_days(d0, 5)
+    _seed_price_series(conn, "BIG", dias, [100.0] * 5)
+    _seed_price_series(conn, "GROW", dias, [100.0] * 5)
+    _seed_event_with_analysis(conn, "1", "BIG", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    _seed_event_with_analysis(conn, "2", "GROW", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        # BIG: 200 M acciones × 100 $ = 20.000 M$ en D0.
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('1', '2023-12-31', '2024-02-15', '10-K', 200000000)")
+        # GROW: en D0 solo había 50 M acciones (5.000 M$); el 10-K con 500 M se
+        # publicó DESPUÉS de D0 y no puede contar.
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('2', '2022-12-31', '2023-02-15', '10-K', 50000000), "
+                    "('2', '2023-12-31', '2024-03-20', '10-K', 500000000)")
+    conn.commit()
+
+    eventos = fetch_events_for_version(conn, "BALANCED")
+    plan = {p["ticker"]: p for p in _build_entry_plan(conn, "BALANCED", eventos, {})}
+    assert plan["BIG"]["slippage_bps_por_lado"] == 10.0
+    assert plan["GROW"]["slippage_bps_por_lado"] == 25.0

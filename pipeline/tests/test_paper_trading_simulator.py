@@ -63,7 +63,8 @@ def test_paper_trade_hits_take_profit_conservative():
     assert result["status"] == "CLOSED_TP"
     assert result["exit_reason"] == "TAKE_PROFIT"
     assert result["exit_date"] == date(2024, 1, 4)
-    assert result["pnl_pct"] == pytest.approx(2.0 - 0.10, abs=1e-9)  # 2% - comisión 10bps
+    # 2% - comisión 10 pb - deslizamiento 2 × 25 pb (sin capitalización: el conservador, H-32)
+    assert result["pnl_pct"] == pytest.approx(2.0 - 0.10 - 0.50, abs=1e-9)
 
 
 def test_paper_trade_hits_stop_loss():

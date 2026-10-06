@@ -199,7 +199,8 @@ def test_consolidate_single_close_applies_commission():
     step_position_forward(pos, high=103.0, low=99.0, close=101.0, trade_date=D0 + timedelta(days=1))
     record = consolidate_trade_record(pos)
     assert record["actual_move_pct"] == pytest.approx(2.0)  # (102-100)/100*100
-    assert record["pnl_pct"] == pytest.approx(2.0 - COMMISSION_BPS_ROUND_TRIP / 100)
+    # Comisión + deslizamiento conservador por defecto (2 × 25 pb, H-32).
+    assert record["pnl_pct"] == pytest.approx(2.0 - COMMISSION_BPS_ROUND_TRIP / 100 - 2 * 25.0 / 100)
     assert record["exit_reason"] == "TAKE_PROFIT"
     assert record["exit_date"] > record["entry_date"]  # checksum anti-look-ahead
 
@@ -640,3 +641,22 @@ def test_fill_con_gap_sin_apertura_devuelve_el_nivel():
 
     assert fill_con_gap("LONG", None, 98.5, a_favor=False) == 98.5
     assert fill_con_gap("SHORT", None, 101.5, a_favor=False) == 101.5
+
+
+def test_deslizamiento_segun_capitalizacion_en_d0():
+    """H-32: 10 pb por lado a partir de 10.000 M$ de capitalización en D0;
+    25 pb por debajo o si no se conoce."""
+    from pipeline.config import slippage_bps_por_lado
+
+    assert slippage_bps_por_lado(25e9) == 10.0
+    assert slippage_bps_por_lado(10e9) == 10.0
+    assert slippage_bps_por_lado(9.9e9) == 25.0
+    assert slippage_bps_por_lado(None) == 25.0
+
+    for bps, esperado in ((10.0, 2.0 - 0.10 - 0.20), (25.0, 2.0 - 0.10 - 0.50)):
+        pos = _make_long_position(entry_price=100.0, take_profit_pct=2.0, stop_loss_pct=1.5)
+        pos.slippage_bps_por_lado = bps
+        step_position_forward(pos, high=103.0, low=99.0, close=101.0, trade_date=D0 + timedelta(days=1))
+        record = consolidate_trade_record(pos)
+        assert record["actual_move_pct"] == pytest.approx(2.0)  # el movimiento no cambia; solo el P&L
+        assert record["pnl_pct"] == pytest.approx(esperado)

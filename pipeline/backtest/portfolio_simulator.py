@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from pipeline import config
+from pipeline.config import SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
 from pipeline.analyze.historical_analogues import estimate_impact_for_event, get_historical_analogues
 from pipeline.backtest import thesis_engine
 from pipeline.backtest.portfolio_strategies import (
@@ -69,6 +70,20 @@ from pipeline.backtest.sample_split import date_bounds
 logger = logging.getLogger(__name__)
 
 COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
+
+# Capitalización en D0 para el deslizamiento (H-32): acciones del último 10-K
+# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × cierre de
+# D0. Limitación conocida (H-04): close_raw viene reexpresado por splits
+# posteriores y las acciones XBRL son las de entonces; alrededor de un split
+# la cifra puede desviarse, lo que solo importa cerca del umbral de 10.000 M$.
+MARKET_CAP_D0_SQL = """
+    (SELECT f.shares_outstanding FROM fundamentals f
+      WHERE f.cik = e.cik AND f.filed_at <= e.d0_close_date AND f.shares_outstanding IS NOT NULL
+      ORDER BY f.filed_at DESC LIMIT 1)
+  * (SELECT p.close_raw FROM prices p
+      WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date
+      ORDER BY p.trade_date DESC LIMIT 1)
+"""
 
 # Circuit-breaker de drawdown de cartera (hallazgo de la auditoría — protección
 # de capital, prioridad máxima). Deliberadamente MÁS BAJO que
@@ -219,6 +234,8 @@ class OpenPosition:
     prediction: float
     had_survivorship_warning: bool
     had_adv_cap_applied: bool = False
+    # Deslizamiento por lado en pb (H-32); por defecto el conservador.
+    slippage_bps_por_lado: float = SLIPPAGE_BPS_PER_SIDE_SMALL
     remaining_fraction: float = 1.0
     tiers_hit: frozenset = field(default_factory=frozenset)
     used_trailing_stop: bool = False
@@ -369,7 +386,10 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
 
     actual_move_pct = gain_pct(position.direction, position.entry_price, weighted_exit_price)
     commission_pct = COMMISSION_BPS_ROUND_TRIP / 100
-    pnl_pct = actual_move_pct - commission_pct
+    # Deslizamiento (H-32): un lado al entrar y otro al salir, restado del P&L
+    # igual que la comisión; los niveles de TP/SL no se mueven.
+    slippage_pct = 2 * position.slippage_bps_por_lado / 100
+    pnl_pct = actual_move_pct - commission_pct - slippage_pct
     pnl_abs = position.position_size_dollars * (pnl_pct / 100)
 
     return {
@@ -411,6 +431,8 @@ def open_position(
     prediction: float,
     had_survivorship_warning: bool,
     adv_usd_60d: float | None = None,
+    slippage_bps_por_lado: float = SLIPPAGE_BPS_PER_SIDE_SMALL,
+    size_multiplier: float = 1.0,
 ) -> OpenPosition:
     """Construye una OpenPosition con el sizing y los umbrales TP/SL/trailing
     de execution_style (STRATEGIES[execution_style] — para BALANCED, ver
@@ -430,7 +452,9 @@ def open_position(
         size_pct = compute_balanced_position_size_pct(execution_style)
     else:
         size_pct = compute_position_size_pct(confidence, config)
-    size_dollars = balance_for_sizing * (size_pct / 100)
+    # size_multiplier: 0,5 mientras el freno de pérdidas tiene la cartera a
+    # medio tamaño tras una pausa (H-10); 1 el resto del tiempo.
+    size_dollars = balance_for_sizing * (size_pct / 100) * size_multiplier
     size_dollars, adv_cap_applied = cap_position_dollars_by_adv(size_dollars, adv_usd_60d)
     if balance_for_sizing > 0:
         size_pct = size_dollars / balance_for_sizing * 100  # refleja el tamaño REAL, no el pre-tope
@@ -455,6 +479,7 @@ def open_position(
         prediction=prediction,
         had_survivorship_warning=had_survivorship_warning,
         had_adv_cap_applied=adv_cap_applied,
+        slippage_bps_por_lado=slippage_bps_por_lado,
     )
 
 
@@ -507,7 +532,8 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                        ea.{trade_decision_col} AS trade_decision,
                        ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
                        ea.confidence_in_conviction AS confidence,
-                       ea.net_conviction AS prediction
+                       ea.net_conviction AS prediction,
+                       {MARKET_CAP_D0_SQL} AS market_cap_d0
                 FROM events e
                 JOIN event_analyses ea ON ea.event_id = e.event_id
                 WHERE ea.{trade_decision_col} != 'NO_TRADE'
@@ -741,6 +767,9 @@ def _build_entry_plan(conn, version: str, events: list[dict], ticker_cache: dict
                 "target_date": target_date,
                 "event_class": ev["event_class"],
                 "d0_close_date": ev["d0_close_date"],
+                "slippage_bps_por_lado": slippage_bps_por_lado(
+                    float(ev["market_cap_d0"]) if ev.get("market_cap_d0") is not None else None
+                ),
             }
         )
     return plan
@@ -1000,6 +1029,7 @@ def simulate_portfolio(
                     ticker=plan["ticker"], entry_date=today, entry_price=float(bar["open_raw"]), target_date=plan["target_date"],
                     balance_for_sizing=equity_for_sizing, confidence=plan["confidence"], ev=plan["ev"], prediction=plan["prediction"],
                     had_survivorship_warning=bool(bar["survivorship_warning"]), adv_usd_60d=adv_usd_60d,
+                    slippage_bps_por_lado=plan.get("slippage_bps_por_lado", SLIPPAGE_BPS_PER_SIDE_SMALL),
                 )
                 if pos.position_size_dollars > cash:
                     logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)

@@ -36,7 +36,9 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
+from pipeline import config as app_config
 from pipeline.backtest.portfolio_simulator import (
+    MARKET_CAP_D0_SQL,
     OpenPosition,
     compute_tp_sl_prices,
     consolidate_trade_record,
@@ -96,7 +98,8 @@ def fetch_events_for_week(conn, version: str, week_start: date, week_end: date) 
                        ea.{trade_decision_col} AS trade_decision,
                        ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
                        ea.confidence_in_conviction AS confidence,
-                       ea.net_conviction AS prediction
+                       ea.net_conviction AS prediction,
+                       {MARKET_CAP_D0_SQL} AS market_cap_d0
                 FROM events e
                 JOIN event_analyses ea ON ea.event_id = e.event_id
                 WHERE ea.{trade_decision_col} != 'NO_TRADE'
@@ -174,6 +177,11 @@ def _build_paper_plan(ev: dict, version: str) -> dict:
         "ev": ev_value,
         "confidence": float(ev["confidence"]),
         "prediction": float(ev["prediction"]),
+        # Deslizamiento por lado según la capitalización en D0 (H-32), igual
+        # que en el backtest.
+        "slippage_bps_por_lado": app_config.slippage_bps_por_lado(
+            float(ev["market_cap_d0"]) if ev.get("market_cap_d0") is not None else None
+        ),
     }
 
 
@@ -203,6 +211,7 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
         ev=plan["ev"],
         prediction=plan["prediction"],
         had_survivorship_warning=False,
+        slippage_bps_por_lado=plan.get("slippage_bps_por_lado", app_config.SLIPPAGE_BPS_PER_SIDE_SMALL),
     )
 
     trading_dates_in_week = sorted(d for d in ticker_prices if entry_date < d <= week_end)
