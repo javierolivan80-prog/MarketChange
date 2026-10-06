@@ -17,3 +17,10 @@ test("conclusiones del event study", () => {
   assert.equal(validationText("n=4 — muestra insuficiente para cualquier estadístico (mínimo 10)", "en"), "n=4 — sample too small for any statistic (minimum 10)");
   assert.equal(validationText("Significativo (p=0.0100 < 0.05) — el evento SÍ mueve el precio de forma no aleatoria", "es").startsWith("Significativo"), true);
 });
+
+test("veredicto sin muestra suficiente (H-40)", () => {
+  assert.equal(
+    validationText("solo 0 operaciones (mínimo 20): sin muestra suficiente para juzgar", "en"),
+    "only 0 trades (minimum 20): not enough sample to judge",
+  );
+});
