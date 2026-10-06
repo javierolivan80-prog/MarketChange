@@ -148,3 +148,15 @@ def test_paper_trade_no_lookahead_exit_date_after_entry_date():
     prices = {date(2024, 1, 3): _bar(h=99.0, l=97.5, c=98.0)}
     result = simulate_single_paper_trade(prices, CONS_PLAN, entry_date, entry_price, week_end)
     assert result["exit_date"] > entry_date
+
+
+def test_paper_trade_stop_en_la_sesion_de_entrada():
+    """H-31: el rango del día de entrada (D+1) también cuenta."""
+    entry_date = date(2024, 1, 2)
+    prices = {
+        entry_date: _bar(h=100.5, l=97.0, c=97.5),  # cruza el SL (98,5) el mismo día de entrada
+        date(2024, 1, 3): _bar(h=101.0, l=99.5, c=100.5),
+    }
+    result = simulate_single_paper_trade(prices, CONS_PLAN, entry_date, 100.0, date(2024, 1, 12))
+    assert result["status"] == "CLOSED_SL" and result["exit_reason"] == "STOP_LOSS"
+    assert result["exit_date"] == entry_date

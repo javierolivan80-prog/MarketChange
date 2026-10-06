@@ -106,19 +106,22 @@ MARKET_CAP_D0_SQL = """
 # más difícil de implementar mal — para lo que existe, cortar la sangría de
 # CAPITAL NUEVO expuesto a una racha mala, es suficiente.
 #
-# Recuperación: automática por diseño, no por un flag persistente. El
-# drawdown se recalcula desde cero cada día contra el pico histórico de ESTA
-# corrida (peak_equity), así que en cuanto la equity se recupera por encima
-# del umbral, las entradas se reanudan solas al día siguiente — no hace falta
-# ningún "reset manual" dentro de una sola simulación. La noción de "reset
-# manual" tiene sentido para un futuro bot de trading EN VIVO con estado
-# persistente entre noches (algo que este proyecto no tiene todavía — el
-# pipeline recalcula la cartera completa desde cero en cada corrida nocturna,
-# ver portfolio_simulator.py y ARCHITECTURE_LEAN.md §2.5); el día que exista
-# ese estado persistente, "resetear" es simplemente volver a sembrar
-# peak_equity, y este mecanismo ya está preparado para eso (peak_equity es
-# una variable local, no algo hardcodeado).
+# Recuperación (BUGS_REPORT.md H-10; decisión del usuario, auditoría
+# 2026-10-06). Antes era "automática": se reanudaba al volver por encima del
+# umbral. Pero sin posiciones abiertas la equity no se mueve, así que tras
+# el primer drawdown > 15 % el backtest dejaba de operar para siempre sin
+# avisar. Ahora:
+#   1. al saltar, PAUSA de CIRCUIT_BREAKER_PAUSE_SESSIONS sesiones sin
+#      entradas nuevas (el día del disparo cuenta como la primera);
+#   2. después se vuelve a operar a CIRCUIT_BREAKER_REDUCED_SIZE del tamaño
+#      normal hasta marcar un NUEVO MÁXIMO de equity, momento en que vuelve
+#      el tamaño completo;
+#   3. mientras se opera a medio tamaño, un nuevo disparo se mide contra el
+#      nivel de equity al reanudar (no contra el máximo, que dispararía al
+#      instante): si se cae un 15 % por debajo de ese nivel, nueva pausa.
 DRAWDOWN_CIRCUIT_BREAKER_PCT = 0.15  # 15%
+CIRCUIT_BREAKER_PAUSE_SESSIONS = 20
+CIRCUIT_BREAKER_REDUCED_SIZE = 0.5
 
 
 def is_circuit_breaker_active(peak_equity: float, current_equity: float, threshold: float = DRAWDOWN_CIRCUIT_BREAKER_PCT) -> bool:
@@ -382,7 +385,9 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
     else:
         exit_reason = last_reason
 
-    assert final_exit_date > position.entry_date, "VIOLACIÓN ANTI-LOOK-AHEAD: exit_date no es posterior a entry_date"
+    # La salida puede ser la MISMA sesión de entrada (H-31: se entra a la
+    # apertura y el stop u objetivo se toca después), nunca antes.
+    assert final_exit_date >= position.entry_date, "VIOLACIÓN ANTI-LOOK-AHEAD: exit_date anterior a entry_date"
 
     actual_move_pct = gain_pct(position.direction, position.entry_price, weighted_exit_price)
     commission_pct = COMMISSION_BPS_ROUND_TRIP / 100
@@ -802,8 +807,9 @@ def _resolve_forced_close(prices: dict[date, dict], entry_date: date, entry_pric
     # La última fila es un centinela de survivorship_warning (deslistado/halt
     # sin resolver antes de que se acabaran los datos) — busca hacia atrás la
     # fecha válida más reciente, siempre que siga siendo posterior a la
-    # entrada (cerrar EN o antes de la entrada violaría la disciplina
-    # anti-look-ahead: chk_portfolio_no_lookahead exige exit_date > entry_date).
+    # entrada. Un cierre FORZADO (sin stop ni objetivo) el mismo día de la
+    # entrada no tendría precio ejecutable fiable, así que se exige un día
+    # posterior; las salidas por stop/objetivo sí pueden ser el mismo día (H-31).
     for d in sorted((d for d in prices if d > entry_date), reverse=True):
         close = prices[d]["close_raw"]
         if close is not None:
@@ -824,6 +830,7 @@ def simulate_portfolio(
     sample: str | None = None,
     circuit_breaker_pct: float = DRAWDOWN_CIRCUIT_BREAKER_PCT,
     thesis_memory_enabled: bool = config.THESIS_MEMORY_ENABLED,
+    circuit_breaker_pause_sessions: int = CIRCUIT_BREAKER_PAUSE_SESSIONS,
 ) -> dict:
     """Punto de entrada del backtest de cartera para UNA versión de
     estrategia. Ver docstring del módulo para la disciplina anti-look-ahead
@@ -889,6 +896,11 @@ def simulate_portfolio(
     equity_rows: list[dict] = []
     peak_equity = starting_capital  # ver DRAWDOWN_CIRCUIT_BREAKER_PCT arriba
     n_days_circuit_breaker_active = 0
+    # Estado del freno (H-10): sesiones de pausa que quedan, si se opera a
+    # medio tamaño y el nivel de equity al reanudar.
+    pause_sessions_left = 0
+    reduced_size = False
+    resume_level: float | None = None
 
     def portfolio_mtm(today: date) -> float:
         total = 0.0
@@ -1004,8 +1016,28 @@ def simulate_portfolio(
         # 2) Entradas — dimensionadas contra la equity de HOY tras las salidas
         # de hoy (spec: "rebalance: noche antes de apertura").
         equity_for_sizing = cash + portfolio_mtm(today)
-        peak_equity = max(peak_equity, equity_for_sizing)
-        circuit_breaker_active = is_circuit_breaker_active(peak_equity, equity_for_sizing, threshold=circuit_breaker_pct)
+        # Freno de pérdidas (H-10, ver DRAWDOWN_CIRCUIT_BREAKER_PCT): pausa,
+        # después medio tamaño hasta un nuevo máximo.
+        if pause_sessions_left > 0:
+            pause_sessions_left -= 1
+            circuit_breaker_active = True
+            if pause_sessions_left == 0:
+                reduced_size, resume_level = True, None
+        else:
+            if reduced_size:
+                if resume_level is None:
+                    resume_level = equity_for_sizing
+                if equity_for_sizing > peak_equity:
+                    reduced_size, resume_level = False, None
+                    peak_equity = equity_for_sizing
+                reference = resume_level if reduced_size else peak_equity
+            else:
+                peak_equity = max(peak_equity, equity_for_sizing)
+                reference = peak_equity
+            circuit_breaker_active = is_circuit_breaker_active(reference, equity_for_sizing, threshold=circuit_breaker_pct)
+            if circuit_breaker_active:
+                pause_sessions_left = max(circuit_breaker_pause_sessions - 1, 0)  # hoy es la primera sesión de pausa
+                reduced_size, resume_level = pause_sessions_left == 0, None
         if circuit_breaker_active:
             n_days_circuit_breaker_active += 1
         else:
@@ -1030,6 +1062,7 @@ def simulate_portfolio(
                     balance_for_sizing=equity_for_sizing, confidence=plan["confidence"], ev=plan["ev"], prediction=plan["prediction"],
                     had_survivorship_warning=bool(bar["survivorship_warning"]), adv_usd_60d=adv_usd_60d,
                     slippage_bps_por_lado=plan.get("slippage_bps_por_lado", SLIPPAGE_BPS_PER_SIDE_SMALL),
+                    size_multiplier=CIRCUIT_BREAKER_REDUCED_SIZE if reduced_size else 1.0,
                 )
                 if pos.position_size_dollars > cash:
                     logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, cash)
@@ -1057,6 +1090,24 @@ def simulate_portfolio(
                     pos.thesis_created_at_date = today
                     pos.thesis_origin_event_class = plan["event_class"]
                     pos.thesis_expiry_date = thesis_expiry_date
+                # La sesión de entrada también cuenta (BUGS_REPORT.md H-31):
+                # se entra a la apertura, así que todo el rango del día es
+                # posterior a la entrada y un stop u objetivo tocado ese mismo
+                # día se ejecuta ese día. Antes se ignoraba hasta el día
+                # siguiente.
+                if bar["high_raw"] is not None and bar["low_raw"] is not None and bar["close_raw"] is not None:
+                    step_position_forward(
+                        pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today,
+                        open_=pos.entry_price,
+                    )
+                if pos.remaining_fraction <= 1e-9:
+                    record = consolidate_trade_record(pos)
+                    record["version"] = version
+                    record["run_batch_tag"] = run_batch_tag
+                    completed_trades.append(record)
+                    cash += pos.position_size_dollars + record["pnl_abs"]
+                    _maybe_close_thesis(conn, pos, record)
+                    continue
                 open_positions[style].append(pos)
 
         # 3) Curva de equity de hoy (tras salidas Y entradas de hoy, si el

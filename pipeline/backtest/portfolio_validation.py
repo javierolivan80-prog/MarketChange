@@ -8,7 +8,8 @@ implementa donde se implementa:
    verificable de forma genérica post-hoc sin guardar el camino completo de
    precios usado (que no se persiste, ver portfolio_metrics.py:
    compute_asymmetry_report). Lo que SÍ es una violación de este tipo, y
-   auditable: exit_date <= entry_date, o un exit_reason inconsistente con
+   auditable: exit_date < entry_date (salir el MISMO día es legítimo desde
+   H-31: se entra a la apertura), o un exit_reason inconsistente con
    los datos. Ver validate_no_lookahead().
 
 2. "Si entrada en D0, error" — auditable directamente cruzando
@@ -67,10 +68,12 @@ def validate_no_lookahead(conn, run_batch_tag: str) -> list[str]:
                 f"trade_id={row['trade_id']} (event {row['event_id']}): entry_date={row['entry_date']} "
                 f"no es posterior a d0_close_date={row['d0_close_date']} (entrada en o antes de D0)"
             )
-        if row["exit_date"] <= row["entry_date"]:
+        # Salir el mismo día de la entrada es legítimo (H-31: se entra a la
+        # apertura y el stop u objetivo se toca después); antes, no.
+        if row["exit_date"] < row["entry_date"]:
             violations.append(
                 f"trade_id={row['trade_id']} (event {row['event_id']}): exit_date={row['exit_date']} "
-                f"no es posterior a entry_date={row['entry_date']}"
+                f"es anterior a entry_date={row['entry_date']}"
             )
     return violations
 

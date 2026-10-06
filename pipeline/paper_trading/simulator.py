@@ -214,7 +214,9 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
         slippage_bps_por_lado=plan.get("slippage_bps_por_lado", app_config.SLIPPAGE_BPS_PER_SIDE_SMALL),
     )
 
-    trading_dates_in_week = sorted(d for d in ticker_prices if entry_date < d <= week_end)
+    # Desde la sesión de entrada inclusive (BUGS_REPORT.md H-31): se entra a
+    # la apertura, así que el rango de ese día ya es posterior a la entrada.
+    trading_dates_in_week = sorted(d for d in ticker_prices if entry_date <= d <= week_end)
     for d in trading_dates_in_week:
         bar = ticker_prices[d]
         if bar["high_raw"] is None or bar["low_raw"] is None or bar["close_raw"] is None:
