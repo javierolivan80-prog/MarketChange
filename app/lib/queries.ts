@@ -17,6 +17,11 @@ import { splitAiOutputs } from "./aiOutputs";
  * (BUGS_REPORT.md H-07). Igual que pipeline/backtest/sample_split.NO_ES_OOS_SQL. */
 const NO_ES_OOS = "report_json->>'sample' IS DISTINCT FROM 'oos'";
 
+/** Los eventos anteriores a la fecha de corte de los modelos se guardan solo
+ * con la regla sin IA, en tandas grandes (BUGS_REPORT.md H-06): no son
+ * descartes de la semana y no cuentan en el resumen de abstenciones. */
+const ANALIZADO_POR_LA_COLA = "ea.model_version_bull_bear <> 'SIN_IA_ANTES_DEL_CORTE'";
+
 export type StrategyVersion = "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE";
 
 export interface PortfolioTradeMetrics {
@@ -109,6 +114,9 @@ export interface CalibrationDiagnostics {
   brier_score: number | null;
   ece: number | null;
   buckets: ConfidenceBucket[];
+  /** Presente en el backtest histórico: la regla sin IA tiene la confianza
+   * fija y no hay nada que calibrar (BUGS_REPORT.md H-06). */
+  no_aplica?: string;
 }
 
 export interface TemporalStability {
@@ -331,9 +339,11 @@ export interface EventStudyClassResult {
 export type EventStudy = Record<string, EventStudyClassResult>;
 
 export interface SensitivityScenarioResult {
-  n_trades: number;
-  win_rate: number | null;
-  total_return: number | null;
+  n_trades?: number;
+  win_rate?: number | null;
+  total_return?: number | null;
+  /** El escenario no aplica (p. ej. el de confianza con la regla sin IA, H-06). */
+  no_aplica?: string;
 }
 
 export interface Sensitivity {
@@ -623,6 +633,8 @@ export interface DecisionSinIa {
   confidence_in_conviction: number;
   n_analogues: number;
   decisiones: AbstentionDecision;
+  /** La regla del backtest histórico: signo de los análogos y confianza fija (H-06). */
+  regla_historica?: { net_conviction: number; confidence_in_conviction: number; decisiones: AbstentionDecision };
 }
 
 export async function getEventClasses(): Promise<string[]> {
@@ -936,7 +948,10 @@ export async function getRecentTradeSignals(version: StrategyVersion, limit = 5)
 export async function getPipelineFreshness(): Promise<{ last_analyzed_at: string | null; analyzed_last_24h: number }> {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT max(analyzed_at) AS last, count(*) FILTER (WHERE analyzed_at > now() - interval '24 hours') AS n24 FROM event_analyses`
+    // Sin las filas anteriores al corte: las escribe el paso de backtest, no el
+    // de la IA, y harían parecer vivo un análisis caído (H-06).
+    `SELECT max(analyzed_at) AS last, count(*) FILTER (WHERE analyzed_at > now() - interval '24 hours') AS n24
+     FROM event_analyses ea WHERE ${ANALIZADO_POR_LA_COLA}`
   );
   const last = rows[0]?.last;
   return {
@@ -973,7 +988,7 @@ export async function getAbstentionSummary(version: StrategyVersion, days = 7): 
     WITH recent AS (
       SELECT ${VERSION_COLUMN[version]} AS decision, ${reasonPath} AS reason
       FROM event_analyses ea
-      WHERE ea.analyzed_at > now() - make_interval(days => $1)
+      WHERE ea.analyzed_at > now() - make_interval(days => $1) AND ${ANALIZADO_POR_LA_COLA}
     )
     SELECT
       (SELECT count(*) FROM recent) AS analyzed,
@@ -1003,7 +1018,7 @@ export async function getAbstentionSummary(version: StrategyVersion, days = 7): 
   if (!rows[0]) {
     const t = await pool.query(
       `SELECT count(*) AS analyzed, count(*) FILTER (WHERE ${VERSION_COLUMN[version]} != 'NO_TRADE') AS traded
-       FROM event_analyses ea WHERE ea.analyzed_at > now() - make_interval(days => $1)`,
+       FROM event_analyses ea WHERE ea.analyzed_at > now() - make_interval(days => $1) AND ${ANALIZADO_POR_LA_COLA}`,
       [days]
     );
     analyzed = Number(t.rows[0]?.analyzed ?? 0);

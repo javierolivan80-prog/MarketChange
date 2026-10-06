@@ -18,7 +18,7 @@ import type { SignalDetailData, StrategyVersion } from "@/lib/queries";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { TechnicalPlanCard } from "@/components/TechnicalPlanCard";
 import { formatDateTime } from "@/lib/format";
-import { VERSION_ORDER, exitReasonLabel, versionLabel } from "@/lib/labels";
+import { MODELO_ANTES_DEL_CORTE, VERSION_ORDER, exitReasonLabel, versionLabel } from "@/lib/labels";
 import { makeT, type Locale } from "@/lib/i18n";
 import { planText } from "@/lib/planText";
 import { HBars } from "@/components/viz/Bars";
@@ -58,6 +58,11 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
   const { bull_output: bull, bear_output: bear, judge_output: judge, novelty_reasoning: novelty, impact_estimation: impact, ev_calculation: ev, abstention_decision: abstention } = detail;
   const rec = abstention?.[recommended];
   const sinIa = detail.decision_sin_ia;
+  // Evento anterior a la fecha de corte: no pasó por la IA y el control (que
+  // usa la confianza de la IA) no significa nada; se enseña la regla sin IA,
+  // que es la que decide en el histórico (H-06).
+  const antesDelCorte = detail.model_version_bull_bear === MODELO_ANTES_DEL_CORTE;
+  const sinIaDecisiones = antesDelCorte ? sinIa?.regla_historica?.decisiones : sinIa?.decisiones;
   const recDecision = decisionOf(detail, recommended);
 
   return (
@@ -275,10 +280,10 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
                 ) : d?.reason_if_no_trade ? (
                   <p className="text-xs text-text-tertiary">{d.reason_if_no_trade}</p>
                 ) : null}
-                {sinIa?.decisiones?.[strategy] && (
+                {sinIaDecisiones?.[strategy] && (
                   <p className="mt-1.5 flex items-center justify-between border-t border-border-subtle pt-1.5 text-xs text-text-tertiary">
-                    <span>{t("Sin IA", "Without AI")}</span>
-                    <DirectionBadge value={sinIa.decisiones[strategy].trade_decision} />
+                    <span>{antesDelCorte ? t("Regla sin IA", "Rule without AI") : t("Sin IA", "Without AI")}</span>
+                    <DirectionBadge value={sinIaDecisiones[strategy].trade_decision} />
                   </p>
                 )}
               </div>

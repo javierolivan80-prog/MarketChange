@@ -9,6 +9,7 @@ import pytest
 from pipeline.analyze.abstention_engine import CONFIDENCE_FLOOR
 from pipeline.backtest.sensitivity import (
     CONFIDENCE_HAIRCUT_FRACTION,
+    NO_APLICA_CONFIANZA,
     apply_confidence_haircut,
     apply_extra_cost_bps,
 )
@@ -224,6 +225,9 @@ class TestSensitivityIntegration:
         assert "baseline" in cons
         assert "commission_plus_0.1pct" in cons
         assert "n_missing_vix" in cons  # R15: expuesto para que el reporte lo pueda mostrar
+        # H-06: el histórico es la regla sin IA (confianza fija): el escenario
+        # de confianza no aplica, en vez de un resultado que parece superado.
+        assert cons["confidence_minus_20pct"] == {"no_aplica": NO_APLICA_CONFIANZA}
         # Más coste de transacción nunca puede mejorar el retorno total.
         if cons["baseline"]["n_trades"] > 0:
             assert cons["commission_plus_0.1pct"]["total_return"] <= cons["baseline"]["total_return"]

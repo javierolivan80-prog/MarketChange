@@ -45,7 +45,19 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
     - Paper trading: una sola estrategia fija, Equilibrada, y solo con eventos posteriores al corte. Su comparación con el histórico avisa de que el histórico es la regla sin IA, y de la salida simplificada de las operaciones de estilo agresivo.
     - H-07: el nightly corre backtest y validación solo In-Sample (`best_version` sale del In-Sample). El OOS se lanza a mano con `oos_manual.yml`, exige un motivo y queda apuntado en `oos_runs` (fecha, tag, commit, quién y por qué). La app, el resumen semanal y la comparación del paper trading ignoran los informes OOS. `--full-range` desaparece. `test_workflows.py` falla si un workflow programado vuelve a mirar el OOS.
     - Revisión adversarial: el relleno de la regla sin IA lo lanza el propio paso de backtest, por tandas y hasta acabar, sin depender de ANTHROPIC_API_KEY. Un análisis que falla no tapona la cola, y el informe guarda la cobertura (`cobertura_regla`: cuántos análisis tienen ya la regla). El OOS usa un grupo de concurrencia propio (compartir el del nightly cancelaba una de las dos corridas) y su tag lleva el id de la corrida, así dos lanzamientos el mismo día no se pisan. El workflow asegura el esquema. El filtro de corte del paper trading reconoce nombres de modelo con fecha.
-    - **Abierto (PREGUNTA):** con la confianza fija en 100, el escenario «confianza −20 %» del análisis de sensibilidad nunca descarta nada, y la calibración de la confianza del backtest queda en un solo tramo. Los dos miden la confianza de la IA, que el histórico ya no usa.
+    - Tanda 3b (decisiones del usuario, 2026-10-06):
+      - Los eventos con D0 anterior al corte ya no se mandan a la IA: no sirven para validarla.
+      - `analizar_antes_del_corte`, que lanza el paso de backtest sin la clave de la API, les guarda una fila con la decisión de la IA en NO_TRADE («anterior a la fecha de corte») y la regla sin IA calculada. Así entran gratis en el backtest histórico.
+      - Esas filas (modelo `SIN_IA_ANTES_DEL_CORTE`) no sirven de caché a la IA, no cuentan como gasto y no entran en los resúmenes de abstenciones de la semana.
+      - El escenario «confianza −20 %» y la calibración de la confianza del histórico salen como «no aplica»: la regla sin IA tiene la confianza fija y no hay nada que medir.
+      - Revisión adversarial:
+        - Sin fecha de corte conocida no se guarda nada como «antes del corte», porque esas filas quedarían fuera de la IA para siempre.
+        - Si el corte se mueve hacia atrás, `requeue_obsolete_skips` devuelve esas filas a la cola. Son filas sin IA y gratis de recalcular.
+        - En el detalle de un evento anterior al corte, la app enseña la regla sin IA en vez del control, que no tenía sentido sin la IA.
+        - La frescura de Inicio, `compute_day3_stats` y el diagnóstico excluyen esas filas.
+        - El OOS manual ya no escribe.
+        - Los presupuestos de tiempo bajan a 300 s (anteriores al corte) y 600 s (relleno). Hay que medir el efecto en el nightly, que va por ~157 de 180 min.
+      - **Abierto (SOSPECHA):** los eventos anteriores al corte que la IA ya analizó antes de este cambio conservan su análisis de IA. No afectan al backtest (que usa la regla) ni al paper trading (filtrado). Pasarlos a «sin IA» exige borrar esas filas: queda pendiente de la aprobación del usuario.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

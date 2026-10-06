@@ -89,12 +89,17 @@ QUERIES: list[tuple[str, str]] = [
                count(*) FILTER (WHERE trade_decision_balanced <> 'NO_TRADE') AS operables_balanced,
                count(*) FILTER (WHERE trade_decision_conservative <> 'NO_TRADE') AS operables_conservative,
                count(*) FILTER (WHERE trade_decision_aggressive <> 'NO_TRADE') AS operables_aggressive
-        FROM event_analyses"""),
+        FROM event_analyses WHERE model_version_bull_bear <> 'SIN_IA_ANTES_DEL_CORTE'"""),
+    ("Anteriores al corte (solo regla sin IA, H-06)", """
+        SELECT count(*) AS filas, min(e.d0_close_date) AS desde, max(e.d0_close_date) AS hasta
+        FROM event_analyses ea JOIN events e ON e.event_id = ea.event_id
+        WHERE ea.model_version_bull_bear = 'SIN_IA_ANTES_DEL_CORTE'"""),
     ("App — motivo de NO_TRADE (versión BALANCED; cifras sustituidas por N)", """
         SELECT regexp_replace(coalesce(abstention_decision->'BALANCED'->>'reason_if_no_trade', '(opera)'),
                               '[-+]?[0-9][0-9.,]*', 'N', 'g') AS motivo,
                count(*) AS n
-        FROM event_analyses GROUP BY 1 ORDER BY 2 DESC LIMIT 15"""),
+        FROM event_analyses WHERE model_version_bull_bear <> 'SIN_IA_ANTES_DEL_CORTE'
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 15"""),
     ("App — motivo REAL de los descartados antes de la IA (cifras = N)", """
         SELECT regexp_replace(coalesce(bull_analyst_output->>'reason', '?'), '[-+]?[0-9][0-9.,]*', 'N', 'g') AS motivo,
                count(*) AS n
@@ -118,7 +123,7 @@ QUERIES: list[tuple[str, str]] = [
                round(avg(abs(net_conviction)), 2) AS media_abs_conviccion,
                round(max(abs(ev_aggressive)) * 100, 3) AS max_abs_ev_aggr_pct,
                round(avg(abs(ev_balanced)) * 100, 3) AS media_abs_ev_bal_pct
-        FROM event_analyses WHERE model_version_bull_bear <> 'SKIPPED_OBJECTIVE_NO_TRADE'"""),
+        FROM event_analyses WHERE model_version_bull_bear NOT IN ('SKIPPED_OBJECTIVE_NO_TRADE', 'SIN_IA_ANTES_DEL_CORTE')"""),
     ("App — informes (Cartera, Fiabilidad, Historial, Largo plazo)", """
         SELECT 'portfolio_reports' AS tabla, count(*) AS n, max(created_at) AS ultimo FROM portfolio_reports
         UNION ALL SELECT 'validation_reports', count(*), max(created_at) FROM validation_reports

@@ -58,6 +58,13 @@ const scenarioLabels = (t: T): Record<string, string> => ({
 });
 const SCENARIO_ORDER = Object.keys(scenarioLabels(makeT("es")));
 
+// El histórico decide con la regla sin IA, con la confianza fija (BUGS_REPORT.md H-06).
+const NO_APLICA_CONFIANZA = (t: T) =>
+  t(
+    "El histórico decide con la regla sin IA, que no usa la confianza de la IA: no hay confianza que medir.",
+    "The history is decided by the rule without AI, which does not use the AI's confidence: there is no confidence to measure.",
+  );
+
 const OVER_UNDER_CONFIDENCE_THRESHOLD_PP = 5.0;
 
 function interpretCalibration(diag: CalibrationDiagnostics, t: T): { label: string; adjustment: string } {
@@ -287,6 +294,12 @@ export default async function FuncionaPage() {
         <p className="mb-3 text-xs text-text-secondary">
           {t("Cuando dice “80% de confianza”, ¿acierta de verdad el 80% de las veces?", "When it says “80% confidence”, is it really right 80% of the time?")}
         </p>
+        {VERSION_ORDER.some((ver) => report.versions[ver]?.confidence_calibration.no_aplica) ? (
+          <p className="border border-border-subtle bg-surface px-3 py-2 text-xs text-text-secondary">
+            <span className="mr-1 font-semibold">{t("No aplica.", "Not applicable.")}</span>
+            {NO_APLICA_CONFIANZA(t)}
+          </p>
+        ) : (
         <div className="flex flex-col gap-4 md:flex-row">
           {VERSION_ORDER.filter((ver) => report.versions[ver]).map((ver) => {
             const diag = report.versions[ver].confidence_calibration;
@@ -304,6 +317,7 @@ export default async function FuncionaPage() {
             );
           })}
         </div>
+        )}
       </section>
 
       {/* Sensibilidad */}
@@ -333,10 +347,19 @@ export default async function FuncionaPage() {
                   <tr key={key} className="border-b border-border-subtle">
                     <td className="py-2 pl-3 pr-4 text-foreground">{SCENARIO_LABELS[key]}</td>
                     {VERSION_ORDER.map((ver) => {
-                      const ret = validationReport.sensitivity.scenarios[ver]?.[key]?.total_return;
+                      const scenario = validationReport.sensitivity.scenarios[ver]?.[key];
+                      const ret = scenario?.total_return;
                       return (
                         <td key={ver} className="py-2 pr-4 text-right last:pr-3">
-                          {ret !== null && ret !== undefined ? <SignedPct value={ret * 100} /> : <span className="text-text-tertiary">—</span>}
+                          {scenario?.no_aplica ? (
+                            <span className="text-text-tertiary" title={NO_APLICA_CONFIANZA(t)}>
+                              {t("No aplica", "N/A")}
+                            </span>
+                          ) : ret !== null && ret !== undefined ? (
+                            <SignedPct value={ret * 100} />
+                          ) : (
+                            <span className="text-text-tertiary">—</span>
+                          )}
                         </td>
                       );
                     })}

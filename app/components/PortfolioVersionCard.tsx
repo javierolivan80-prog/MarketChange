@@ -137,6 +137,7 @@ export function PortfolioVersionCard({
         <ScatterPredictedActual points={report.prediction_regression.scatter} rSquared={report.prediction_regression.r_squared} />
       </details>
 
+      {!report.confidence_calibration.no_aplica && (
       <details className="mb-3 text-xs">
         <summary className="mb-2 cursor-pointer text-text-secondary">
           {t("Acierto según la confianza declarada", "Win rate by stated confidence")}{" "}
@@ -145,6 +146,7 @@ export function PortfolioVersionCard({
         </summary>
         <ConfidenceBucketBars buckets={report.confidence_calibration.buckets} />
       </details>
+      )}
 
       {temporal_stability && (
         <details className="mb-3 text-xs">

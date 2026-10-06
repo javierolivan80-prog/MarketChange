@@ -27,6 +27,7 @@ import logging
 from datetime import datetime, timezone
 
 from pipeline import config
+from pipeline.analyze.adversarial_analyzer import MODELO_ANTES_DEL_CORTE
 from pipeline.backtest.sample_split import NO_ES_OOS_SQL
 from pipeline.notify import telegram
 
@@ -83,8 +84,10 @@ def collect_week(conn, version: str, days: int = 7) -> dict:
             SELECT ea.{column} AS decision, ea.abstention_decision->%s->>'reason_if_no_trade' AS reason
             FROM event_analyses ea
             WHERE ea.analyzed_at > now() - make_interval(days => %s)
+              -- Los anteriores al corte (solo regla sin IA, H-06) no son de la semana.
+              AND ea.model_version_bull_bear <> %s
             """,
-            (version, days),
+            (version, days, MODELO_ANTES_DEL_CORTE),
         )
         analyses = cur.fetchall()
         cur.execute(

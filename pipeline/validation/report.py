@@ -237,6 +237,8 @@ def _sensitivity_table(sensitivity: dict) -> str:
     baseline_cons = cons.get("baseline", {}).get("total_return")
 
     def _cell(scenario: dict) -> str:
+        if scenario.get("no_aplica"):
+            return "no aplica"
         # (n) por escenario (IMPROVEMENT_PLAN.md R14): sin esto, un return
         # que se desploma en un escenario podía ser "el escenario importa" o
         # simplemente "la muestra se redujo a la mitad" — indistinguibles.

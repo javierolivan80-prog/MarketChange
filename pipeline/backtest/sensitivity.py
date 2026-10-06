@@ -48,6 +48,10 @@ from pipeline.analyze.abstention_engine import CONFIDENCE_FLOOR
 from pipeline.backtest.portfolio_metrics import compute_equity_metrics, compute_trade_metrics
 from pipeline.backtest.portfolio_simulator import COMMISSION_BPS_ROUND_TRIP, gain_pct
 
+# Escenario de confianza y calibración de la confianza en el histórico
+# (H-06): la regla sin IA no tiene una confianza que medir.
+NO_APLICA_CONFIANZA = "no aplica: la regla sin IA no usa la confianza de la IA (confianza fija en 100)"
+
 logger = logging.getLogger(__name__)
 
 SPREAD_SENSITIVITY_BPS = 20.0  # +0.2%
@@ -221,7 +225,6 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
         commission_trades = apply_extra_cost_bps(trades, COMMISSION_SENSITIVITY_BPS)
         spread_trades = apply_extra_cost_bps(trades, SPREAD_SENSITIVITY_BPS)
         latency_trades = apply_latency_sensitivity(conn, trades)
-        confidence_trades = apply_confidence_haircut(trades)
         vix_split = split_by_vix_regime(conn, trades)
 
         scenarios[version] = {
@@ -229,7 +232,11 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
             "commission_plus_0.1pct": summarize_scenario(commission_trades, starting_capital),
             "spread_plus_0.2pct": summarize_scenario(spread_trades, starting_capital),
             "latency_d_plus_2": summarize_scenario(latency_trades, starting_capital),
-            "confidence_minus_20pct": summarize_scenario(confidence_trades, starting_capital),
+            # El histórico decide con la regla sin IA, con la confianza fija
+            # en 100 (H-06): recortarla un 20 % nunca la baja del mínimo, así
+            # que el escenario no prueba nada. «No aplica» (decisión del
+            # usuario, 2026-10-06); apply_confidence_haircut sigue disponible.
+            "confidence_minus_20pct": {"no_aplica": NO_APLICA_CONFIANZA},
             "high_vix_regime": summarize_scenario(vix_split.get("high_vix", []), starting_capital),
             "low_vix_regime": summarize_scenario(vix_split.get("low_vix", []), starting_capital),
             "n_missing_vix": vix_split.get("n_missing_vix", 0),

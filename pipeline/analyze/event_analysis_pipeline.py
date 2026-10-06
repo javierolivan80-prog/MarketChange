@@ -46,6 +46,8 @@ from pipeline.analyze.abstention_engine import (
     objective_no_trade_reason,
 )
 from pipeline.analyze.adversarial_analyzer import (
+    MODELO_ANTES_DEL_CORTE,
+    MODELOS_SIN_IA,
     SKIPPED_MODEL_VERSION,
     EventContext,
     build_bull_bear_batch,
@@ -84,10 +86,20 @@ _D0_BAR_EXISTS = (
 
 
 def _queue_filters(
-    min_market_cap: float | None, require_text: bool, exclude_ids, require_d0_bar: bool = False
+    min_market_cap: float | None, require_text: bool, exclude_ids, require_d0_bar: bool = False,
+    d0_desde: date | None = None, d0_antes_de: date | None = None,
 ) -> tuple[str, dict]:
     where = ["ea.event_id IS NULL"]
     params: dict = {}
+    # Fecha de corte de los modelos (BUGS_REPORT.md H-06): la cola de la IA
+    # solo lleva eventos con D0 desde config.AI_VALIDATION_START; los
+    # anteriores van por analizar_antes_del_corte, sin IA.
+    if d0_desde is not None:
+        where.append("e.d0_close_date >= %(d0_desde)s")
+        params["d0_desde"] = d0_desde
+    if d0_antes_de is not None:
+        where.append("e.d0_close_date < %(d0_antes_de)s")
+        params["d0_antes_de"] = d0_antes_de
     if min_market_cap is not None:
         # Solo el universo invertible, y a partir de cierto tamaño: es la
         # palanca para gastar la IA en empresas grandes primero.
@@ -114,12 +126,14 @@ def fetch_events_needing_analysis(
     require_text: bool = False,
     require_d0_bar: bool = False,
     exclude_ids=(),
+    d0_desde: date | None = None,
+    d0_antes_de: date | None = None,
 ) -> list[dict]:
     """Siguiente tanda de la cola. Sin filtros (los defaults) devuelve todo lo
     pendiente en orden de event_id; run_pipeline() la llama con los filtros
     de config: más recientes primero y, a igualdad de fecha, las empresas más
     grandes primero."""
-    where, params = _queue_filters(min_market_cap, require_text, exclude_ids, require_d0_bar)
+    where, params = _queue_filters(min_market_cap, require_text, exclude_ids, require_d0_bar, d0_desde, d0_antes_de)
     order = (
         "e.d0_close_date DESC, u.market_cap_last_usd DESC NULLS LAST, e.event_id"
         if min_market_cap is not None
@@ -154,14 +168,16 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS en_objetivo,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s
                                     AND (e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)
-                                    AND """ + _D0_BAR_EXISTS + """) AS listos,
+                                    AND """ + _D0_BAR_EXISTS + """
+                                    AND %(inicio_ia)s::date IS NOT NULL AND e.d0_close_date >= %(inicio_ia)s) AS listos,
+                   count(*) FILTER (WHERE %(inicio_ia)s::date IS NULL OR e.d0_close_date < %(inicio_ia)s) AS antes_del_corte,
                    count(DISTINCT e.cik) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS empresas
             FROM events e
             JOIN universe u ON u.cik = e.cik
             LEFT JOIN event_analyses ea ON ea.event_id = e.event_id
             WHERE ea.event_id IS NULL
             """,
-            {"min_cap": min_market_cap},
+            {"min_cap": min_market_cap, "inicio_ia": config.AI_VALIDATION_START},
         )
         row = dict(cur.fetchone())
     row["min_market_cap_usd"] = min_market_cap
@@ -204,8 +220,9 @@ def spend_today_usd(conn) -> float:
             FROM event_analyses
             WHERE analyzed_at::date = CURRENT_DATE
               AND from_cache = FALSE
-              AND model_version_bull_bear <> 'SKIPPED_OBJECTIVE_NO_TRADE'
-            """
+              AND model_version_bull_bear <> ALL(%s)
+            """,
+            (MODELOS_SIN_IA,),
         )
         n = cur.fetchone()["n"]
     return round(n * config.ANALYSIS_EST_COST_PER_EVENT_USD, 4)
@@ -391,7 +408,15 @@ def process_chunk(conn, client, event_rows: list[dict]):
     que quedarse con lo que devuelve esta función, no seguir usando la
     conexión original a ciegas.
     """
-    cache_hits = get_cached_analyses_batch(conn, event_rows)
+    # Eventos anteriores al corte de los modelos (H-06): nunca van a la IA
+    # (ni de caché), solo se calcula la regla sin IA. Sin corte conocido
+    # (AI_VALIDATION_START None) no se sabe dónde está la frontera: ni
+    # run_pipeline ni analizar_antes_del_corte llaman entonces a esta función.
+    inicio_ia = config.AI_VALIDATION_START
+    antes_del_corte = {
+        ev["event_id"] for ev in event_rows if inicio_ia is not None and ev["d0_close_date"] < inicio_ia
+    }
+    cache_hits = get_cached_analyses_batch(conn, [ev for ev in event_rows if ev["event_id"] not in antes_del_corte])
     needs_llm = [ev for ev in event_rows if ev["event_id"] not in cache_hits]
 
     # Pre-filtro de condiciones objetivas (Etapa 2 + Etapa 8, adelantadas —
@@ -410,6 +435,9 @@ def process_chunk(conn, client, event_rows: list[dict]):
     precomputed_by_id: dict[int, tuple] = {}
     llm_candidates: list[dict] = []
     skipped_ids_with_reason: dict[int, str] = {}
+    # Motivo objetivo (o None) de los eventos anteriores al corte: decide la
+    # regla sin IA; la decisión de la IA es NO_TRADE por MOTIVO_ANTES_DEL_CORTE.
+    skip_regla_antes_del_corte: dict[int, str | None] = {}
     # SPY, ETFs sectoriales, ^VIX y Fama-French: una sola lectura por chunk
     # en vez de una por evento (BUGS_REPORT.md H-27).
     series_comunes: dict = {}
@@ -437,15 +465,17 @@ def process_chunk(conn, client, event_rows: list[dict]):
             # basta para saber si el evento podría operar en el mejor caso.
             impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], ev["event_id"], window_days=20)
             skip_reason = ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence)
-        if skip_reason is not None:
+        if ev["event_id"] in antes_del_corte:
+            skip_regla_antes_del_corte[ev["event_id"]] = skip_reason
+        elif skip_reason is not None:
             skipped_ids_with_reason[ev["event_id"]] = skip_reason
         else:
             llm_candidates.append(ev)
 
     logger.info(
         "Chunk de %d eventos: %d en caché, %d requieren LLM, %d descartados por condición objetiva "
-        "(NO_TRADE garantizado igualmente, se ahorra el debate de IA)",
-        len(event_rows), len(cache_hits), len(llm_candidates), len(skipped_ids_with_reason),
+        "(NO_TRADE garantizado igualmente, se ahorra el debate de IA), %d anteriores al corte (solo regla sin IA)",
+        len(event_rows), len(cache_hits), len(llm_candidates), len(skipped_ids_with_reason), len(antes_del_corte),
     )
 
     bull_bear_results: dict[str, dict] = {}
@@ -513,6 +543,16 @@ def process_chunk(conn, client, event_rows: list[dict]):
     for ev in event_rows:
         try:
             event_id = ev["event_id"]
+            if event_id in antes_del_corte:
+                _process_single_event(
+                    conn, ev, None, {}, {}, None, None,
+                    precomputed=precomputed_by_id.get(event_id),
+                    skip_reason=MOTIVO_ANTES_DEL_CORTE,
+                    series_comunes=series_comunes,
+                    skip_reason_regla=skip_regla_antes_del_corte.get(event_id),
+                    modelo_omitido=MODELO_ANTES_DEL_CORTE,
+                )
+                continue
             _process_single_event(
                 conn, ev, cache_hits.get(event_id), bull_bear_results, judge_results, bb_batch_id, judge_batch_id,
                 precomputed=precomputed_by_id.get(event_id),
@@ -547,8 +587,17 @@ def _process_single_event(
     conn, ev: dict, cache_hit: dict | None, bull_bear_results: dict, judge_results: dict, bb_batch_id: str | None, judge_batch_id: str | None,
     precomputed: tuple | None = None, skip_reason: str | None = None,
     series_comunes: dict | None = None,
+    skip_reason_regla: str | None = ...,
+    modelo_omitido: str = SKIPPED_MODEL_VERSION,
 ) -> None:
+    """skip_reason: motivo de NO_TRADE de la decisión con IA cuando no se
+    llamó a la IA. skip_reason_regla: el de la regla sin IA y el control
+    (por defecto el mismo; distinto para los eventos anteriores al corte,
+    donde la IA no opera pero la regla sí decide). modelo_omitido: lo que se
+    guarda como modelo cuando no se llamó a la IA."""
     event_id = ev["event_id"]
+    if skip_reason_regla is ...:
+        skip_reason_regla = skip_reason
 
     # --- Etapa 1: enrichment (SIEMPRE fresco — ver docstring del módulo) ---
     # --- Etapa 2: novelty (SIEMPRE fresco) ---
@@ -602,8 +651,8 @@ def _process_single_event(
         judge_output = {"skipped_no_llm_needed": True, "reason": placeholder_reason}
         net_conviction = 0.0
         confidence_in_conviction = 0.0
-        model_bull_bear = "SKIPPED_OBJECTIVE_NO_TRADE"
-        model_judge = "SKIPPED_OBJECTIVE_NO_TRADE"
+        model_bull_bear = modelo_omitido
+        model_judge = modelo_omitido
         batch_bb, batch_judge = None, None
     else:
         bull_output = bull_bear_results.get(custom_id_de(event_id, "bull"))
@@ -636,7 +685,7 @@ def _process_single_event(
         is_fda_crl_without_8k=is_fda_crl_without_8k,
     )
     ev_result, decisions = evaluar_decision(abstention_inputs, impact, skip_reason)
-    control = decision_sin_ia(abstention_inputs, impact, skip_reason)
+    control = decision_sin_ia(abstention_inputs, impact, skip_reason_regla)
 
     _store_event_analysis(
         conn, event_id, novelty, bull_output, bear_output, judge_output,
@@ -671,6 +720,12 @@ def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None
         decisions = decide_all_strategies(entradas)
     return ev_result, decisions
 
+
+# Eventos anteriores al corte de los modelos (H-06): no se manda a la IA, se
+# guarda una fila con la decisión de la IA en NO_TRADE por este motivo y la
+# regla sin IA calculada, para el backtest histórico (el modelo guardado es
+# adversarial_analyzer.MODELO_ANTES_DEL_CORTE).
+MOTIVO_ANTES_DEL_CORTE = "anterior a la fecha de corte de los modelos: la IA no se usa (solo la regla sin IA)"
 
 METODO_SIN_IA = "analogos_signo_v3"
 # Confianza de la regla histórica (ver regla_historica): fija, sin la IA.
@@ -769,6 +824,18 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
             if f["model_version_bull_bear"] == SKIPPED_MODEL_VERSION:
                 skip_reason = ((f["abstention_decision"] or {}).get("BALANCED") or {}).get("reason_if_no_trade") or "descartado antes de la IA"
             enrichment = fetch_and_compute_enrichment(conn, f, series_comunes)
+            impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
+            fda_sin_8k = check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"])
+            if f["model_version_bull_bear"] == MODELO_ANTES_DEL_CORTE:
+                # La decisión guardada es «antes del corte»; la regla se decide
+                # con las condiciones objetivas, como en process_chunk.
+                skip_reason = objective_no_trade_reason(
+                    novelty_score=float(f["novelty_score"]),
+                    had_survivorship_warning=enrichment.had_survivorship_warning,
+                    beta_available=enrichment.beta_vs_spy is not None,
+                    adv_usd_60d=enrichment.adv_usd_60d,
+                    is_fda_crl_without_8k=fda_sin_8k,
+                ) or ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence)
             con_ia = AbstentionInputs(
                 novelty_score=float(f["novelty_score"]),
                 confidence_in_conviction=float(f["confidence_in_conviction"]),
@@ -777,9 +844,8 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
                 had_survivorship_warning=enrichment.had_survivorship_warning,
                 beta_available=enrichment.beta_vs_spy is not None,
                 adv_usd_60d=enrichment.adv_usd_60d,
-                is_fda_crl_without_8k=check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"]),
+                is_fda_crl_without_8k=fda_sin_8k,
             )
-            impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
             control = decision_sin_ia(con_ia, impact, skip_reason)
             control["recalculado"] = True
             with conn.cursor() as cur:
@@ -812,7 +878,7 @@ def cobertura_regla_sin_ia(conn) -> dict:
     return {"analisis": fila["analisis"], "con_regla": fila["con_regla"], "pendientes": fila["analisis"] - fila["con_regla"]}
 
 
-def rellenar_regla_sin_ia(conn, max_segundos: float = 900, tanda: int = 500) -> dict:
+def rellenar_regla_sin_ia(conn, max_segundos: float = 600, tanda: int = 500) -> dict:
     """Rellena el control y la regla sin IA de todos los análisis pendientes,
     por tandas, hasta acabar o agotar `max_segundos`. No llama a la IA, así
     que no depende de ANTHROPIC_API_KEY: lo lanza el paso de backtest antes
@@ -930,6 +996,12 @@ def run_pipeline(
     total = 0
     chunks_done = 0
     attempted: set[int] = set()
+    # Solo eventos posteriores al corte de los modelos (H-06): los anteriores
+    # no se mandan a la IA (ver analizar_antes_del_corte).
+    inicio_ia = config.AI_VALIDATION_START
+    if inicio_ia is None:
+        logger.warning("Algún modelo configurado no tiene fecha de corte (config.MODEL_TRAINING_CUTOFF): no se llama a la IA")
+        return 0, conn
     while max_chunks is None or chunks_done < max_chunks:
         limit = CHUNK_SIZE if max_events is None else min(CHUNK_SIZE, max_events - total)
         if limit <= 0:
@@ -937,7 +1009,7 @@ def run_pipeline(
             break
         batch = fetch_events_needing_analysis(
             conn, limit, min_market_cap=min_market_cap, require_text=require_text,
-            require_d0_bar=require_d0_bar, exclude_ids=attempted,
+            require_d0_bar=require_d0_bar, exclude_ids=attempted, d0_desde=inicio_ia,
         )
         if not batch:
             break
@@ -946,6 +1018,45 @@ def run_pipeline(
         total += len(batch)
         chunks_done += 1
     return total, conn
+
+
+def analizar_antes_del_corte(conn, max_segundos: float = 300, min_market_cap: float | None = None) -> int:
+    """Eventos con D0 anterior al corte de los modelos (H-06; decisión del
+    usuario, 2026-10-06): no se mandan a la IA, que pudo haber leído qué pasó
+    y no se puede validar con ellos. Se guarda su fila de análisis con la
+    regla sin IA, gratis, para que entren en el backtest histórico.
+
+    Misma cola que la IA (universo invertible desde ANALYSIS_MIN_MARKET_CAP_USD
+    y barra de D0), sin exigir el texto del filing, que solo usa la IA. No
+    depende de ANTHROPIC_API_KEY: lo lanza el paso de backtest, por tandas
+    hasta acabar o agotar `max_segundos`. Devuelve cuántos guardó."""
+    min_market_cap = config.ANALYSIS_MIN_MARKET_CAP_USD if min_market_cap is None else min_market_cap
+    inicio_ia = config.AI_VALIDATION_START
+    if inicio_ia is None:
+        # Sin corte conocido no se sabe qué eventos son anteriores: guardarlos
+        # como «antes del corte» los dejaría fuera de la IA para siempre.
+        logger.warning("Algún modelo configurado no tiene fecha de corte: no se guarda ningún evento como anterior al corte")
+        return 0
+    inicio = time.monotonic()
+    intentados: set[int] = set()
+    while time.monotonic() - inicio < max_segundos:
+        tanda = fetch_events_needing_analysis(
+            conn, CHUNK_SIZE, min_market_cap=min_market_cap, require_d0_bar=True,
+            exclude_ids=intentados, d0_antes_de=inicio_ia,
+        )
+        if not tanda:
+            break
+        intentados.update(ev["event_id"] for ev in tanda)
+        conn = process_chunk(conn, None, tanda)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) AS n FROM event_analyses WHERE model_version_bull_bear = %s AND event_id = ANY(%s)",
+            (MODELO_ANTES_DEL_CORTE, list(intentados)),
+        )
+        guardados = cur.fetchone()["n"]
+    if intentados:
+        logger.info("Anteriores al corte: %d de %d eventos guardados con la regla sin IA", guardados, len(intentados))
+    return guardados
 
 
 # Motivos de descarte pre-IA que ya no se producen o ya no son válidos, y
@@ -964,7 +1075,11 @@ OBSOLETE_SKIP_REASON_PREFIXES = ("sin datos de high/low", "proxy de spread")
 def requeue_obsolete_skips(conn) -> int:
     """Borra de event_analyses los descartes pre-IA con un motivo de
     OBSOLETE_SKIP_REASON_PREFIXES para que vuelvan a la cola. Idempotente:
-    tras la primera pasada no queda ninguno (la cola ya no los produce)."""
+    tras la primera pasada no queda ninguno (la cola ya no los produce).
+
+    También las filas «anteriores al corte» (H-06) cuyo D0 ya no es anterior
+    al corte vigente, si este se movió hacia atrás: sin esto no volverían
+    nunca a la IA. Son filas sin IA y gratis de recalcular."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -975,6 +1090,16 @@ def requeue_obsolete_skips(conn) -> int:
             ([f"{p}%" for p in OBSOLETE_SKIP_REASON_PREFIXES],),
         )
         n = cur.rowcount
+        if config.AI_VALIDATION_START is not None:
+            cur.execute(
+                """
+                DELETE FROM event_analyses ea USING events e
+                WHERE e.event_id = ea.event_id AND ea.model_version_bull_bear = %s
+                  AND e.d0_close_date >= %s
+                """,
+                (MODELO_ANTES_DEL_CORTE, config.AI_VALIDATION_START),
+            )
+            n += cur.rowcount
     conn.commit()
     return n
 
@@ -999,19 +1124,21 @@ def compute_day3_stats(conn) -> dict:
     resultado fuera de muestra, no una que se recalibra mirando el propio
     resultado)."""
     stats: dict = {}
+    # Sin las filas anteriores al corte, que no pasaron por la IA (H-06).
+    solo_cola = f"model_version_bull_bear <> '{MODELO_ANTES_DEL_CORTE}'"
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) AS n FROM event_analyses")
+        cur.execute(f"SELECT count(*) AS n FROM event_analyses WHERE {solo_cola}")
         total = cur.fetchone()["n"]
         stats["total_analyzed"] = total
 
-        cur.execute("SELECT avg(novelty_score) AS avg_novelty, avg(confidence_in_conviction) AS avg_confidence, avg(ev_balanced) AS avg_ev_balanced FROM event_analyses")
+        cur.execute(f"SELECT avg(novelty_score) AS avg_novelty, avg(confidence_in_conviction) AS avg_confidence, avg(ev_balanced) AS avg_ev_balanced FROM event_analyses WHERE {solo_cola}")
         row = cur.fetchone()
         stats["avg_novelty_score"] = float(row["avg_novelty"]) if row["avg_novelty"] is not None else None
         stats["avg_confidence_in_conviction"] = float(row["avg_confidence"]) if row["avg_confidence"] is not None else None
         stats["avg_ev_balanced"] = float(row["avg_ev_balanced"]) if row["avg_ev_balanced"] is not None else None
 
         for strategy, column in [("CONSERVATIVE", "trade_decision_conservative"), ("AGGRESSIVE", "trade_decision_aggressive"), ("BALANCED", "trade_decision_balanced")]:
-            cur.execute(f"SELECT count(*) AS n FROM event_analyses WHERE {column} != 'NO_TRADE'")
+            cur.execute(f"SELECT count(*) AS n FROM event_analyses WHERE {column} != 'NO_TRADE' AND {solo_cola}")
             trade_count = cur.fetchone()["n"]
             pct = (trade_count / total * 100) if total else 0.0
             stats[f"pct_trade_{strategy.lower()}"] = pct
