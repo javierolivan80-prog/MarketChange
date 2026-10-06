@@ -922,3 +922,59 @@ def test_precio_negociado_en_d0_por_debajo_de_5_dolares_no_entra(conn):
     guardar_splits(conn, "RS", [(date(2024, 9, 2), 0.1)])
     guardar_splits(conn, "OK", [])
     assert [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")] == [ok]
+
+
+def test_las_acciones_del_10k_se_llevan_a_d0_con_los_splits_intermedios(conn):
+    """Contrasplit 1:10 entre la presentación del 10-K y D0: las acciones del
+    10-K son 10 veces las de D0. Sin ajustarlas, la capitalización sale ×10."""
+    from pipeline.backtest.portfolio_simulator import _build_entry_plan, fetch_events_for_version
+    from pipeline.ingest.splits import guardar_splits
+
+    d0 = date(2024, 3, 4)
+    _seed_price_series(conn, "RS", _business_days(d0, 3), [20.0] * 3)  # negociado en D0: 20 $
+    _seed_event_with_analysis(conn, "1", "RS", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        # 1.000 M acciones antes del contrasplit; 100 M en D0 × 20 $ = 2.000 M$.
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('1', '2023-09-30', '2023-11-15', '10-K', 1000000000)")
+        cur.execute("UPDATE universe SET market_cap_last_usd = 1e12")
+        cur.execute("UPDATE prices SET captured_at = '2025-06-01'")
+    conn.commit()
+    guardar_splits(conn, "RS", [(date(2024, 1, 10), 0.1)])
+    plan = _build_entry_plan(conn, "BALANCED", fetch_events_for_version(conn, "BALANCED"), {})
+    assert plan[0]["slippage_bps_por_lado"] == 25.0  # sin ajustar: 20.000 M$ → 10 pb
+
+
+def test_splits_solo_se_revisan_otra_vez_tras_una_redescarga_completa(conn):
+    from pipeline.ingest.splits import guardar_splits, tickers_por_revisar
+
+    d0 = date(2024, 3, 4)
+    for cik, t in (("1", "AAA"), ("2", "BBB")):
+        _seed_price_series(conn, t, _business_days(d0, 3), [10.0] * 3)
+        _seed_event_with_analysis(conn, cik, t, d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    guardar_splits(conn, "AAA", [])
+    guardar_splits(conn, "BBB", [])
+    assert tickers_por_revisar(conn, 10) == []
+    with conn.cursor() as cur:
+        # AAA: solo la descarga incremental del último día. BBB: serie entera (cambio de base).
+        cur.execute("UPDATE prices SET captured_at = now() + interval '1 minute' WHERE ticker = 'AAA' AND trade_date = (SELECT max(trade_date) FROM prices WHERE ticker = 'AAA')")
+        cur.execute("UPDATE prices SET captured_at = now() + interval '1 minute' WHERE ticker = 'BBB'")
+    conn.commit()
+    assert tickers_por_revisar(conn, 10) == ["BBB"]
+
+
+def test_si_yahoo_no_devuelve_historia_el_ticker_no_queda_revisado(conn, monkeypatch):
+    import sys
+    import types
+
+    import pandas as pd
+
+    from pipeline.ingest.splits import actualizar_splits, tickers_por_revisar
+
+    falso = types.SimpleNamespace(Ticker=lambda t: types.SimpleNamespace(history=lambda **k: pd.DataFrame()))
+    monkeypatch.setitem(sys.modules, "yfinance", falso)
+    d0 = date(2024, 3, 4)
+    _seed_price_series(conn, "DEL", _business_days(d0, 3), [10.0] * 3)
+    _seed_event_with_analysis(conn, "1", "DEL", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    assert actualizar_splits(conn) == {"revisados": 0, "fallidos": 1}
+    assert tickers_por_revisar(conn, 10) == ["DEL"]

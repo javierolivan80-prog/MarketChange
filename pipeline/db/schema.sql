@@ -900,6 +900,11 @@ END $$;
 -- ============================================================================
 ALTER TABLE prices ADD COLUMN IF NOT EXISTS calidad_motivo TEXT;
 ALTER TABLE car_results ADD COLUMN IF NOT EXISTS calidad_excluido TEXT;
+-- FALSE hasta que el control lo ha mirado una vez (los CAR nuevos).
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS calidad_revisada BOOLEAN NOT NULL DEFAULT FALSE;
+-- Las velas marcadas son pocas: un índice parcial hace baratas las consultas
+-- de exclusión (CAR y backtest) sin pesar en la tabla de precios.
+CREATE INDEX IF NOT EXISTS idx_prices_calidad_marcada ON prices (ticker, trade_date) WHERE calidad_motivo IS NOT NULL;
 CREATE TABLE IF NOT EXISTS calidad_precios_revision (
     ticker        TEXT PRIMARY KEY,
     revisado_en   TIMESTAMPTZ NOT NULL

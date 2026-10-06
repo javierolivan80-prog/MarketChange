@@ -85,9 +85,18 @@ def test_solo_revisa_lo_nuevo_y_una_correccion_desmarca(conn):
 
     dias = _serie(conn, "PICO", [10, 10, 10, 30, 10.5, 10])
     assert revisar_calidad(conn)["velas_marcadas"] == 1
-    assert revisar_calidad(conn)["velas_cambiadas"] == 0  # nada nuevo
+    # Sin descargas nuevas el ticker no se vuelve a mirar: aunque se borre la
+    # marca a mano, no se recalcula (prueba de que se salta, no de que no cambia).
+    with conn.cursor() as cur:
+        cur.execute("UPDATE prices SET calidad_motivo = NULL WHERE ticker = 'PICO'")
+    conn.commit()
+    assert revisar_calidad(conn)["velas_marcadas"] == 0
+    with conn.cursor() as cur:
+        cur.execute("UPDATE prices SET captured_at = now() + interval '1 minute' WHERE ticker = 'PICO' AND trade_date = %s", (dias[5],))
+    conn.commit()
+    assert revisar_calidad(conn)["velas_marcadas"] == 1  # descarga nueva: se vuelve a mirar
     with conn.cursor() as cur:  # Yahoo corrige el dato: nueva descarga
-        cur.execute("UPDATE prices SET close_raw = 10, high_raw = 10.1, low_raw = 9.9, captured_at = now() + interval '1 minute' WHERE ticker = 'PICO' AND trade_date = %s", (dias[3],))
+        cur.execute("UPDATE prices SET close_raw = 10, high_raw = 10.1, low_raw = 9.9, captured_at = now() + interval '2 minutes' WHERE ticker = 'PICO' AND trade_date = %s", (dias[3],))
     conn.commit()
     assert revisar_calidad(conn)["velas_marcadas"] == 0
 
@@ -145,3 +154,24 @@ def test_car_y_operaciones_que_tocan_una_vela_marcada_se_excluyen(conn):
     assert len(analogos) == 1  # solo el limpio
     assert [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")] == [limpio]
     assert excluidos_por_calidad(conn, None) == 1
+
+
+def test_los_indices_no_se_marcan_por_picos_que_se_deshacen(conn):
+    from pipeline.ingest.calidad_precios import revisar_calidad
+
+    _serie(conn, "^VIX", [16, 16, 38, 19, 18])  # 5-8-2024: pico real
+    revisar_calidad(conn)
+    assert _motivos(conn, "^VIX") == {}
+
+
+def test_un_car_nuevo_se_marca_aunque_su_ticker_no_tenga_precios_nuevos(conn):
+    from pipeline.ingest.calidad_precios import revisar_calidad
+
+    dias = _serie(conn, "PICO", [10] * 10 + [30, 10.5] + [10] * 10)
+    revisar_calidad(conn)
+    malo = _evento(conn, "1", "PICO", dias[5])  # CAR calculado después
+    revisar_calidad(conn)
+    with conn.cursor() as cur:
+        cur.execute("SELECT calidad_excluido, calidad_revisada FROM car_results WHERE event_id = %s", (malo,))
+        fila = cur.fetchone()
+    assert fila["calidad_revisada"] and fila["calidad_excluido"].startswith("vela marcada")

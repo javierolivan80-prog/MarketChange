@@ -86,12 +86,21 @@ COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
 # hoy: NULL, que también es 25 pb.
 MARKET_CAP_D0_SQL = """
     (SELECT CASE WHEN a.acciones IS NULL OR d0.cierre IS NULL THEN NULL
-                 WHEN d0.negociado IS NOT NULL THEN a.acciones * d0.negociado
+                 -- Acciones del 10-K llevadas a D0 con los splits entre su
+                 -- presentación y D0 (un contrasplit en medio las divide).
+                 WHEN d0.negociado IS NOT NULL THEN a.acciones * d0.negociado * coalesce((
+                     SELECT exp(sum(ln(s.ratio))) FROM splits s
+                     WHERE s.ticker = e.ticker AND s.split_date > a.presentado AND s.split_date <= e.d0_close_date
+                 ), 1)
                  ELSE LEAST(a.acciones * d0.cierre, u.market_cap_last_usd) END
-       FROM (SELECT (SELECT f.shares_outstanding FROM fundamentals f
-                      WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
-                        AND f.shares_outstanding IS NOT NULL
-                      ORDER BY f.filed_at DESC LIMIT 1) AS acciones) a
+       FROM (SELECT f.shares_outstanding AS acciones, f.filed_at AS presentado
+               FROM (SELECT 1) uno
+               LEFT JOIN LATERAL (
+                   SELECT f.shares_outstanding, f.filed_at FROM fundamentals f
+                    WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
+                      AND f.shares_outstanding IS NOT NULL
+                    ORDER BY f.filed_at DESC LIMIT 1
+               ) f ON TRUE) a
        LEFT JOIN LATERAL (
            SELECT p.close_raw AS cierre, """ + PRECIO_NEGOCIADO_SQL + """ AS negociado
            FROM prices p
@@ -540,13 +549,15 @@ PRECIO_D0_MINIMO_SQL = """
 """
 
 # Calidad de precios (calidad_precios.py; decisión del usuario, 2026-10-06):
-# una operación cuya ventana (D0 hasta el máximo de días de tenencia, 20
-# sesiones, con margen en días naturales) toca una vela marcada se excluye.
+# una operación cuya ventana toca una vela marcada se excluye. La ventana va
+# desde los días previos a D0 (la base de la decisión) hasta el máximo de
+# días de tenencia (20 sesiones), con margen en días naturales.
+DIAS_ANTES_DE_D0 = 5
 DIAS_VENTANA_OPERACION = 45
 VELA_MARCADA_EN_LA_OPERACION_SQL = f"""
     SELECT 1 FROM prices pq
     WHERE pq.ticker = e.ticker AND pq.calidad_motivo IS NOT NULL
-      AND pq.trade_date BETWEEN e.d0_close_date AND e.d0_close_date + {DIAS_VENTANA_OPERACION}
+      AND pq.trade_date BETWEEN e.d0_close_date - {DIAS_ANTES_DE_D0} AND e.d0_close_date + {DIAS_VENTANA_OPERACION}
 """
 
 

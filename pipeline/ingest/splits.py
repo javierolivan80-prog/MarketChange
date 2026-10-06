@@ -41,22 +41,34 @@ PRECIO_NEGOCIADO_SQL = """
 """
 
 
+REVISION_MAX_DIAS = 90  # aunque no haya cambio de base, se vuelve a pedir
+
+
 def tickers_por_revisar(conn, limite: int) -> list[str]:
-    """Primero los que tienen eventos y nunca se revisaron; después los que
-    tienen precios descargados después de su última revisión."""
+    """Tickers con eventos cuyo historial hay que pedir:
+    - nunca revisados;
+    - con la serie entera vuelta a descargar después de la revisión (la
+      reparación de base de yfinance_backfill, que es lo que provoca un
+      split: incluso la fila más antigua tiene captured_at posterior). La
+      descarga incremental diaria solo toca los últimos días y no cuenta;
+    - o revisados hace más de REVISION_MAX_DIAS.
+    Los que llevan más tiempo sin revisar, primero."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT p.ticker
             FROM prices p
             LEFT JOIN splits_revision sr ON sr.ticker = p.ticker
-            WHERE p.ticker NOT LIKE '^%%' AND p.ticker IN (SELECT ticker FROM events WHERE ticker IS NOT NULL)
+            WHERE p.ticker NOT LIKE '^%%' AND p.close_raw IS NOT NULL
+              AND p.ticker IN (SELECT ticker FROM events WHERE ticker IS NOT NULL)
             GROUP BY p.ticker, sr.revisado_en
-            HAVING sr.revisado_en IS NULL OR max(p.captured_at) > sr.revisado_en
-            ORDER BY (sr.revisado_en IS NOT NULL), p.ticker
+            HAVING sr.revisado_en IS NULL
+                OR min(p.captured_at) > sr.revisado_en
+                OR sr.revisado_en < now() - make_interval(days => %s)
+            ORDER BY sr.revisado_en NULLS FIRST, p.ticker
             LIMIT %s
             """,
-            (limite,),
+            (REVISION_MAX_DIAS, limite),
         )
         return [r["ticker"] for r in cur.fetchall()]
 
@@ -82,10 +94,21 @@ def guardar_splits(conn, ticker: str, splits: list[tuple]) -> None:
 
 
 def _pedir_splits(ticker: str) -> list[tuple]:
+    """Historial de splits de Yahoo. yfinance no lanza excepción cuando falla
+    (devuelve vacío), y un vacío no se puede distinguir de «sin splits»: por
+    eso se pide la serie entera con sus acciones corporativas y, si viene
+    vacía, se lanza para NO marcar el ticker como revisado (un deslistado,
+    justo la microcap con contrasplit, conserva el tope por la capitalización
+    actual en vez de quedarse sin splits)."""
     import yfinance as yf
 
-    serie = yf.Ticker(ticker).splits
-    return [(idx.date(), float(v)) for idx, v in serie.items()] if serie is not None else []
+    historia = yf.Ticker(ticker).history(period="max", actions=True, auto_adjust=False)
+    if historia is None or historia.empty:
+        raise RuntimeError("Yahoo no devolvió historia (¿deslistado o fallo de red?)")
+    if "Stock Splits" not in historia:
+        return []
+    serie = historia["Stock Splits"]
+    return [(idx.date(), float(v)) for idx, v in serie.items() if v and float(v) > 0]
 
 
 def actualizar_splits(conn, limite: int = MAX_TICKERS_POR_CORRIDA, pedir=_pedir_splits) -> dict:

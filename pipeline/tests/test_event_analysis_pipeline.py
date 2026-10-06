@@ -1303,10 +1303,15 @@ def test_el_analisis_guarda_el_enrichment_con_el_vix(conn, sin_techo_de_ev):
     assert fila is not None and fila["vix_d0"] is not None and fila["price_d0"] is not None
 
     with conn.cursor() as cur:  # como un análisis de antes del arreglo
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        control_original = cur.fetchone()["decision_sin_ia"]
         cur.execute("DELETE FROM event_enrichment")
     conn.commit()
     assert backfill_decision_sin_ia(conn) == 1
     assert backfill_decision_sin_ia(conn) == 0
+    with conn.cursor() as cur:  # el control al día no se reescribe: solo faltaba el enrichment
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        assert cur.fetchone()["decision_sin_ia"] == control_original
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM event_enrichment WHERE vix_d0 IS NOT NULL")
         assert cur.fetchone()["n"] == 1

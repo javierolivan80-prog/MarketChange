@@ -510,6 +510,7 @@ jobs:
         # Marca las velas sospechosas y excluye los CAR cuya ventana las toca
         # (calidad_precios.py). Después del CAR, para marcar también los
         # recién calculados, y antes del backtest, que excluye sus operaciones.
+        if: ${{ !cancelled() }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.calidad_precios
