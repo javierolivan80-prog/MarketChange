@@ -25,7 +25,7 @@ from pipeline.backtest.portfolio_metrics import (
     compute_trade_metrics,
     top_n_trades,
 )
-from pipeline.backtest.portfolio_simulator import VERSIONS, simulate_portfolio
+from pipeline.backtest.portfolio_simulator import VELA_MARCADA_EN_LA_OPERACION_SQL, VERSIONS, simulate_portfolio
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
 from pipeline.analyze.event_analysis_pipeline import (
     analizar_antes_del_corte,
@@ -37,6 +37,7 @@ from pipeline.backtest.sample_split import (
     OOS_WARNING,
     SAMPLE_IN_SAMPLE,
     SAMPLE_OOS,
+    date_bounds,
     git_sha_corto,
     registrar_oos,
     tag_suffix,
@@ -217,6 +218,9 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
         # Análisis con la regla ya calculada: con pendientes, el backtest es
         # parcial (lo dice aquí, no solo en el log).
         "cobertura_regla": cobertura_regla_sin_ia(conn),
+        # Eventos que la regla operaría pero que se excluyen porque su ventana
+        # toca una vela marcada por calidad_precios.py.
+        "excluidos_por_calidad": excluidos_por_calidad(conn, sample),
         "versions": version_reports,
         "bias_report": bias_report,
         "recommendation": recommendation,
@@ -225,6 +229,26 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
         report["oos_warning"] = OOS_WARNING
     _store_report(conn, run_batch_tag, report)
     return report
+
+
+def excluidos_por_calidad(conn, sample: str | None) -> int:
+    """Eventos de la muestra que la regla sin IA operaría (en Equilibrada) y
+    que el backtest excluye por una vela marcada en su ventana."""
+    start, end = date_bounds(sample)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT count(*) AS n
+            FROM events e
+            JOIN event_analyses ea ON ea.event_id = e.event_id
+            WHERE ea.decision_sin_ia->'regla_historica'->'decisiones'->'BALANCED'->>'trade_decision' != 'NO_TRADE'
+              AND EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
+              AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
+              AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
+            """,
+            {"start": start, "end": end},
+        )
+        return cur.fetchone()["n"]
 
 
 def _store_report(conn, run_batch_tag: str, report: dict) -> None:

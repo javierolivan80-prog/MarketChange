@@ -889,3 +889,18 @@ BEGIN
         ALTER TABLE paper_trades ADD CONSTRAINT chk_paper_no_lookahead CHECK (exit_date IS NULL OR exit_date >= entry_date);
     END IF;
 END $$;
+
+-- ============================================================================
+-- Calidad de precios (Tanda 4; decisión del usuario, 2026-10-06): las velas
+-- imposibles y los picos de más del 50 % que se deshacen al día siguiente se
+-- marcan con su motivo (NULL = sin problema). Los CAR cuya ventana toca una
+-- vela marcada se excluyen (car_results.calidad_excluido), igual que las
+-- operaciones del backtest. No se borra nada: el marcado se recalcula.
+-- Ver pipeline/ingest/calidad_precios.py.
+-- ============================================================================
+ALTER TABLE prices ADD COLUMN IF NOT EXISTS calidad_motivo TEXT;
+ALTER TABLE car_results ADD COLUMN IF NOT EXISTS calidad_excluido TEXT;
+CREATE TABLE IF NOT EXISTS calidad_precios_revision (
+    ticker        TEXT PRIMARY KEY,
+    revisado_en   TIMESTAMPTZ NOT NULL
+);

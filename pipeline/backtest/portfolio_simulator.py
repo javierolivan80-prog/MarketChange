@@ -522,6 +522,16 @@ VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC")
 # criterio de SI operar que Balanced. Solo cambia el sizing.
 _TRADE_DECISION_SOURCE_VERSION = {"DYNAMIC": "BALANCED"}
 
+# Calidad de precios (calidad_precios.py; decisión del usuario, 2026-10-06):
+# una operación cuya ventana (D0 hasta el máximo de días de tenencia, 20
+# sesiones, con margen en días naturales) toca una vela marcada se excluye.
+DIAS_VENTANA_OPERACION = 45
+VELA_MARCADA_EN_LA_OPERACION_SQL = f"""
+    SELECT 1 FROM prices pq
+    WHERE pq.ticker = e.ticker AND pq.calidad_motivo IS NOT NULL
+      AND pq.trade_date BETWEEN e.d0_close_date AND e.d0_close_date + {DIAS_VENTANA_OPERACION}
+"""
+
 
 def fetch_events_for_version(conn, version: str, sample: str | None = None) -> list[dict]:
     """Eventos con trade_decision != NO_TRADE para `version`. Trae SIEMPRE
@@ -568,6 +578,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                     FROM (SELECT ea.decision_sin_ia->'regla_historica' AS r) x
                 ) rh
                 WHERE rh.decision != 'NO_TRADE'
+                  AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
                 ORDER BY e.ticker, e.d0_close_date, abs(rh.{ev_col}) DESC, e.event_id

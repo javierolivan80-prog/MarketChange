@@ -496,6 +496,14 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.backtest.populate_car_results
 
+      - name: Calidad de precios (velas imposibles y picos que se deshacen)
+        # Marca las velas sospechosas y excluye los CAR cuya ventana las toca
+        # (calidad_precios.py). Después del CAR, para marcar también los
+        # recién calculados, y antes del backtest, que excluye sus operaciones.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ingest.calidad_precios
+
       - name: Análisis de eventos (Fase 2 — Etapas 1-8, event_analysis_pipeline.py)
         # Reemplaza al script de la Fase 1 (adversarial_analyzer.py --smoke-test),
         # que ya no escribe en la base de datos por sí solo — ahora es el
