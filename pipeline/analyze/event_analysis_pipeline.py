@@ -262,12 +262,15 @@ def _escribir_en_libro(conn, sql: str, params: tuple, batch_id: str) -> None:
             pass  # conexión muerta: process_chunk ya reconecta más abajo
 
 
-def registrar_batch(conn, kind: str):
+def registrar_batch(conn, kind: str, enviados: list | None = None):
     """Callback on_submitted de run_batch_and_collect: apunta el batch en
     ai_batches nada más crearlo (H-24), antes de esperar, para que cuente
-    aunque luego algo falle."""
+    aunque luego algo falle. `enviados`: si se pasa, recoge los batch_id de
+    esta corrida (la prueba de humo informa solo de los suyos)."""
 
     def _registrar(batch_id: str, n_requests: int) -> None:
+        if enviados is not None:
+            enviados.append(batch_id)
         _escribir_en_libro(
             conn,
             "INSERT INTO ai_batches (batch_id, kind, n_requests) VALUES (%s, %s, %s) ON CONFLICT (batch_id) DO NOTHING",
@@ -290,7 +293,9 @@ def cerrar_batch(conn, kind: str):
     cuenta como gratis algo que no se sabe cuánto costó."""
 
     def _cerrar(batch_id: str, uso: dict) -> None:
-        coste = config.batch_cost_usd(uso)
+        # Sin ninguna respuesta con usage no se sabe lo que costó: vacío (se
+        # cuenta con la estimación), nunca 0 $.
+        coste = config.batch_cost_usd(uso) if uso.get("n_responses") else None
         if coste is None:
             logger.warning("Batch %s: sin precio para el modelo %r; se cuenta con la estimación", batch_id, uso.get("model"))
         else:
@@ -402,7 +407,7 @@ def repartir_resultados_del_filing(grupos: list[list[dict]], bull_bear_results: 
                 judge_results[custom_id_de(ev["event_id"], "judge")] = judge_results[custom_id_de(rep_id, "judge")]
 
 
-def process_chunk(conn, client, event_rows: list[dict]):
+def process_chunk(conn, client, event_rows: list[dict], batches_enviados: list | None = None):
     """event_rows: filas de fetch_events_needing_analysis().
 
     Devuelve la conexión a usar de aquí en adelante — la misma que se pasó,
@@ -510,11 +515,11 @@ def process_chunk(conn, client, event_rows: list[dict]):
                 len(llm_candidates), len(contexts), len(llm_candidates),
             )
         bull_bear_results, bb_batch_id = run_batch_and_collect(
-            client, build_bull_bear_batch(contexts), on_submitted=registrar_batch(conn, "bull_bear"),
+            client, build_bull_bear_batch(contexts), on_submitted=registrar_batch(conn, "bull_bear", batches_enviados),
             on_finished=cerrar_batch(conn, "bull_bear"),
         )
         judge_results, judge_batch_id = run_batch_and_collect(
-            client, build_judge_batch(contexts, bull_bear_results), on_submitted=registrar_batch(conn, "judge"),
+            client, build_judge_batch(contexts, bull_bear_results), on_submitted=registrar_batch(conn, "judge", batches_enviados),
             on_finished=cerrar_batch(conn, "judge"),
         )
         repartir_resultados_del_filing(grupos, bull_bear_results, judge_results)
@@ -1167,6 +1172,32 @@ def compute_day3_stats(conn) -> dict:
     return stats
 
 
+# Cerrojo de Postgres para que la pasada de la IA y la prueba de humo no
+# corran a la vez (Tanda 6): sin él, las dos podían coger los mismos eventos
+# de la cola y pagarlos dos veces. Se libera solo al cerrar la conexión.
+CERROJO_IA = 7_241_006
+
+
+def tomar_cerrojo_ia(conn) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (CERROJO_IA,))
+        ok = bool(cur.fetchone()["ok"])
+    conn.commit()
+    return ok
+
+
+def es_prueba_de_humo(argv: list[str]) -> bool:
+    """`--smoke N` o `--smoke=N`. Cualquier otro argumento hace fallar el
+    CLI: la pasada normal no acepta argumentos, y uno mal escrito no debe
+    acabar lanzando la pasada completa (con su gasto)."""
+    argumentos = argv[1:]
+    if any(a == "--smoke" or a.startswith("--smoke=") for a in argumentos):
+        return True
+    if argumentos:
+        raise SystemExit(f"Argumentos desconocidos: {' '.join(argumentos)} (¿querías --smoke N?)")
+    return False
+
+
 if __name__ == "__main__":
     import json
     import sys
@@ -1174,13 +1205,11 @@ if __name__ == "__main__":
     import anthropic
 
     # Prueba de humo con N eventos (Tanda 6): ver pipeline/analyze/smoke.py.
-    if "--smoke" in sys.argv:
+    if es_prueba_de_humo(sys.argv):
         import argparse
 
-        from pipeline.analyze import smoke
-
         _parser = argparse.ArgumentParser()
-        _parser.add_argument("--smoke", type=int, required=True, help=f"eventos a analizar (máximo {smoke.SMOKE_MAX})")
+        _parser.add_argument("--smoke", type=int, required=True, help="eventos a analizar (máximo 20)")
         sys.argv = [sys.argv[0], "--n", str(_parser.parse_args().smoke)]
         import runpy
 
@@ -1252,6 +1281,12 @@ if __name__ == "__main__":
     # argumentos lee la variable de entorno tal cual, no la ya limpiada.
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
+    if not tomar_cerrojo_ia(conn):
+        print(
+            "::warning title=Análisis de la IA ocupado::Hay una prueba de humo u otra pasada analizando "
+            "ahora mismo; esta pasada no analiza para no pagar dos veces los mismos eventos."
+        )
+        raise SystemExit(0)
     try:
         processed, conn = run_pipeline(
             conn,

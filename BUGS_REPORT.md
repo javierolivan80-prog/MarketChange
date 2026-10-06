@@ -75,6 +75,12 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
     - Caché XBRL: las cuentas de una empresa solo se vuelven a pedir si nunca se pidieron, si hace más de 90 días, o si ya le toca un 10-K nuevo (cierre + 425 días) y no ha llegado (como mucho, una vez por semana).
   - Tanda 5 «Operación segura» (2026-10-06): backup semanal cifrado (`backup.yml`: pg_dump + gpg AES-256 con `BACKUP_PASSPHRASE`, artefacto 90 días; sin contraseña no sube nada, porque el repositorio es público), aviso de Telegram al 80 % del tope diario de gasto (uno al día) y comprobación de los secretos en cada pasada, sin enseñar sus valores. Restauración probada en local: cifrar, descifrar y `pg_restore` devuelven las 28 tablas, y una contraseña errónea falla.
   - Tanda 6 (2026-10-06): prueba de humo de la IA (`pipeline/analyze/smoke.py`, `--smoke N` en `event_analysis_pipeline`, workflow manual `smoke.yml`, máximo 20 eventos). Analiza N eventos reales de la cola respetando el tope diario y da el informe de calidad (fallos, cortadas, JSON ilegible), coste real por batch y por evento, y decisiones con IA frente a sin IA. El libro `ai_batches` guarda ahora los fallos de cada batch. **No se ha lanzado:** la lanza el usuario.
+    - Revisión adversarial:
+      - El informe solo cuenta los batches de la propia prueba (antes podía sumar los de una pasada simultánea).
+      - Un cerrojo de Postgres impide que la prueba y la pasada de la IA analicen a la vez, para no pagar dos veces.
+      - `--smoke=5` funciona, y un argumento desconocido para el CLI en vez de lanzar la pasada completa.
+      - Un fallo a mitad guarda el informe parcial.
+      - Un batch sin `usage` queda con coste «sin dato», nunca 0 $.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

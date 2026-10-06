@@ -448,6 +448,7 @@ def _leer_resultados(client, batch_id: str, results: dict[str, dict], uso: dict)
         text = next((b.text for b in result.result.message.content if b.type == "text"), None)
         if text is None:
             logger.warning("Request %s sin bloque de texto en la respuesta", result.custom_id)
+            uso["n_json_invalido"] = uso.get("n_json_invalido", 0) + 1  # ilegible igual que un JSON roto
             continue
         try:
             results[result.custom_id] = json.loads(text)

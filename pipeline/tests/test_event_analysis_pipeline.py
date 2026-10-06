@@ -1353,3 +1353,71 @@ def test_smoke_tiene_tope_y_no_corre_sin_presupuesto(conn, monkeypatch):
     assert informe["pedidos"] == smoke.SMOKE_MAX
     assert informe["motivo_sin_ejecutar"].startswith("el tope diario")
     assert "no se ejecutó" in smoke.informe_markdown(informe)
+
+
+def test_smoke_recorta_al_presupuesto_y_solo_cuenta_sus_batches(conn, sin_techo_de_ev, monkeypatch):
+    from pipeline.analyze import smoke
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    for i in range(4):
+        _seed_event(conn, "1", "TESTCO", dates[270 + i * 3].date(), filing_text="texto")
+    _con_capitalizacion(conn)
+    with conn.cursor() as cur:  # un batch de OTRA corrida enviado a la vez
+        cur.execute("INSERT INTO ai_batches (batch_id, kind, n_requests, cost_usd) VALUES ('ajeno', 'judge', 99, 5.0)")
+    conn.commit()
+    monkeypatch.setattr(smoke, "remaining_daily_budget_events", lambda c: 1)
+    informe = smoke.ejecutar_smoke(conn, SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient())), 3)
+    assert informe["en_cola"] == 1 and informe["analizados_con_ia"] == 1
+    assert "ajeno" not in [b["batch_id"] for b in informe["batches"]] and len(informe["batches"]) == 2
+    # El cliente simulado no devuelve usage: no se sabe lo que costó -> sin dato, nunca 0 $.
+    assert informe["coste_real_usd"] is None
+
+
+def test_smoke_que_falla_a_mitad_guarda_el_informe_parcial(conn, sin_techo_de_ev):
+    from pipeline.analyze.smoke import ejecutar_smoke, informe_markdown
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _seed_event(conn, "1", "TESTCO", dates[280].date(), filing_text="texto")
+    _con_capitalizacion(conn)
+
+    class _Roto(_ScriptedBatchesClient):
+        def create(self, requests):
+            raise TimeoutError("la Batch API no responde")
+
+    informe = ejecutar_smoke(conn, SimpleNamespace(messages=SimpleNamespace(batches=_Roto())), 1)
+    assert informe["error"].startswith("TimeoutError") and informe["sin_guardar"] == 1
+    assert "Falló a mitad" in informe_markdown(informe)
+    with conn.cursor() as cur:
+        cur.execute("SELECT informe->>'error' AS e FROM smoke_runs WHERE smoke_run_id = %s", (informe["smoke_run_id"],))
+        assert cur.fetchone()["e"].startswith("TimeoutError")
+
+
+def test_smoke_no_corre_si_la_pasada_de_la_ia_esta_analizando(conn):
+    from pipeline.analyze.event_analysis_pipeline import CERROJO_IA
+    from pipeline.analyze.smoke import ejecutar_smoke
+    from pipeline.db.connection import get_connection
+
+    otra = get_connection()
+    try:
+        with otra.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s)", (CERROJO_IA,))
+        informe = ejecutar_smoke(conn, None, 5)
+        assert "analizando" in informe["motivo_sin_ejecutar"]
+    finally:
+        otra.close()
+
+
+@pytest.mark.parametrize("argv,esperado", [
+    (["x"], False), (["x", "--smoke", "5"], True), (["x", "--smoke=5"], True),
+])
+def test_el_cli_reconoce_el_modo_smoke(argv, esperado):
+    from pipeline.analyze.event_analysis_pipeline import es_prueba_de_humo
+
+    assert es_prueba_de_humo(argv) is esperado
+
+
+def test_un_argumento_mal_escrito_no_lanza_la_pasada_completa():
+    from pipeline.analyze.event_analysis_pipeline import es_prueba_de_humo
+
+    with pytest.raises(SystemExit):
+        es_prueba_de_humo(["x", "--smok", "5"])

@@ -26,6 +26,7 @@ from pipeline.analyze.event_analysis_pipeline import (
     fetch_events_needing_analysis,
     process_chunk,
     remaining_daily_budget_events,
+    tomar_cerrojo_ia,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ SMOKE_MAX = 20  # una prueba de humo, no una pasada
 def ejecutar_smoke(conn, client, n: int) -> dict:
     n = max(1, min(int(n), SMOKE_MAX))
     informe: dict = {"pedidos": n, "estimacion_usd_por_evento": config.ANALYSIS_EST_COST_PER_EVENT_USD}
+    if not tomar_cerrojo_ia(conn):
+        informe["motivo_sin_ejecutar"] = "la pasada de la IA (u otra prueba) está analizando ahora mismo"
+        return _guardar(conn, informe)
     if config.AI_VALIDATION_START is None:
         informe["motivo_sin_ejecutar"] = "algún modelo configurado no tiene fecha de corte (config.MODEL_TRAINING_CUTOFF)"
         return _guardar(conn, informe)
@@ -55,11 +59,20 @@ def ejecutar_smoke(conn, client, n: int) -> dict:
         informe["motivo_sin_ejecutar"] = "no hay eventos listos en la cola de la IA"
         return _guardar(conn, informe)
 
-    with conn.cursor() as cur:
-        cur.execute("SELECT now() AS inicio")
-        inicio = cur.fetchone()["inicio"]
     t0 = time.monotonic()
-    conn = process_chunk(conn, client, eventos)
+    batch_ids: list[str] = []  # solo los batches de esta prueba (no los de otra corrida)
+    error: Exception | None = None
+    try:
+        conn = process_chunk(conn, client, eventos, batches_enviados=batch_ids)
+    except Exception as exc:  # noqa: BLE001 — el informe parcial se guarda y el error se relanza
+        error = exc
+        informe["error"] = f"{type(exc).__name__}: {exc}"
+        if conn.closed:
+            from pipeline.db.connection import get_connection
+
+            conn = get_connection()
+        else:
+            conn.rollback()
     informe["duracion_s"] = round(time.monotonic() - t0, 1)
 
     ids = [ev["event_id"] for ev in eventos]
@@ -78,9 +91,9 @@ def ejecutar_smoke(conn, client, n: int) -> dict:
             """
             SELECT batch_id, kind, model, n_requests, input_tokens, output_tokens, cost_usd,
                    n_errores, n_cortadas, n_json_invalido
-            FROM ai_batches WHERE submitted_at >= %s ORDER BY submitted_at
+            FROM ai_batches WHERE batch_id = ANY(%s) ORDER BY submitted_at
             """,
-            (inicio,),
+            (batch_ids,),
         )
         batches = [
             {k: (float(v) if k == "cost_usd" and v is not None else v) for k, v in r.items()}
@@ -105,12 +118,17 @@ def ejecutar_smoke(conn, client, n: int) -> dict:
         },
     })
     costes = [b["cost_usd"] for b in batches]
-    if batches and all(c is not None for c in costes):
-        informe["coste_real_usd"] = round(sum(costes), 4)
+    if len(batches) < len(batch_ids):
+        informe["coste_real_usd"] = None  # un batch no se pudo apuntar en el libro
+    elif all(c is not None for c in costes):
+        informe["coste_real_usd"] = round(sum(costes), 4)  # 0 si todo fue de caché o descartado
         if con_ia:
+            # Incluye lo pagado por los «sin guardar»: es lo que cuesta de verdad cada evento útil.
             informe["coste_real_por_evento_usd"] = round(sum(costes) / len(con_ia), 5)
     else:
-        informe["coste_real_usd"] = None  # algún batch sin precio o sin cerrar: no se inventa
+        informe["coste_real_usd"] = None  # algún batch sin precio, sin usage o sin cerrar: no se inventa
+    if error is not None:
+        logger.error("La prueba de humo falló a mitad: %s (informe parcial guardado)", informe["error"])
     return _guardar(conn, informe)
 
 
@@ -139,6 +157,7 @@ def informe_markdown(informe: dict) -> str:
         f"(estimado antes: {informe['coste_estimado_usd']} $)"
         + (f" · por evento con IA: {informe['coste_real_por_evento_usd']} $" if "coste_real_por_evento_usd" in informe else ""),
         f"- Duración: {informe['duracion_s']} s",
+        *([f"- **Falló a mitad:** {informe['error']} (informe parcial)"] if informe.get("error") else []),
         f"- Decisiones Equilibrada con IA: {informe['decisiones_balanced']['con_ia']} · sin IA: "
         f"{informe['decisiones_balanced']['sin_ia']} · coinciden: {informe['decisiones_balanced']['coinciden']}",
         "",
@@ -174,3 +193,5 @@ if __name__ == "__main__":
     if resumen:
         with open(resumen, "a", encoding="utf-8") as f:
             f.write(texto)
+    if resultado.get("error"):
+        raise SystemExit(1)
