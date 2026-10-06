@@ -218,6 +218,48 @@ def store_fundamentals(conn, rows: list[dict]) -> int:
     return len(rows)
 
 
+# Caché de la descarga (Tanda 4): la pasada tardaba ~51 min pidiendo cada
+# noche las cuentas de TODAS las empresas, que solo cambian con un 10-K al año.
+CACHE_MAX_DIAS = 90            # se vuelve a pedir pase lo que pase
+DIAS_HASTA_10K = 365 + 60      # tras el cierre del último ejercicio: ya toca el 10-K siguiente
+REINTENTO_10K_DIAS = 7         # si toca y no ha llegado, como mucho una vez por semana
+
+
+def ciks_por_descargar(conn, limit: int | None = None, hoy: date | None = None) -> list[str]:
+    """CIK del universo cuyas cuentas hay que volver a pedir (ver arriba)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.cik
+            FROM (SELECT DISTINCT cik FROM universe WHERE ticker IS NOT NULL) u
+            LEFT JOIN xbrl_descargas x ON x.cik = u.cik
+            LEFT JOIN (SELECT cik, max(fiscal_period_end) AS ultimo FROM fundamentals
+                       WHERE form = '10-K' GROUP BY cik) f ON f.cik = u.cik
+            WHERE x.descargado_en IS NULL
+               OR x.descargado_en < %(hoy)s::date - %(cache)s
+               OR (f.ultimo IS NOT NULL AND %(hoy)s::date >= f.ultimo + %(hasta_10k)s
+                   AND x.descargado_en < %(hoy)s::date - %(reintento)s)
+            ORDER BY (x.descargado_en IS NOT NULL), x.descargado_en, u.cik
+            """
+            + (" LIMIT %(limit)s" if limit else ""),
+            {
+                "hoy": hoy or date.today(), "cache": CACHE_MAX_DIAS, "hasta_10k": DIAS_HASTA_10K,
+                "reintento": REINTENTO_10K_DIAS, "limit": limit,
+            },
+        )
+        return [r["cik"] for r in cur.fetchall()]
+
+
+def _apuntar_descarga(conn, cik: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO xbrl_descargas (cik, descargado_en) VALUES (%s, now()) "
+            "ON CONFLICT (cik) DO UPDATE SET descargado_en = EXCLUDED.descargado_en",
+            (cik,),
+        )
+    conn.commit()
+
+
 def ingest_universe_fundamentals(conn, limit: int | None = None) -> dict:
     """Recorre los CIK del universo invertible y guarda sus cuentas anuales.
 
@@ -238,13 +280,7 @@ def ingest_universe_fundamentals(conn, limit: int | None = None) -> dict:
     rollback, capturar la excepción no aísla nada: solo esconde el error real
     detrás de cien copias de su consecuencia.
     """
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT DISTINCT cik FROM universe WHERE ticker IS NOT NULL ORDER BY cik"
-            + (" LIMIT %s" if limit else ""),
-            (limit,) if limit else (),
-        )
-        ciks = [r["cik"] for r in cur.fetchall()]
+    ciks = ciks_por_descargar(conn, limit)
 
     stored, failed = 0, 0
     primer_error: str | None = None
@@ -253,6 +289,8 @@ def ingest_universe_fundamentals(conn, limit: int | None = None) -> dict:
             facts = fetch_company_facts(cik)
             rows = parse_company_facts(facts, cik=cik)
             stored += store_fundamentals(conn, rows)
+            # Solo si salió bien: un fallo se reintenta la noche siguiente.
+            _apuntar_descarga(conn, cik)
         except Exception as exc:  # noqa: BLE001 — ver docstring
             failed += 1
             if primer_error is None:

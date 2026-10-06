@@ -923,3 +923,15 @@ CREATE TABLE IF NOT EXISTS splits_revision (
     ticker       TEXT PRIMARY KEY,
     revisado_en  TIMESTAMPTZ NOT NULL
 );
+
+-- ============================================================================
+-- xbrl_descargas: cuándo se descargaron por última vez las cuentas XBRL de
+-- cada empresa (caché, Tanda 4). La pasada nocturna solo vuelve a pedir una
+-- empresa si nunca se pidió, si hace más de 90 días, o si ya le toca un 10-K
+-- nuevo y no ha llegado (entonces, como mucho una vez por semana). Ver
+-- xbrl_fundamentals.ciks_por_descargar.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS xbrl_descargas (
+    cik            TEXT PRIMARY KEY,
+    descargado_en  TIMESTAMPTZ NOT NULL
+);

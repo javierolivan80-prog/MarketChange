@@ -493,7 +493,8 @@ jobs:
         # Por tandas (SPLITS_MAX_TICKERS, 400 por defecto): primero los
         # tickers con eventos que nunca se revisaron, después los que se han
         # vuelto a descargar. Un fallo de Yahoo deja el ticker para mañana.
-        if: ${{ !cancelled() }}
+        # Solo en la pasada de noche, como el mantenimiento del universo.
+        if: (github.event.schedule || github.event.inputs.relaunch_of) != '30 14 * * 1-5' && (github.event.schedule || github.event.inputs.relaunch_of) != '30 21 * * 1-5'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.splits
