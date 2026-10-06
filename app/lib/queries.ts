@@ -12,6 +12,11 @@
 import { getPool } from "./db";
 import { splitAiOutputs } from "./aiOutputs";
 
+/** Filtro del «último informe»: un OOS lanzado a mano (workflow
+ * oos_manual.yml) no es el informe de cada noche y la app no lo muestra
+ * (BUGS_REPORT.md H-07). Igual que pipeline/backtest/sample_split.NO_ES_OOS_SQL. */
+const NO_ES_OOS = "report_json->>'sample' IS DISTINCT FROM 'oos'";
+
 export type StrategyVersion = "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE";
 
 export interface PortfolioTradeMetrics {
@@ -170,7 +175,7 @@ export interface PortfolioReport {
 export async function getLatestPortfolioRunBatchTag(): Promise<string | null> {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT run_batch_tag FROM portfolio_reports ORDER BY created_at DESC LIMIT 1`
+    `SELECT run_batch_tag FROM portfolio_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1`
   );
   return rows[0]?.run_batch_tag ?? null;
 }
@@ -360,7 +365,7 @@ export interface ValidationReport {
 
 export async function getLatestValidationRunBatchTag(): Promise<string | null> {
   const pool = getPool();
-  const { rows } = await pool.query(`SELECT run_batch_tag FROM validation_reports ORDER BY created_at DESC LIMIT 1`);
+  const { rows } = await pool.query(`SELECT run_batch_tag FROM validation_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1`);
   return rows[0]?.run_batch_tag ?? null;
 }
 
@@ -660,7 +665,7 @@ function signalSelect(version: StrategyVersion, extraColumns: string): string {
       JOIN event_analyses ea ON ea.event_id = e.event_id
       LEFT JOIN technical_analyses ta ON ta.event_id = e.event_id
       LEFT JOIN portfolio_trades pt ON pt.event_id = e.event_id AND pt.version = $1
-        AND pt.run_batch_tag = (SELECT run_batch_tag FROM portfolio_reports ORDER BY created_at DESC LIMIT 1)`;
+        AND pt.run_batch_tag = (SELECT run_batch_tag FROM portfolio_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1)`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -803,7 +808,7 @@ function asVersion(v: unknown): StrategyVersion {
 export async function getRecommendedVersion(): Promise<StrategyVersion> {
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT report_json->>'best_version' AS v FROM validation_reports ORDER BY created_at DESC LIMIT 1`
+    `SELECT report_json->>'best_version' AS v FROM validation_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1`
   );
   return asVersion(rows[0]?.v);
 }
@@ -832,12 +837,12 @@ export async function getHomeSummary(version: StrategyVersion): Promise<HomeSumm
       `SELECT report_json->'sample' AS sample, report_json->>'oos_warning' AS oos_warning,
               report_json->'versions'->$1->'trade_metrics' AS trade_metrics,
               report_json->'versions'->$1->'equity_metrics' AS equity_metrics
-       FROM portfolio_reports ORDER BY created_at DESC LIMIT 1`,
+       FROM portfolio_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1`,
       [version]
     ),
     pool.query(
       `SELECT report_json->>'best_version' AS best_version, report_json->'best_decision' AS best_decision
-       FROM validation_reports ORDER BY created_at DESC LIMIT 1`
+       FROM validation_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1`
     ),
     pool.query(
       `SELECT (SELECT sum((v->>'n_open_positions')::int) FROM jsonb_each(report_json->'versions') AS x(k, v)) AS n_open
@@ -848,7 +853,7 @@ export async function getHomeSummary(version: StrategyVersion): Promise<HomeSumm
     pool.query(
       `WITH last AS (
          SELECT report_json->'versions'->$1->'equity_curve' AS curve
-         FROM portfolio_reports ORDER BY created_at DESC LIMIT 1
+         FROM portfolio_reports WHERE ${NO_ES_OOS} ORDER BY created_at DESC LIMIT 1
        ), pts AS (
          SELECT (e->>'balance')::float8 AS balance, i, count(*) OVER () AS n
          FROM last, jsonb_array_elements(CASE WHEN jsonb_typeof(curve) = 'array' THEN curve ELSE '[]'::jsonb END) WITH ORDINALITY AS t(e, i)

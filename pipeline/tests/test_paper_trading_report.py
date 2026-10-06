@@ -85,7 +85,7 @@ def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_convic
 def test_run_paper_trading_report_end_to_end(conn):
     from pipeline.paper_trading.report import run_paper_trading_report
 
-    week_start = date(2024, 3, 4)
+    week_start = date(2026, 3, 2)
     cal = _business_days(week_start, 15)  # cubre la semana simulada + margen para actual_move_5d
 
     # Un evento por cada día hábil de la semana objetivo (lun-vie = 5 días,
@@ -99,13 +99,14 @@ def test_run_paper_trading_report_end_to_end(conn):
         _seed_event(conn, f"pt{i}", ticker, d0, decision=decision, net_conviction=0.6, confidence=75.0, ev=0.01)
     conn.commit()
 
-    report = run_paper_trading_report(conn, run_batch_tag="paper-test-1", as_of=date(2024, 3, 11))
+    report = run_paper_trading_report(conn, run_batch_tag="paper-test-1", as_of=date(2026, 3, 9))
 
-    assert report["week_start"] == "2024-03-04"
-    assert report["week_end"] == "2024-03-08"
-    assert set(report["versions"].keys()) == {"CONSERVATIVE", "AGGRESSIVE", "BALANCED"}
+    assert report["week_start"] == "2026-03-02"
+    assert report["week_end"] == "2026-03-06"
+    # Una sola estrategia fija: la Equilibrada.
+    assert set(report["versions"].keys()) == {"BALANCED"}
 
-    cons = report["versions"]["CONSERVATIVE"]
+    cons = report["versions"]["BALANCED"]
     assert cons["n_open_positions"] + cons["n_closed_trades"] > 0
     assert isinstance(cons["predictions"], list)
     assert len(cons["predictions"]) == 5  # TODOS los eventos de la semana, con y sin trade_decision
@@ -126,7 +127,7 @@ def test_run_paper_trading_report_compares_against_existing_historical_backtest(
     versión, la comparación debe usarlo."""
     from pipeline.paper_trading.report import run_paper_trading_report
 
-    week_start = date(2024, 3, 4)
+    week_start = date(2026, 3, 2)
     cal = _business_days(week_start, 15)
     for i in range(3):
         d0 = cal[i]
@@ -154,18 +155,19 @@ def test_run_paper_trading_report_compares_against_existing_historical_backtest(
         )
     conn.commit()
 
-    report = run_paper_trading_report(conn, run_batch_tag="paper-test-2", as_of=date(2024, 3, 11))
-    comparison = report["versions"]["CONSERVATIVE"]["comparison_with_historical_backtest"]
+    report = run_paper_trading_report(conn, run_batch_tag="paper-test-2", as_of=date(2026, 3, 9))
+    comparison = report["versions"]["BALANCED"]["comparison_with_historical_backtest"]
     assert comparison["available"] is True
-    assert comparison["historical_win_rate"] == pytest.approx(0.55)
+    assert comparison["historical_win_rate"] == pytest.approx(0.50)
 
 
 def test_compare_with_historical_backtest_flags_aggressive_exit_mechanics(conn):
     """IMPROVEMENT_PLAN.md M14: AGGRESSIVE usa una mecánica de salida distinta
     en paper trading (un único TP al primer tramo del trailing) que en el
     backtest histórico (trailing-stop escalonado real) — la comparación debe
-    avisarlo con un 'caveat', y solo para AGGRESSIVE, no para las otras 2
-    versiones (que no tienen esa divergencia)."""
+    avisarlo con un 'caveat'. BALANCED también, porque sus operaciones de
+    estilo agresivo cierran igual; CONSERVATIVE no. Las tres avisan de que el
+    histórico decide con la regla sin IA (H-06)."""
     import json
 
     from pipeline.paper_trading.report import compare_with_historical_backtest
@@ -190,28 +192,45 @@ def test_compare_with_historical_backtest_flags_aggressive_exit_mechanics(conn):
             conn, version, week_trade_metrics={"win_rate": win_rate}
         )
         assert comparison["comparable"] is True
-        if version == "AGGRESSIVE":
-            assert comparison.get("caveat")
-            assert "mecánica de salida" in comparison["caveat"]
-        else:
-            assert comparison.get("caveat") is None
+        assert "regla sin IA" in comparison["caveat"]
+        assert ("mecánica de salida" in comparison["caveat"]) == (version != "CONSERVATIVE")
+
+
+def test_la_comparacion_ignora_un_oos_lanzado_a_mano(conn):
+    """H-07: la comparación usa el último backtest in-sample, no un OOS."""
+    import json
+
+    from pipeline.paper_trading.report import compare_with_historical_backtest
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO portfolio_reports (run_batch_tag, report_json, created_at) VALUES "
+            "('is-1', %s, now() - interval '1 day'), ('oos-1', %s, now())",
+            (
+                json.dumps({"sample": "in_sample", "versions": {"BALANCED": {"trade_metrics": {"win_rate": 0.5}}}}),
+                json.dumps({"sample": "oos", "versions": {"BALANCED": {"trade_metrics": {"win_rate": 0.9}}}}),
+            ),
+        )
+    conn.commit()
+    comparison = compare_with_historical_backtest(conn, "BALANCED", week_trade_metrics={"win_rate": 0.5})
+    assert comparison["historical_win_rate"] == pytest.approx(0.5)
 
 
 def test_open_position_unrealized_pnl_uses_latest_available_price(conn):
     from pipeline.paper_trading.report import run_paper_trading_report
 
-    week_start = date(2024, 3, 4)
+    week_start = date(2026, 3, 2)
     d0 = week_start
     # Solo 2 días de precio tras la entrada -> queda OPEN. Movimiento
     # pequeño a propósito para NO cruzar el TP/SL de Conservative (+2%/-1.5%)
     # el único día de negociación disponible tras la entrada.
-    cal = [date(2024, 3, 4), date(2024, 3, 5), date(2024, 3, 6)]
+    cal = [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4)]
     _seed_price_series(conn, "OPENPNL", cal, [100.0, 102.0, 102.5])
     _seed_event(conn, "openpnl", "OPENPNL", d0, decision="LONG", net_conviction=0.6, confidence=80.0, ev=0.01)
     conn.commit()
 
-    report = run_paper_trading_report(conn, run_batch_tag="paper-test-3", as_of=date(2024, 3, 11))
-    cons = report["versions"]["CONSERVATIVE"]
+    report = run_paper_trading_report(conn, run_batch_tag="paper-test-3", as_of=date(2026, 3, 9))
+    cons = report["versions"]["BALANCED"]
     assert cons["n_open_positions"] == 1
     assert cons["n_closed_trades"] == 0
     pos = cons["open_positions"][0]

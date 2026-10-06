@@ -37,6 +37,15 @@ const copy = (t: T): Record<"oos" | "in_sample" | "full", { label: string; text:
   },
 });
 
+// Todos los backtests deciden con la regla sin IA (BUGS_REPORT.md H-06): la
+// IA no se puede validar con eventos anteriores a la fecha de corte de sus
+// modelos, que pudieron haber leído qué pasó después.
+const reglaSinIa = (t: T) =>
+  t(
+    "Decide la regla sin IA (la dirección de los casos parecidos del pasado): la IA no se puede comprobar con eventos anteriores a la fecha de corte de sus modelos.",
+    "Decisions come from the rule without AI (the direction of similar past cases): the AI cannot be tested on events before its models' cutoff date.",
+  );
+
 // `warning` se acepta por compatibilidad con los llamadores, pero no se pinta (ver arriba).
 // inset: dentro de otro bloque con borde (Inicio), sin borde propio para no
 // dibujar un recuadro dentro del recuadro.
@@ -47,6 +56,10 @@ export function SampleBadge({ sample, inset = false }: { sample: SampleSplit | u
     <div className={`px-3 py-2 text-xs ${c.tone} ${inset ? "border-0" : "border"}`}>
       <span className="mr-1 font-semibold">{c.label}.</span>
       {c.text}
+      <span className="mt-1 block">
+        <span className="mr-1 font-semibold">{t("Regla sin IA.", "Rule without AI.")}</span>
+        {reglaSinIa(t)}
+      </span>
     </div>
   );
 }

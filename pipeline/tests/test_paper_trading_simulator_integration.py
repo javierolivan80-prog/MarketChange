@@ -41,7 +41,8 @@ def _seed_price_series(conn, ticker: str, dates: list[date], closes: list[float]
     conn.commit()
 
 
-def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_conviction: float, confidence: float, ev: float) -> int:
+def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_conviction: float, confidence: float, ev: float,
+                modelo_judge: str = "claude-sonnet-4-6") -> int:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
@@ -68,16 +69,16 @@ def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_convic
                 abstention_decision, trade_decision_conservative, trade_decision_aggressive,
                 trade_decision_balanced, model_version_bull_bear, model_version_judge
             ) VALUES (%s, 80, '{}', '{}', '{}', '{}', %s, %s, '{}', 25, '{}', %s, %s, %s, '{}', %s, %s, %s,
-                'claude-haiku-4-5', 'claude-sonnet-4-6')
+                'claude-haiku-4-5', %s)
             """,
-            (event_id, net_conviction, confidence, ev, ev, ev, decision, decision, decision),
+            (event_id, net_conviction, confidence, ev, ev, ev, decision, decision, decision, modelo_judge),
         )
     conn.commit()
     return event_id
 
 
-WEEK_START = date(2024, 3, 4)  # lunes
-WEEK_END = date(2024, 3, 8)  # viernes
+WEEK_START = date(2026, 3, 2)  # lunes
+WEEK_END = date(2026, 3, 6)  # viernes
 
 
 def _business_days(start: date, n: int) -> list[date]:
@@ -92,13 +93,13 @@ def _business_days(start: date, n: int) -> list[date]:
 def test_simulate_paper_trading_week_take_profit_and_persistence(conn):
     from pipeline.paper_trading.simulator import simulate_paper_trading_week
 
-    d0 = date(2024, 3, 4)  # lunes -> entrada martes 5
+    d0 = date(2026, 3, 2)  # lunes -> entrada martes 5
     cal = _business_days(d0, 10)
     closes = [100.0, 100.5, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0]
     _seed_price_series(conn, "TP1", cal, closes)
     event_id = _seed_event(conn, "c1", "TP1", d0, decision="LONG", net_conviction=0.6, confidence=80.0, ev=0.01)
 
-    results = simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="ptw-1")
+    results = simulate_paper_trading_week(conn, "BALANCED", WEEK_START, WEEK_END, run_batch_tag="ptw-1")
 
     assert len(results) == 1
     assert results[0]["event_id"] == event_id
@@ -112,7 +113,7 @@ def test_simulate_paper_trading_week_take_profit_and_persistence(conn):
     assert rows[0]["exit_date"] > rows[0]["entry_date"]
 
     # Re-ejecutar el mismo run_batch_tag no duplica (ON CONFLICT DO UPDATE).
-    simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="ptw-1")
+    simulate_paper_trading_week(conn, "BALANCED", WEEK_START, WEEK_END, run_batch_tag="ptw-1")
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM paper_trades WHERE run_batch_tag = %s", ("ptw-1",))
         assert cur.fetchone()["n"] == 1
@@ -125,15 +126,15 @@ def test_simulate_paper_trading_week_stays_open_when_price_data_incomplete(conn)
     cierre con datos que todavía no existen."""
     from pipeline.paper_trading.simulator import simulate_paper_trading_week
 
-    d0 = date(2024, 3, 4)
+    d0 = date(2026, 3, 2)
     # Solo 2 días de precio tras la entrada — la semana (hasta el viernes 8)
     # no está cubierta.
-    cal = [date(2024, 3, 4), date(2024, 3, 5), date(2024, 3, 6)]
+    cal = [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4)]
     closes = [100.0, 100.2, 100.3]  # sin moverse lo suficiente para TP/SL
     _seed_price_series(conn, "OPEN1", cal, closes)
     _seed_event(conn, "c2", "OPEN1", d0, decision="LONG", net_conviction=0.6, confidence=80.0, ev=0.01)
 
-    results = simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="ptw-2")
+    results = simulate_paper_trading_week(conn, "BALANCED", WEEK_START, WEEK_END, run_batch_tag="ptw-2")
 
     assert len(results) == 1
     assert results[0]["status"] == "OPEN"
@@ -150,24 +151,24 @@ def test_simulate_paper_trading_week_stays_open_when_price_data_incomplete(conn)
 def test_simulate_paper_trading_week_skips_events_with_no_trade_decision(conn):
     from pipeline.paper_trading.simulator import simulate_paper_trading_week
 
-    d0 = date(2024, 3, 4)
+    d0 = date(2026, 3, 2)
     cal = _business_days(d0, 10)
     _seed_price_series(conn, "NT1", cal, [100.0] * 10)
     _seed_event(conn, "c3", "NT1", d0, decision="NO_TRADE", net_conviction=0.1, confidence=40.0, ev=0.0001)
 
-    results = simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="ptw-3")
+    results = simulate_paper_trading_week(conn, "BALANCED", WEEK_START, WEEK_END, run_batch_tag="ptw-3")
     assert results == []
 
 
 def test_simulate_paper_trading_week_no_lookahead_entry_strictly_after_d0(conn):
     from pipeline.paper_trading.simulator import simulate_paper_trading_week
 
-    d0 = date(2024, 3, 4)
+    d0 = date(2026, 3, 2)
     cal = _business_days(d0, 10)
     _seed_price_series(conn, "LA1", cal, [100.0 + i * 0.1 for i in range(10)])
     _seed_event(conn, "c4", "LA1", d0, decision="LONG", net_conviction=0.6, confidence=80.0, ev=0.01)
 
-    results = simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="ptw-4")
+    results = simulate_paper_trading_week(conn, "BALANCED", WEEK_START, WEEK_END, run_batch_tag="ptw-4")
     assert results[0]["entry_date"] > d0
 
 
@@ -175,8 +176,32 @@ def test_paper_trading_una_operacion_por_empresa_y_dia(conn):
     """H-20, igual que en el backtest: la misma empresa el mismo día opera una vez."""
     from pipeline.paper_trading.simulator import fetch_events_for_week
 
-    d0 = date(2024, 3, 4)
+    d0 = date(2026, 3, 2)
     _seed_event(conn, "1", "AAA", d0, "LONG", 0.5, 70, 0.01)
     fuerte = _seed_event(conn, "2", "AAA", d0, "LONG", 0.8, 80, 0.03)
     filas = fetch_events_for_week(conn, "BALANCED", d0, d0)
     assert [r["event_id"] for r in filas] == [fuerte]
+
+
+def test_paper_trading_solo_con_eventos_posteriores_al_corte_de_los_modelos(conn):
+    """H-06: el paper trading mide la IA, así que solo entran eventos con D0
+    posterior al corte de entrenamiento de los dos modelos que los
+    analizaron (Sonnet 4.6: enero de 2026). Un modelo sin corte conocido
+    deja el evento fuera."""
+    from pipeline.paper_trading.simulator import fetch_all_events_for_week, fetch_events_for_week
+
+    antes = _seed_event(conn, "1", "AAA", date(2026, 1, 30), "LONG", 0.8, 80, 0.03)
+    justo_despues = _seed_event(conn, "2", "BBB", date(2026, 2, 2), "LONG", 0.8, 80, 0.03)
+    desconocido = _seed_event(conn, "3", "CCC", date(2026, 2, 2), "LONG", 0.8, 80, 0.03, modelo_judge="claude-otro")
+    desde, hasta = date(2026, 1, 26), date(2026, 2, 6)
+    assert [r["event_id"] for r in fetch_events_for_week(conn, "BALANCED", desde, hasta)] == [justo_despues]
+    assert [r["event_id"] for r in fetch_all_events_for_week(conn, desde, hasta)] == [justo_despues]
+    assert antes and desconocido
+
+
+def test_paper_trading_solo_opera_la_equilibrada(conn):
+    from pipeline.paper_trading.simulator import VERSIONS, simulate_paper_trading_week
+
+    assert VERSIONS == ("BALANCED",)
+    with pytest.raises(AssertionError):
+        simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="x")

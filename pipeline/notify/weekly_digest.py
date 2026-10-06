@@ -27,6 +27,7 @@ import logging
 from datetime import datetime, timezone
 
 from pipeline import config
+from pipeline.backtest.sample_split import NO_ES_OOS_SQL
 from pipeline.notify import telegram
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,8 @@ _REASON_CATEGORIES = [
 
 def _recommended_version(conn) -> str:
     with conn.cursor() as cur:
-        cur.execute("SELECT report_json->>'best_version' AS v FROM validation_reports ORDER BY created_at DESC LIMIT 1")
+        # El último in-sample: un OOS lanzado a mano no cuenta (H-07).
+        cur.execute(f"SELECT report_json->>'best_version' AS v FROM validation_reports WHERE {NO_ES_OOS_SQL} ORDER BY created_at DESC LIMIT 1")
         row = cur.fetchone()
     version = row["v"] if row else None
     return version if version in _VERSION_COLUMN else "BALANCED"

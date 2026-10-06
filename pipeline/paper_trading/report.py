@@ -12,6 +12,7 @@ from datetime import date
 from pipeline.backtest.portfolio_metrics import compute_calibration_diagnostics, compute_trade_metrics
 from pipeline.backtest.portfolio_simulator import gain_pct
 from pipeline.backtest.portfolio_validation import WIN_RATE_DIVERGENCE_THRESHOLD_PP
+from pipeline.backtest.sample_split import NO_ES_OOS_SQL
 from pipeline.paper_trading.analysis import compute_alerts, compute_prediction_accuracy
 from pipeline.paper_trading.simulator import VERSIONS, load_ticker_prices, select_simulation_week, simulate_paper_trading_week
 
@@ -47,7 +48,14 @@ _AGGRESSIVE_EXIT_MECHANICS_CAVEAT = (
     "tramo del trailing (+20%), no con el trailing-stop escalonado real del "
     "backtest histórico (simplificación deliberada, ver simulator.py) — una "
     "divergencia de win_rate aquí puede deberse a esa diferencia mecánica "
-    "de salida, no (solo) a que el paper trading confirme o no el backtest."
+    "de salida, no (solo) a que el paper trading confirme o no el backtest. "
+    "BALANCED también: sus operaciones de estilo agresivo cierran igual."
+)
+# BUGS_REPORT.md H-06: el backtest histórico decide con la regla sin IA (la IA
+# no se puede validar antes de su corte); el paper trading, con la IA.
+_HISTORICAL_SOURCE_CAVEAT = (
+    "El backtest histórico decide con la regla sin IA (signo de los análogos), "
+    "no con la IA: compara la IA de esta semana con la regla, no consigo misma."
 )
 
 
@@ -117,7 +125,8 @@ def compare_with_historical_backtest(conn, version: str, week_trade_metrics: dic
     que una divergencia aquí no aísla "el modelo predice mal" de "las dos
     simulaciones no cierran las posiciones igual"."""
     with conn.cursor() as cur:
-        cur.execute("SELECT report_json FROM portfolio_reports ORDER BY created_at DESC LIMIT 1")
+        # El último in-sample: un OOS lanzado a mano no cuenta (H-07).
+        cur.execute(f"SELECT report_json FROM portfolio_reports WHERE {NO_ES_OOS_SQL} ORDER BY created_at DESC LIMIT 1")
         row = cur.fetchone()
     if not row:
         return {"available": False, "note": "sin backtest histórico corrido todavía (backtest/portfolio_report.py)"}
@@ -139,7 +148,12 @@ def compare_with_historical_backtest(conn, version: str, week_trade_metrics: dic
         "week_win_rate": week_win_rate,
         "diff_pp": diff_pp,
         "matches_historical": diff_pp <= SANITY_CHECK_WIN_RATE_DIVERGENCE_PP,
-        "caveat": _AGGRESSIVE_EXIT_MECHANICS_CAVEAT if version == "AGGRESSIVE" else None,
+        "caveat": " ".join(
+            c for c in (
+                _AGGRESSIVE_EXIT_MECHANICS_CAVEAT if version in ("AGGRESSIVE", "BALANCED") else None,
+                _HISTORICAL_SOURCE_CAVEAT,
+            ) if c
+        ),
     }
 
 
@@ -181,7 +195,7 @@ def build_version_report(conn, version: str, week_start: date, week_end: date, r
 
 
 def run_paper_trading_report(conn, run_batch_tag: str | None = None, as_of: date | None = None) -> dict:
-    """Punto de entrada único — corre las 3 versiones para la última semana
+    """Punto de entrada único — corre la versión fija (VERSIONS) para la última semana
     completa disponible (o la que contenga `as_of`, para tests) y ensambla
     el reporte semanal completo.
 

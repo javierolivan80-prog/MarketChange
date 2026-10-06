@@ -533,10 +533,18 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
     `sample`: None (default) = sin filtro, todo el rango — el comportamiento
     de siempre, para no romper ninguna llamada existente. 'in_sample' /
     'oos' acotan por d0_close_date según pipeline/backtest/sample_split.py
-    (que a su vez lee config.IN_SAMPLE_END / OOS_START)."""
+    (que a su vez lee config.IN_SAMPLE_END / OOS_START).
+
+    La decisión es la de la REGLA HISTÓRICA sin IA (decision_sin_ia ->
+    regla_historica: signo de los análogos y confianza fija), no la de la IA
+    (BUGS_REPORT.md H-06): casi todo el histórico es anterior al corte de
+    entrenamiento de los modelos, que pudieron haber leído qué pasó después.
+    La IA se valida aparte, solo con eventos posteriores al corte (paper
+    trading). Un análisis sin regla histórica todavía (pendiente del relleno
+    de backfill_decision_sin_ia) no entra."""
     assert version in VERSIONS, f"versión desconocida: {version}"
-    trade_decision_col = f"trade_decision_{_TRADE_DECISION_SOURCE_VERSION.get(version, version).lower()}"
-    ev_col = f"ev_{_TRADE_DECISION_SOURCE_VERSION.get(version, version).lower()}"
+    estrategia = _TRADE_DECISION_SOURCE_VERSION.get(version, version)
+    ev_col = f"ev_{estrategia.lower()}"
     start, end = date_bounds(sample)
     with conn.cursor() as cur:
         cur.execute(
@@ -544,21 +552,29 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
             SELECT * FROM (
                 SELECT DISTINCT ON (e.ticker, e.d0_close_date)
                        e.event_id, e.ticker, e.d0_close_date, e.event_class,
-                       ea.{trade_decision_col} AS trade_decision,
-                       ea.ev_conservative, ea.ev_aggressive, ea.ev_balanced,
-                       ea.confidence_in_conviction AS confidence,
-                       ea.net_conviction AS prediction,
+                       rh.decision AS trade_decision,
+                       rh.ev_conservative, rh.ev_aggressive, rh.ev_balanced,
+                       rh.confidence, rh.prediction,
                        {MARKET_CAP_D0_SQL} AS market_cap_d0
                 FROM events e
                 JOIN event_analyses ea ON ea.event_id = e.event_id
-                WHERE ea.{trade_decision_col} != 'NO_TRADE'
+                CROSS JOIN LATERAL (
+                    SELECT r->'decisiones'->%(estrategia)s->>'trade_decision' AS decision,
+                           (r->>'ev_conservative')::float AS ev_conservative,
+                           (r->>'ev_aggressive')::float AS ev_aggressive,
+                           (r->>'ev_balanced')::float AS ev_balanced,
+                           (r->>'confidence_in_conviction')::float AS confidence,
+                           (r->>'net_conviction')::float AS prediction
+                    FROM (SELECT ea.decision_sin_ia->'regla_historica' AS r) x
+                ) rh
+                WHERE rh.decision != 'NO_TRADE'
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
-                ORDER BY e.ticker, e.d0_close_date, abs(ea.{ev_col}) DESC, e.event_id
+                ORDER BY e.ticker, e.d0_close_date, abs(rh.{ev_col}) DESC, e.event_id
             ) unicos
             ORDER BY d0_close_date, abs({ev_col}) DESC, event_id
             """,
-            {"start": start, "end": end},
+            {"start": start, "end": end, "estrategia": estrategia},
         )
         return cur.fetchall()
 
@@ -587,10 +603,13 @@ def _load_ticker_new_events(conn, ticker: str, prices: dict[date, dict]) -> dict
         cur.execute(
             """
             SELECT e.event_id, e.event_class, e.d0_close_date,
-                   ea.net_conviction, ea.confidence_in_conviction
+                   (ea.decision_sin_ia->'regla_historica'->>'net_conviction')::float AS net_conviction,
+                   (ea.decision_sin_ia->'regla_historica'->>'confidence_in_conviction')::float AS confidence_in_conviction
             FROM events e
             JOIN event_analyses ea ON ea.event_id = e.event_id
             WHERE e.ticker = %s
+              -- La misma regla sin IA que decide las entradas (H-06).
+              AND ea.decision_sin_ia->'regla_historica' IS NOT NULL
             ORDER BY e.d0_close_date
             """,
             (ticker,),

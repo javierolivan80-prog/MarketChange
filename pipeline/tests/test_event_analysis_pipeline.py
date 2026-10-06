@@ -921,7 +921,7 @@ def test_sin_ia_solo_cambia_el_origen_de_net_conviction():
     esperado = compute_ev(-1.0, 90.0, -6.0, 70.0)
     assert control["ev_balanced"] == pytest.approx(esperado.ev_balanced)
     assert control["decisiones"]["BALANCED"]["trade_decision"] == "SHORT"
-    assert control["metodo"] == "analogos_signo_v2" and control["n_analogues"] == 60
+    assert control["metodo"] == "analogos_signo_v3" and control["n_analogues"] == 60
 
 
 @pytest.mark.parametrize("direccion", [1.0, -1.0, 0.0])
@@ -962,6 +962,45 @@ def test_sin_ia_un_evento_descartado_antes_de_la_ia_es_no_trade_por_el_mismo_mot
     assert {d["reason_if_no_trade"] for d in control["decisiones"].values()} == {"novelty baja"}
 
 
+@pytest.mark.parametrize("net_ia", [0.9, -0.9, 0.0])
+@pytest.mark.parametrize("confianza_ia", [10.0, 55.0, 95.0])
+def test_la_regla_historica_no_usa_nada_de_la_ia(net_ia, confianza_ia):
+    """H-06: la regla del backtest histórico no depende ni de la dirección ni
+    de la confianza de la IA. Cambiar las dos no cambia nada: el EV es el de
+    signo de los análogos con confianza 100 (factor neutro)."""
+    from pipeline.analyze.ev_engine import compute_ev
+    from pipeline.analyze.event_analysis_pipeline import regla_historica
+
+    impacto = _impacto(-1.0, -6.0, 70.0)
+    regla = regla_historica(_entradas(net_conviction=net_ia, confidence_in_conviction=confianza_ia), impacto, None)
+    referencia = regla_historica(_entradas(), impacto, None)
+    assert regla == referencia
+    assert regla["net_conviction"] == -1.0 and regla["confidence_in_conviction"] == 100.0
+    esperado = compute_ev(-1.0, 100.0, -6.0, 70.0)
+    assert regla["ev_balanced"] == pytest.approx(esperado.ev_balanced)
+    assert regla["decisiones"]["BALANCED"]["trade_decision"] == "SHORT"
+
+
+def test_la_regla_historica_pasa_por_la_misma_evaluacion_y_abstencion():
+    from pipeline.analyze.abstention_engine import as_json
+    from pipeline.analyze.event_analysis_pipeline import evaluar_decision, regla_historica
+
+    impacto = _impacto(1.0, 8.0, 95.0)
+    entradas = _entradas(adv_usd_60d=1.0)
+    ev, decisiones = evaluar_decision(_entradas(adv_usd_60d=1.0, net_conviction=1.0, confidence_in_conviction=100.0), impacto, None)
+    regla = regla_historica(entradas, impacto, None)
+    assert regla["decisiones"] == as_json(decisiones)
+    assert all(d["trade_decision"] == "NO_TRADE" for d in regla["decisiones"].values())
+    assert regla_historica(_entradas(), impacto, "novelty baja")["decisiones"]["BALANCED"]["reason_if_no_trade"] == "novelty baja"
+
+
+def test_el_control_lleva_dentro_la_regla_historica():
+    from pipeline.analyze.event_analysis_pipeline import decision_sin_ia, regla_historica
+
+    impacto = _impacto(1.0, 8.0, 95.0)
+    assert decision_sin_ia(_entradas(), impacto, None)["regla_historica"] == regla_historica(_entradas(), impacto, None)
+
+
 def test_el_analisis_guarda_la_decision_sin_ia_junto_a_la_real(conn, sin_techo_de_ev):
     from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis, process_chunk
 
@@ -973,7 +1012,7 @@ def test_el_analisis_guarda_la_decision_sin_ia_junto_a_la_real(conn, sin_techo_d
         cur.execute("SELECT net_conviction, decision_sin_ia FROM event_analyses")
         fila = cur.fetchone()
     control = fila["decision_sin_ia"]
-    assert control is not None and control["metodo"] == "analogos_signo_v2"
+    assert control is not None and control["metodo"] == "analogos_signo_v3"
     assert set(control["decisiones"]) == {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}
     # Sin análogos sembrados el control no tiene dirección: nunca opera.
     assert control["net_conviction"] == 0.0
@@ -1044,4 +1083,6 @@ def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de
         cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
         control = cur.fetchone()["decision_sin_ia"]
     assert control["recalculado"] is True and control["net_conviction"] == 1.0
-    assert control["metodo"] == "analogos_signo_v2" and control["confidence_in_conviction"] == pytest.approx(80.0)
+    assert control["metodo"] == "analogos_signo_v3" and control["confidence_in_conviction"] == pytest.approx(80.0)
+    assert control["regla_historica"]["confidence_in_conviction"] == 100.0
+    assert control["regla_historica"]["net_conviction"] == 1.0

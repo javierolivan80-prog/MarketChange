@@ -1,5 +1,7 @@
 """test_sample_split.py — pipeline/backtest/sample_split.py. Puro, sin I/O:
-solo aritmética de fechas y validación de argumentos."""
+solo aritmética de fechas y validación de argumentos (salvo el registro del
+OOS, que va a Postgres)."""
+import os
 from datetime import date, timedelta
 
 import pytest
@@ -120,3 +122,37 @@ def test_git_sha_corto_cae_a_unknown_si_todo_falla(monkeypatch):
     monkeypatch.setattr(ss.subprocess, "check_output", _falla)
 
     assert git_sha_corto() == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Registro de cada vez que se mira el OOS (BUGS_REPORT.md H-07)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+def test_registrar_oos_apunta_cada_vez_y_cuenta_las_anteriores(monkeypatch):
+    from pipeline.backtest.sample_split import registrar_oos
+    from pipeline.db.connection import get_connection, init_schema
+
+    monkeypatch.setenv("GITHUB_SHA", "abcdef0123")
+    monkeypatch.setenv("GITHUB_ACTOR", "alguien")
+    conn = get_connection()
+    init_schema(conn)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE oos_runs RESTART IDENTITY")
+    conn.commit()
+    try:
+        assert registrar_oos(conn, "2026-10-06-abcdef0-OOS", "backtest", "primera vez") == 0
+        # La validación del mismo lanzamiento no cuenta como otra mirada.
+        assert registrar_oos(conn, "2026-10-06-abcdef0-OOS", "validacion", "primera vez") == 0
+        assert registrar_oos(conn, "2026-11-01-abcdef0-OOS", "backtest", "segunda") == 1
+        with pytest.raises(ValueError):
+            registrar_oos(conn, "x", "backtest", "  ")
+        with conn.cursor() as cur:
+            cur.execute("SELECT run_batch_tag, paso, git_sha, lanzado_por, motivo FROM oos_runs ORDER BY oos_run_id")
+            filas = cur.fetchall()
+        assert len(filas) == 3
+        assert filas[0]["git_sha"] == "abcdef0" and filas[0]["lanzado_por"] == "alguien"
+        assert filas[0]["motivo"] == "primera vez"
+    finally:
+        conn.close()

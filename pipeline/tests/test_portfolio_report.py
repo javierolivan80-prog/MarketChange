@@ -8,6 +8,8 @@ from datetime import date, timedelta
 import numpy as np
 import pytest
 
+from pipeline.tests.regla_historica import copiar_a_regla_historica
+
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
 
@@ -81,6 +83,7 @@ def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_convic
             """,
             (event_id, net_conviction, confidence, ev, ev, ev, decision),
         )
+        copiar_a_regla_historica(cur, event_id)
     conn.commit()
     return event_id
 
@@ -114,6 +117,7 @@ def test_run_full_backtest_end_to_end_produces_complete_report(conn):
     report = run_full_backtest(conn, run_batch_tag="full-test-1", starting_capital=100_000.0)
 
     assert set(report["versions"].keys()) == {"CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC"}
+    assert report["decision_source"] == "regla_historica_sin_ia"  # H-06
     cons = report["versions"]["CONSERVATIVE"]
     assert cons["trade_metrics"]["total_trades"] > 0
     assert cons["no_lookahead_violations"] == []

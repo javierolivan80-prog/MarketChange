@@ -39,6 +39,11 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
     - Revisión adversarial: las entradas (a la apertura) se dimensionan, frenan y cuentan huecos y dinero con el estado al cierre anterior; los cierres del mismo día ya no liberan hueco ni dinero para otra entrada a la misma apertura. La capitalización para el deslizamiento es la menor entre la de D0 y la actual (un contrasplit posterior inflaba la de D0). El escenario de latencia D+2 conserva el deslizamiento y descarta operaciones que saldrían antes de entrar.
     - H-40 (nuevo): con menos de 20 operaciones el veredicto es C «sin muestra suficiente»; antes caía en YELLOWLIGHT con 0 operaciones.
     - **Impacto en el P&L histórico: no medible todavía.** Producción tiene 0 operaciones (la IA aún no ha analizado ningún evento). Efecto mecánico por operación: el coste pasa de 0,10 % a 0,30 % (empresas grandes) o 0,60 % (resto) del importe; H-31 adelanta stops y objetivos (en conjunto empeora el resultado: los stops del primer día ya no se esquivan); H-21 hace operar menos a Conservadora y más a Agresiva. Se medirá con las primeras operaciones reales.
+  - Tanda 3 «Sin trampas» (2026-10-06), con las decisiones del usuario:
+    - H-06: fechas de corte de **entrenamiento** de cada modelo en `config.MODEL_TRAINING_CUTOFF` (documentación oficial, 2026-10-06: Haiku 4.5 jul 2025, Sonnet 4.6 ene 2026; se toma el último día del mes). La IA solo se valida con eventos cuyo D0 es posterior al corte de los dos modelos que los analizaron (hoy, D0 ≥ 2026-02-01); un modelo sin corte conocido no valida nada.
+    - H-06: el backtest y la validación del histórico deciden con la **regla sin IA** (`decision_sin_ia -> regla_historica`): signo de los análogos y confianza fija en 100 (factor neutro), por la misma `evaluar_decision`. No usa nada de la IA, ni su dirección ni su confianza, que antes del corte pueden saber el desenlace. El control de la Tanda 1 (confianza del Judge) se mantiene para comparar IA frente a sin IA después del corte. `METODO_SIN_IA` pasa a `analogos_signo_v3`: el relleno nocturno recalcula los análisis antiguos sin IA.
+    - Paper trading: una sola estrategia fija, Equilibrada, y solo con eventos posteriores al corte. Su comparación con el histórico avisa de que el histórico es la regla sin IA, y de la salida simplificada de las operaciones de estilo agresivo.
+    - H-07: el nightly corre backtest y validación solo In-Sample (`best_version` sale del In-Sample). El OOS se lanza a mano con `oos_manual.yml`, exige un motivo y queda apuntado en `oos_runs` (fecha, tag, commit, quién y por qué). La app, el resumen semanal y la comparación del paper trading ignoran los informes OOS. `--full-range` desaparece. `test_workflows.py` falla si un workflow programado vuelve a mirar el OOS.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 
@@ -98,6 +103,7 @@ Severidad: **CRÍTICA** = afecta a la validez del backtest/OOS o puede perder di
   - documentar la fecha de corte por modelo y bloquear `--oos` antes de ella.
 - **PREGUNTA:** ¿aceptas que la única validación válida del Judge sea forward?
 - **Esfuerzo:** S (documentar/bloquear) a L (anonimizar).
+- **Estado (Tanda 3):** resuelto como validación solo forward (sección 1).
 
 **H-07 · CRÍTICA · El OOS se mira cada noche**
 - **Dónde:** `.github/workflows/nightly_pipeline.yml:551` y `:570`; `app/lib/queries.ts:786-789`.
@@ -106,6 +112,7 @@ Severidad: **CRÍTICA** = afecta a la validez del backtest/OOS o puede perder di
 - **Fix:** el nightly en in-sample; el OOS solo manual, con tag y fecha registrados.
 - **PREGUNTA:** ¿qué debe mostrar la app?
 - **Esfuerzo:** S.
+- **Estado (Tanda 3):** resuelto; la app muestra solo el In-Sample (sección 1).
 
 **H-08 · ALTA · El proxy de spread descarta casi todo**
 - **Dónde:** `pipeline/analyze/abstention_engine.py:60` y `:115`.

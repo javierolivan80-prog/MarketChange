@@ -671,7 +671,9 @@ def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None
     return ev_result, decisions
 
 
-METODO_SIN_IA = "analogos_signo_v2"
+METODO_SIN_IA = "analogos_signo_v3"
+# Confianza de la regla histórica (ver regla_historica): fija, sin la IA.
+CONFIANZA_REGLA_HISTORICA = 100.0
 
 
 def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -> dict:
@@ -697,6 +699,29 @@ def decision_sin_ia(con_ia: AbstentionInputs, impact, skip_reason: str | None) -
         "expected_magnitude_pct": round(float(impact.expected_magnitude_pct), 4),
         "impact_confidence": float(impact.confidence),
         "n_analogues": impact.n_analogues,
+        "ev_conservative": ev.ev_conservative,
+        "ev_balanced": ev.ev_balanced,
+        "ev_aggressive": ev.ev_aggressive,
+        "decisiones": abstention_as_json(decisiones),
+        "regla_historica": regla_historica(con_ia, impact, skip_reason),
+    }
+
+
+def regla_historica(con_ia: AbstentionInputs, impact, skip_reason: str | None) -> dict:
+    """La regla que mide el backtest histórico (BUGS_REPORT.md H-06): sin
+    NADA de la IA. Antes del corte de entrenamiento de los modelos, la IA pudo
+    haber leído qué pasó después del evento, y eso vale tanto para su
+    dirección como para su confianza; así que aquí net_conviction es el signo
+    de los análogos (como en el control) y confidence_in_conviction es 100,
+    un factor neutro: el EV queda signo × magnitud × confianza de los
+    análogos, sin contar dos veces la de los análogos (decisión del usuario,
+    auditoría 2026-10-06). Pasa por evaluar_decision, como las otras dos."""
+    net = float(impact.expected_direction)
+    entradas = replace(con_ia, net_conviction=net, confidence_in_conviction=CONFIANZA_REGLA_HISTORICA)
+    ev, decisiones = evaluar_decision(entradas, impact, skip_reason)
+    return {
+        "net_conviction": net,
+        "confidence_in_conviction": CONFIANZA_REGLA_HISTORICA,
         "ev_conservative": ev.ev_conservative,
         "ev_balanced": ev.ev_balanced,
         "ev_aggressive": ev.ev_aggressive,

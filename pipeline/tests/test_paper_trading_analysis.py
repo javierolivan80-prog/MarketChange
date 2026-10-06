@@ -16,7 +16,7 @@ pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="D
 def test_compute_alerts_flags_two_consecutive_losses():
     from pipeline.paper_trading.analysis import compute_alerts
 
-    D0 = date(2024, 1, 2)
+    D0 = date(2025, 12, 30)
     closed_trades = [
         {"pnl_pct": 1.0, "exit_date": D0},
         {"pnl_pct": -1.0, "exit_date": D0 + timedelta(days=1)},
@@ -31,7 +31,7 @@ def test_compute_alerts_flags_two_consecutive_losses():
 def test_compute_alerts_no_warning_with_single_loss():
     from pipeline.paper_trading.analysis import compute_alerts
 
-    closed_trades = [{"pnl_pct": 1.0, "exit_date": date(2024, 1, 2)}, {"pnl_pct": -1.0, "exit_date": date(2024, 1, 3)}]
+    closed_trades = [{"pnl_pct": 1.0, "exit_date": date(2025, 12, 30)}, {"pnl_pct": -1.0, "exit_date": date(2025, 12, 31)}]
     alerts = compute_alerts(closed_trades, [], "CONSERVATIVE")
     assert [a for a in alerts if a["type"] == "WARNING"] == []
 
@@ -129,14 +129,14 @@ class TestPredictionAccuracyIntegration:
     def test_computes_actual_move_5d_and_was_correct(self, conn):
         from pipeline.paper_trading.analysis import compute_prediction_accuracy
 
-        d0 = date(2024, 3, 4)
+        d0 = date(2026, 3, 2)
         cal = [d0 + timedelta(days=i) for i in range(10) if (d0 + timedelta(days=i)).weekday() < 5]
         # Entrada D+1 = día 2 de cal, precio 100 -> sube constante.
         closes = [100.0 + i * 2.0 for i in range(len(cal))]
         self._seed_price_series(conn, "ACC1", cal, closes)
         self._seed_event(conn, "a1", "ACC1", d0, decision="LONG", net_conviction=0.6, confidence=77.0, ev=0.01)
 
-        results = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2024, 3, 4), date(2024, 3, 8))
+        results = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))
         assert len(results) == 1
         r = results[0]
         assert r["predicted_direction"] == "LONG"
@@ -150,25 +150,25 @@ class TestPredictionAccuracyIntegration:
     def test_includes_no_trade_events_with_was_traded_false(self, conn):
         from pipeline.paper_trading.analysis import compute_prediction_accuracy
 
-        d0 = date(2024, 3, 4)
+        d0 = date(2026, 3, 2)
         cal = [d0 + timedelta(days=i) for i in range(10) if (d0 + timedelta(days=i)).weekday() < 5]
         self._seed_price_series(conn, "NT1", cal, [100.0] * len(cal))
         self._seed_event(conn, "a2", "NT1", d0, decision="NO_TRADE", net_conviction=0.05, confidence=30.0, ev=0.0001)
 
-        results = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2024, 3, 4), date(2024, 3, 8))
+        results = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))
         assert len(results) == 1
         assert results[0]["was_traded"] is False
 
     def test_actual_move_5d_is_none_when_insufficient_future_data(self, conn):
         from pipeline.paper_trading.analysis import compute_prediction_accuracy
 
-        d0 = date(2024, 3, 4)
+        d0 = date(2026, 3, 2)
         # Solo 2 días tras D0 -> tras la entrada D+1 no hay 5 días de negociación.
-        cal = [date(2024, 3, 4), date(2024, 3, 5), date(2024, 3, 6)]
+        cal = [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4)]
         self._seed_price_series(conn, "PEND1", cal, [100.0, 100.5, 101.0])
         self._seed_event(conn, "a3", "PEND1", d0, decision="LONG", net_conviction=0.6, confidence=80.0, ev=0.01)
 
-        results = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2024, 3, 4), date(2024, 3, 8))
+        results = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))
         assert results[0]["actual_move_5d"] is None
         assert results[0]["was_correct"] is None
         assert results[0]["error"] is None
