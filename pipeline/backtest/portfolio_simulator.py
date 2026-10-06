@@ -66,32 +66,47 @@ from pipeline.backtest.portfolio_strategies import (
     compute_position_size_pct,
 )
 from pipeline.backtest.sample_split import date_bounds
+from pipeline.ingest.splits import PRECIO_NEGOCIADO_SQL
 
 logger = logging.getLogger(__name__)
 
 COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
 
 # Capitalización en D0 para el deslizamiento (H-32): acciones del último 10-K
-# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × cierre de D0.
+# PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × precio
+# NEGOCIADO en D0 (H-04, ingest/splits.py): close_raw viene reexpresado por
+# los splits posteriores y las acciones XBRL son las de entonces.
 #
-# Sesgo conocido (H-04): close_raw viene reexpresado por splits POSTERIORES y
-# las acciones XBRL son las de entonces. Un contrasplit 1:10 posterior
-# multiplica por 10 el precio de D0 y convertiría en "grande" (10 pb) a una
-# microcap en apuros, justo el caso más arriesgado. Para no favorecer ese
-# error se toma la MENOR de esa cifra y la capitalización actual
-# (universe.market_cap_last_usd, acciones y precio de hoy, consistentes entre
-# sí): el error que queda va hacia el deslizamiento alto (25 pb), el
-# conservador. Sin cifra en D0 no se usa la de hoy: NULL, que también es 25 pb.
+# Si el ticker aún no tiene el historial de splits revisado no hay precio
+# negociado: se usa close_raw y, para no favorecer el error (un contrasplit
+# 1:10 posterior multiplica por 10 el precio de D0 y convertiría en "grande"
+# a una microcap en apuros), se toma la MENOR de esa cifra y la capitalización
+# actual (universe.market_cap_last_usd): el error que queda va hacia el
+# deslizamiento alto (25 pb), el conservador. Sin cifra en D0 no se usa la de
+# hoy: NULL, que también es 25 pb.
 MARKET_CAP_D0_SQL = """
-    (SELECT CASE WHEN cap_d0 IS NULL THEN NULL ELSE LEAST(cap_d0, u.market_cap_last_usd) END
-       FROM (SELECT
-               (SELECT f.shares_outstanding FROM fundamentals f
-                 WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
-                   AND f.shares_outstanding IS NOT NULL
-                 ORDER BY f.filed_at DESC LIMIT 1)
-             * (SELECT p.close_raw FROM prices p
-                 WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date
-                 ORDER BY p.trade_date DESC LIMIT 1) AS cap_d0) c
+    (SELECT CASE WHEN a.acciones IS NULL OR d0.cierre IS NULL THEN NULL
+                 -- Acciones del 10-K llevadas a D0 con los splits entre su
+                 -- presentación y D0 (un contrasplit en medio las divide).
+                 WHEN d0.negociado IS NOT NULL THEN a.acciones * d0.negociado * coalesce((
+                     SELECT exp(sum(ln(s.ratio))) FROM splits s
+                     WHERE s.ticker = e.ticker AND s.split_date > a.presentado AND s.split_date <= e.d0_close_date
+                 ), 1)
+                 ELSE LEAST(a.acciones * d0.cierre, u.market_cap_last_usd) END
+       FROM (SELECT f.shares_outstanding AS acciones, f.filed_at AS presentado
+               FROM (SELECT 1) uno
+               LEFT JOIN LATERAL (
+                   SELECT f.shares_outstanding, f.filed_at FROM fundamentals f
+                    WHERE f.cik = e.cik AND f.form = '10-K' AND f.filed_at <= e.d0_close_date
+                      AND f.shares_outstanding IS NOT NULL
+                    ORDER BY f.filed_at DESC LIMIT 1
+               ) f ON TRUE) a
+       LEFT JOIN LATERAL (
+           SELECT p.close_raw AS cierre, """ + PRECIO_NEGOCIADO_SQL + """ AS negociado
+           FROM prices p
+           WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date AND p.close_raw IS NOT NULL
+           ORDER BY p.trade_date DESC LIMIT 1
+       ) d0 ON TRUE
        LEFT JOIN universe u ON u.cik = e.cik)
 """
 
@@ -522,6 +537,29 @@ VERSIONS = ("CONSERVATIVE", "AGGRESSIVE", "BALANCED", "DYNAMIC")
 # criterio de SI operar que Balanced. Solo cambia el sizing.
 _TRADE_DECISION_SOURCE_VERSION = {"DYNAMIC": "BALANCED"}
 
+# Precio mínimo en D0 (config.MIN_PRICE_USD, ARCHITECTURE_LEAN.md §10) con el
+# precio NEGOCIADO de entonces (H-04; decisión del usuario, 2026-10-06), no
+# el de hoy, que es el que usa el universo. Sin historial de splits revisado
+# se usa close_raw (lo único disponible) hasta que llegue.
+PRECIO_D0_MINIMO_SQL = """
+    (SELECT coalesce(""" + PRECIO_NEGOCIADO_SQL + """, p.close_raw)
+       FROM prices p
+      WHERE p.ticker = e.ticker AND p.trade_date <= e.d0_close_date AND p.close_raw IS NOT NULL
+      ORDER BY p.trade_date DESC LIMIT 1) >= """ + str(float(config.MIN_PRICE_USD)) + """
+"""
+
+# Calidad de precios (calidad_precios.py; decisión del usuario, 2026-10-06):
+# una operación cuya ventana toca una vela marcada se excluye. La ventana va
+# desde los días previos a D0 (la base de la decisión) hasta el máximo de
+# días de tenencia (20 sesiones), con margen en días naturales.
+DIAS_ANTES_DE_D0 = 5
+DIAS_VENTANA_OPERACION = 45
+VELA_MARCADA_EN_LA_OPERACION_SQL = f"""
+    SELECT 1 FROM prices pq
+    WHERE pq.ticker = e.ticker AND pq.calidad_motivo IS NOT NULL
+      AND pq.trade_date BETWEEN e.d0_close_date - {DIAS_ANTES_DE_D0} AND e.d0_close_date + {DIAS_VENTANA_OPERACION}
+"""
+
 
 def fetch_events_for_version(conn, version: str, sample: str | None = None) -> list[dict]:
     """Eventos con trade_decision != NO_TRADE para `version`. Trae SIEMPRE
@@ -568,6 +606,8 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                     FROM (SELECT ea.decision_sin_ia->'regla_historica' AS r) x
                 ) rh
                 WHERE rh.decision != 'NO_TRADE'
+                  AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
+                  AND {PRECIO_D0_MINIMO_SQL}
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
                 ORDER BY e.ticker, e.d0_close_date, abs(rh.{ev_col}) DESC, e.event_id

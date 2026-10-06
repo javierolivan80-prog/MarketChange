@@ -57,7 +57,7 @@ from pipeline.analyze.adversarial_analyzer import (
     run_batch_and_collect,
     validar_salida_judge,
 )
-from pipeline.analyze.enrichment import fetch_and_compute_enrichment
+from pipeline.analyze.enrichment import fetch_and_compute_enrichment, guardar_enrichment
 from pipeline.analyze.ev_engine import compute_ev
 from pipeline.analyze.guidance_detector import compute_novelty_signals
 from pipeline.analyze.historical_analogues import estimate_impact_for_event
@@ -687,6 +687,8 @@ def _process_single_event(
     ev_result, decisions = evaluar_decision(abstention_inputs, impact, skip_reason)
     control = decision_sin_ia(abstention_inputs, impact, skip_reason_regla)
 
+    # Etapa 1 guardada (H-23): la leen el plan técnico (VIX) y la sensibilidad.
+    guardar_enrichment(conn, event_id, enrichment)
     _store_event_analysis(
         conn, event_id, novelty, bull_output, bear_output, judge_output,
         net_conviction, confidence_in_conviction, impact, ev_result, decisions,
@@ -804,11 +806,13 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
             """
             SELECT e.event_id, e.cik, e.ticker, e.event_class, e.d0_close_date, u.sic_code,
                    ea.novelty_score, ea.net_conviction, ea.confidence_in_conviction,
-                   ea.model_version_bull_bear, ea.abstention_decision
+                   ea.model_version_bull_bear, ea.abstention_decision,
+                   ea.decision_sin_ia->>'metodo' AS metodo
             FROM event_analyses ea
             JOIN events e ON e.event_id = ea.event_id
             JOIN universe u ON u.cik = e.cik
-            WHERE (ea.decision_sin_ia IS NULL OR ea.decision_sin_ia->>'metodo' IS DISTINCT FROM %s)
+            WHERE (ea.decision_sin_ia IS NULL OR ea.decision_sin_ia->>'metodo' IS DISTINCT FROM %s
+                   OR NOT EXISTS (SELECT 1 FROM event_enrichment ee WHERE ee.event_id = ea.event_id))
               AND NOT (ea.event_id = ANY(%s))
             ORDER BY e.event_id
             LIMIT %s
@@ -824,6 +828,13 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
             if f["model_version_bull_bear"] == SKIPPED_MODEL_VERSION:
                 skip_reason = ((f["abstention_decision"] or {}).get("BALANCED") or {}).get("reason_if_no_trade") or "descartado antes de la IA"
             enrichment = fetch_and_compute_enrichment(conn, f, series_comunes)
+            if f["metodo"] == METODO_SIN_IA:
+                # Solo le faltaba el enrichment (H-23): el control calculado
+                # en su momento no se toca.
+                guardar_enrichment(conn, f["event_id"], enrichment)
+                conn.commit()
+                hechos += 1
+                continue
             impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
             fda_sin_8k = check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"])
             if f["model_version_bull_bear"] == MODELO_ANTES_DEL_CORTE:
@@ -848,6 +859,7 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
             )
             control = decision_sin_ia(con_ia, impact, skip_reason)
             control["recalculado"] = True
+            guardar_enrichment(conn, f["event_id"], enrichment)  # H-23: los análisis antiguos no lo tenían
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE event_analyses SET decision_sin_ia = %s WHERE event_id = %s",

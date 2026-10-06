@@ -288,3 +288,30 @@ def fetch_and_compute_enrichment(conn, event: dict, series_comunes: dict | None 
         ticker_prices, spy_prices, sector_prices, vix_prices, factor_returns,
         event["d0_close_date"], sector_etf,
     )
+
+
+_COLUMNAS_GUARDADAS = (
+    "price_d0", "price_d_minus_5", "price_d_minus_20", "volume_d0", "volume_avg_20d", "volume_ratio",
+    "beta_vs_spy", "ff_size_exposure", "ff_value_exposure", "vix_d0", "sector_etf_ticker", "sector_mood",
+    "pre_event_drift_pct", "high_low_range_pct", "adv_usd_60d", "n_estimation_days", "had_survivorship_warning",
+)
+
+
+def guardar_enrichment(conn, event_id: int, enrichment: EnrichmentResult) -> None:
+    """Guarda la Etapa 1 en event_enrichment (BUGS_REPORT.md H-23). Antes no
+    se escribía nunca: el filtro de régimen VIX del plan técnico y el reparto
+    por VIX del análisis de sensibilidad leían una tabla vacía y quedaban
+    desactivados sin avisar. Sin commit: va en la transacción del análisis."""
+    valores = {c: getattr(enrichment, c) for c in _COLUMNAS_GUARDADAS}
+    for c, v in valores.items():
+        if hasattr(v, "item"):  # numpy -> Python
+            valores[c] = v.item()
+    columnas = ", ".join(_COLUMNAS_GUARDADAS)
+    marcadores = ", ".join(f"%({c})s" for c in _COLUMNAS_GUARDADAS)
+    actualizacion = ", ".join(f"{c} = EXCLUDED.{c}" for c in _COLUMNAS_GUARDADAS)
+    with conn.cursor() as cur:
+        cur.execute(
+            f"INSERT INTO event_enrichment (event_id, {columnas}) VALUES (%(event_id)s, {marcadores}) "
+            f"ON CONFLICT (event_id) DO UPDATE SET {actualizacion}, enriched_at = now()",
+            {"event_id": event_id, **valores},
+        )

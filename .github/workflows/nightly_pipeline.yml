@@ -489,12 +489,31 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.ingest.universe_maintenance --list 25
 
+      - name: Historial de splits (precio negociado, H-04)
+        # Por tandas (SPLITS_MAX_TICKERS, 400 por defecto): primero los
+        # tickers con eventos que nunca se revisaron, después los que se han
+        # vuelto a descargar. Un fallo de Yahoo deja el ticker para mañana.
+        # Solo en la pasada de noche, como el mantenimiento del universo.
+        if: (github.event.schedule || github.event.inputs.relaunch_of) != '30 14 * * 1-5' && (github.event.schedule || github.event.inputs.relaunch_of) != '30 21 * * 1-5'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ingest.splits
+
       - name: Calcular CAR de eventos pendientes (insumo de historical_analogues.py)
         # Sin este paso, analyze/historical_analogues.py siempre vería
         # n_analogues=0 — car_results no se llena solo (ver su docstring).
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m pipeline.backtest.populate_car_results
+
+      - name: Calidad de precios (velas imposibles y picos que se deshacen)
+        # Marca las velas sospechosas y excluye los CAR cuya ventana las toca
+        # (calidad_precios.py). Después del CAR, para marcar también los
+        # recién calculados, y antes del backtest, que excluye sus operaciones.
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m pipeline.ingest.calidad_precios
 
       - name: Análisis de eventos (Fase 2 — Etapas 1-8, event_analysis_pipeline.py)
         # Reemplaza al script de la Fase 1 (adversarial_analyzer.py --smoke-test),

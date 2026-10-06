@@ -68,6 +68,7 @@ def _fetch_car_by_class(conn, window_days: int, sample: str | None = None) -> di
             FROM car_results cr
             JOIN events e ON e.event_id = cr.event_id
             WHERE cr.window_days = %(window_days)s
+              AND cr.calidad_excluido IS NULL  -- precios con una vela marcada (calidad_precios.py)
               AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
               AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
             ORDER BY e.event_class, e.ticker, e.d0_close_date, e.event_id

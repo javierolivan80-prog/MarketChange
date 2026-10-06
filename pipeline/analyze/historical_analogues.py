@@ -152,6 +152,7 @@ def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_e
               AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
               AND cr.event_id != %(exclude_event_id)s
               AND cr.window_days = %(window_days)s
+              AND cr.calidad_excluido IS NULL  -- precios con una vela marcada (calidad_precios.py)
             ORDER BY e.ticker, e.d0_close_date, e.event_id
             """,
             {
@@ -192,6 +193,7 @@ def get_class_prior_mean(conn, event_class: str, window_days: int, as_of_date: d
                 WHERE e.event_class = %(event_class)s
                   AND cr.window_days = %(window_days)s
                   AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
+                  AND cr.calidad_excluido IS NULL  -- precios con una vela marcada
                 ORDER BY e.ticker, e.d0_close_date, e.event_id
             ) unicos
             """,

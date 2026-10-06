@@ -283,3 +283,42 @@ def test_sin_rollback_el_fallo_se_propagaria(monkeypatch):
         conn.commit()
     conn.rollback()
     conn.commit()  # ya no debe lanzar
+
+
+# --- Caché de la descarga (Tanda 4) ------------------------------------------
+
+
+@pytest.mark.skipif(not __import__("os").environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+def test_solo_se_vuelven_a_pedir_las_cuentas_que_pueden_haber_cambiado():
+    from pipeline.db.connection import get_connection, init_schema
+    from pipeline.ingest.xbrl_fundamentals import ciks_por_descargar
+
+    conn = get_connection()
+    init_schema(conn)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE xbrl_descargas, fundamentals, universe RESTART IDENTITY CASCADE")
+        for cik in ("1", "2", "3", "4", "5"):
+            cur.execute(
+                "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
+                "VALUES (%s, %s, 'X', '2020-01-01', '2026-01-01')",
+                (cik, f"T{cik}"),
+            )
+        hoy = date(2026, 10, 6)
+        cur.execute(
+            "INSERT INTO xbrl_descargas (cik, descargado_en) VALUES "
+            "('2', '2026-10-01'),"   # reciente y sin 10-K pendiente: no
+            "('3', '2026-06-01'),"   # más de 90 días: sí
+            "('4', '2026-10-01'),"   # le toca 10-K (ejercicio cerrado hace >425 días) y lleva 5 días: no
+            "('5', '2026-09-20')"    # le toca 10-K y lleva más de 7 días: sí
+        )
+        cur.execute(
+            "INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form) VALUES "
+            "('2', '2025-12-31', '2026-02-20', '10-K'), ('4', '2025-06-30', '2025-08-20', '10-K'), "
+            "('5', '2025-06-30', '2025-08-20', '10-K')"
+        )
+    conn.commit()
+    try:
+        assert ciks_por_descargar(conn, hoy=hoy) == ["1", "3", "5"]  # primero el nunca pedido
+        assert ciks_por_descargar(conn, limit=1, hoy=hoy) == ["1"]
+    finally:
+        conn.close()

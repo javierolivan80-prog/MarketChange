@@ -58,6 +58,21 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
         - El OOS manual ya no escribe.
         - Los presupuestos de tiempo bajan a 300 s (anteriores al corte) y 600 s (relleno). Hay que medir el efecto en el nightly, que va por ~157 de 180 min.
       - **Abierto (SOSPECHA):** los eventos anteriores al corte que la IA ya analizó antes de este cambio conservan su análisis de IA. No afectan al backtest (que usa la regla) ni al paper trading (filtrado). Pasarlos a «sin IA» exige borrar esas filas: queda pendiente de la aprobación del usuario.
+  - Tanda 4 «Datos limpios» (2026-10-06), con las decisiones del usuario:
+    - H-23: el enrichment se guarda en `event_enrichment` con cada análisis, y el relleno lo añade a los antiguos. El VIX llega al filtro de régimen del plan técnico y al reparto por VIX del análisis de sensibilidad, que hasta ahora leían una tabla vacía.
+    - Calidad de precios (`calidad_precios.py`):
+      - Se marcan las velas imposibles (cierre ≤ 0, máximo por debajo del mínimo, cierre fuera del rango, volumen negativo).
+      - Se marcan también los picos de más del 50 % que se deshacen al día siguiente (a menos de un 20 % del cierre previo). Un salto que se mantiene, como el de una biotech tras la FDA, no se marca.
+      - Los CAR cuya ventana toca una vela marcada se excluyen de análogos, prior y event study, y el backtest excluye esas operaciones. El informe cuenta cuántas son (`excluidos_por_calidad`).
+      - No se borra nada: el marcado se recalcula.
+    - H-04: historial de splits por ticker (`splits.py`, por tandas) y precio negociado en D0 = `close_raw` × Π ratio de los splits en (D0, descarga]. La capitalización que fija el deslizamiento lo usa; sin historial revisado sigue el tope por la capitalización actual. Además (decisión del usuario, 2026-10-06), el backtest y el paper trading solo operan eventos con precio negociado en D0 ≥ 5 $ (`config.MIN_PRICE_USD`); el universo sigue filtrando con el precio de hoy (H-14). El ADV en $ no se ve afectado, porque precio y volumen se ajustan a la inversa.
+    - Revisión adversarial:
+      - Splits: solo se vuelven a pedir tras una redescarga completa de la serie (cambio de base) o cada 90 días, empezando por el más antiguo; antes salían siempre los mismos 400.
+      - Si Yahoo no devuelve historia, el ticker no queda como «revisado sin splits».
+      - Las acciones del 10-K se llevan a D0 con los splits intermedios.
+      - El relleno de enrichment no reescribe controles ya al día.
+      - Calidad: índice parcial; los CAR solo se recalculan para tickers revisados o CAR nuevos; se comprueba también la apertura; los índices (^VIX) no se marcan por picos; la ventana del backtest empieza 5 días antes de D0; el paso corre aunque falle el anterior.
+    - Caché XBRL: las cuentas de una empresa solo se vuelven a pedir si nunca se pidieron, si hace más de 90 días, o si ya le toca un 10-K nuevo (cierre + 425 días) y no ha llegado (como mucho, una vez por semana).
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

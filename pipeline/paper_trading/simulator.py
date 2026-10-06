@@ -40,6 +40,7 @@ from datetime import date, timedelta
 from pipeline import config as app_config
 from pipeline.backtest.portfolio_simulator import (
     MARKET_CAP_D0_SQL,
+    PRECIO_D0_MINIMO_SQL,
     OpenPosition,
     compute_tp_sl_prices,
     consolidate_trade_record,
@@ -130,6 +131,7 @@ def fetch_events_for_week(conn, version: str, week_start: date, week_end: date) 
                 WHERE ea.{trade_decision_col} != 'NO_TRADE'
                   AND e.d0_close_date BETWEEN %(desde)s AND %(hasta)s
                   AND {POSTERIOR_AL_CORTE_SQL}
+                  AND {PRECIO_D0_MINIMO_SQL}
                 ORDER BY e.ticker, e.d0_close_date, abs(ea.ev_{version.lower()}) DESC, e.event_id
             ) unicos
             ORDER BY d0_close_date, abs(ev_{version.lower()}) DESC, event_id

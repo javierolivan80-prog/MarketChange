@@ -90,6 +90,10 @@ QUERIES: list[tuple[str, str]] = [
                count(*) FILTER (WHERE trade_decision_conservative <> 'NO_TRADE') AS operables_conservative,
                count(*) FILTER (WHERE trade_decision_aggressive <> 'NO_TRADE') AS operables_aggressive
         FROM event_analyses WHERE model_version_bull_bear <> 'SIN_IA_ANTES_DEL_CORTE'"""),
+    ("Calidad de precios: velas marcadas y CAR excluidos (calidad_precios.py)", """
+        SELECT (SELECT count(*) FROM prices WHERE calidad_motivo IS NOT NULL) AS velas_marcadas,
+               (SELECT count(DISTINCT ticker) FROM prices WHERE calidad_motivo IS NOT NULL) AS tickers,
+               (SELECT count(*) FROM car_results WHERE calidad_excluido IS NOT NULL) AS car_excluidos"""),
     ("Anteriores al corte (solo regla sin IA, H-06)", """
         SELECT count(*) AS filas, min(e.d0_close_date) AS desde, max(e.d0_close_date) AS hasta
         FROM event_analyses ea JOIN events e ON e.event_id = ea.event_id
