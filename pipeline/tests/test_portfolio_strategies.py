@@ -18,7 +18,7 @@ def test_strategy_configs_match_spec_literal_values():
     assert cons.holding_period_max_days == 5
     assert cons.stop_loss_pct == 1.5
     assert cons.confidence_threshold == 70.0
-    assert cons.ev_threshold == pytest.approx(0.002)
+    assert cons.ev_threshold == pytest.approx(0.008)  # H-21: Conservadora exige más que Agresiva
     assert cons.max_concurrent == 3
 
     aggr = STRATEGIES["AGGRESSIVE"]
@@ -26,13 +26,13 @@ def test_strategy_configs_match_spec_literal_values():
     assert aggr.holding_period_max_days == 20
     assert aggr.stop_loss_pct == 5.0
     assert aggr.confidence_threshold == 50.0
-    assert aggr.ev_threshold == pytest.approx(0.005)
+    assert aggr.ev_threshold == pytest.approx(0.002)
     assert aggr.max_concurrent == 2
     assert aggr.take_profit_pct is None  # usa trailing stop, no TP fijo
 
 
 def test_balanced_threshold_is_the_average_of_the_other_two():
-    assert BALANCED_EV_THRESHOLD == pytest.approx((0.002 + 0.005) / 2)
+    assert BALANCED_EV_THRESHOLD == pytest.approx((0.008 + 0.002) / 2)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +117,13 @@ def test_balanced_lower_confidence_but_qualifying_ev_gets_aggressive_style():
 def test_balanced_conservative_wins_when_both_qualify():
     style = classify_balanced_execution_style(confidence=90.0, ev_conservative=0.02, ev_aggressive=0.02)
     assert style == "CONSERVATIVE"
+
+
+def test_balanced_short_con_ev_suficiente_usa_el_estilo_conservador():
+    """Un SHORT tiene EV negativo; con |EV| suficiente debe poder ir al estilo
+    Conservador igual que un LONG (antes comparaba con signo)."""
+    assert classify_balanced_execution_style(confidence=90.0, ev_conservative=-0.02, ev_aggressive=-0.02) == "CONSERVATIVE"
+    assert classify_balanced_execution_style(confidence=90.0, ev_conservative=0.02, ev_aggressive=0.02) == "CONSERVATIVE"
 
 
 def test_balanced_position_size_is_the_fixed_spec_value_not_interpolated():

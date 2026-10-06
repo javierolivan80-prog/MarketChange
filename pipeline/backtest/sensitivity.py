@@ -115,16 +115,24 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
         future_dates = sorted(d for d in prices if d is not None and d > d0) if d0 else []
         if len(future_dates) < 2 or prices[future_dates[1]] is None:
             continue  # sin un D+2 disponible, no se puede recalcular este trade — se omite
+        if t["exit_date"] < future_dates[1]:
+            # Desde H-31 una operación puede salir en D+1 (su sesión de
+            # entrada): entrando en D+2 saldría antes de entrar. Se omite.
+            continue
         new_entry_price = float(prices[future_dates[1]])
         actual_move_pct = gain_pct(t["direction"], new_entry_price, float(t["exit_price"]))
-        new_pnl_pct = actual_move_pct - COMMISSION_BPS_ROUND_TRIP / 100
+        # Mismos costes que el baseline: comisión + el deslizamiento que ya
+        # llevaba la operación (H-32), que no se guarda aparte y se recupera
+        # como movimiento bruto - P&L neto - comisión.
+        slippage_pct = float(t["actual_move_pct"]) - float(t["pnl_pct"]) - COMMISSION_BPS_ROUND_TRIP / 100
+        new_pnl_pct = actual_move_pct - COMMISSION_BPS_ROUND_TRIP / 100 - slippage_pct
         size = float(t["position_size_dollars"])
         adjusted.append({**t, "entry_price": new_entry_price, "pnl_pct": new_pnl_pct, "pnl_abs": size * (new_pnl_pct / 100)})
 
     dropped = len(trades) - len(adjusted)
     if dropped:
         logger.warning(
-            "Sensibilidad de latencia (D+2): %d de %d trades descartados por no tener un D+2 disponible",
+            "Sensibilidad de latencia (D+2): %d de %d trades descartados (sin D+2 disponible, o salieron antes de D+2)",
             dropped, len(trades),
         )
     return adjusted

@@ -5,11 +5,20 @@ poder probarse con fixtures a mano, mismo patrón que
 portfolio_report.py:generate_recommendation."""
 from __future__ import annotations
 
+from pipeline.backtest.portfolio_metrics import INSUFFICIENT_SAMPLE_THRESHOLD
+
 GREENLIGHT_MIN_WIN_RATE = 0.55
 GREENLIGHT_MIN_SHARPE = 1.0
 GREENLIGHT_MIN_CALIBRATION = 0.6
 GREENLIGHT_MAX_DRAWDOWN = 0.15
 GREENLIGHT_MIN_TRADES = 300
+
+# BUGS_REPORT.md H-40: con 0 operaciones todas las métricas son None, ni A ni
+# C disparaban y el veredicto caía en B ("CONDITIONALLY VIABLE"), que la app
+# enseña como "Fiabilidad media". Por debajo de este mínimo no hay muestra
+# para juzgar nada: C. 20 es el mismo mínimo que ya usa el informe de
+# cartera (decisión del usuario, auditoría 2026-10-06).
+MIN_TRADES_FOR_VERDICT = INSUFFICIENT_SAMPLE_THRESHOLD
 
 REDLIGHT_MAX_SHARPE = 0.7
 REDLIGHT_MIN_WIN_RATE = 0.50
@@ -38,6 +47,15 @@ def generate_decision(
             "option": "C",
             "label": "REDLIGHT",
             "recommendation": "Revisita con más datos o pivotar estrategia. No apto para capital real hoy.",
+            "reasons": reasons,
+        }
+
+    if n_trades < MIN_TRADES_FOR_VERDICT:
+        reasons.append(f"solo {n_trades} operaciones (mínimo {MIN_TRADES_FOR_VERDICT}): sin muestra suficiente para juzgar")
+        return {
+            "option": "C",
+            "label": "REDLIGHT — INSUFFICIENT DATA",
+            "recommendation": "Sin datos suficientes. Seguir en paper trading hasta tener muestra.",
             "reasons": reasons,
         }
 

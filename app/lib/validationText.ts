@@ -10,6 +10,7 @@ const REPLACEMENTS: [RegExp, string][] = [
   [/ violación\(es\) anti-look-ahead detectadas — bloqueante para cualquier decisión positiva/g, " look-ahead violation(s) detected — blocks any positive decision"],
   [/No cumple todos los criterios de GREENLIGHT, pero tampoco dispara REDLIGHT: /g, "Does not meet every GREENLIGHT criterion, but does not trigger REDLIGHT either: "],
   [/walk-forward pasó, sin violaciones anti-look-ahead/g, "walk-forward passed, no look-ahead violations"],
+  [/^solo (\d+) operaciones \(mínimo (\d+)\): sin muestra suficiente para juzgar/g, "only $1 trades (minimum $2): not enough sample to judge"],
   [/calibración=/g, "calibration="],
   [/ — muestra insuficiente para cualquier estadístico \(mínimo (\d+)\)/g, " — sample too small for any statistic (minimum $1)"],
   [/ — varianza cero en la muestra \(todos los CAR idénticos\), t-test no aplicable/g, " — zero variance in the sample (all CARs identical), t-test not applicable"],

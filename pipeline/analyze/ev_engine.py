@@ -14,7 +14,8 @@ Esto solo tiene sentido si Aggressive amplifica la señal cruda (bull/bear) y
 Conservative la amortigua — un umbral distinto por sí solo no lo explicaría
 (el punto estimado sería el mismo, solo cambiaría el filtro). Por eso
 CONSERVATIVE_MULTIPLIER < 1 < AGGRESSIVE_MULTIPLIER: Conservative pide una
-señal más fuerte que sobreviva ser amortiguada Y superar un umbral más alto;
+señal más fuerte que sobreviva ser amortiguada Y superar un umbral más alto
+(EV_THRESHOLDS ya cuadra con esto desde la corrección de H-21);
 Aggressive amplifica la misma señal Y usa un umbral más bajo. Es un efecto
 compuesto deliberado, no dos parámetros redundantes.
 
@@ -42,13 +43,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Umbrales de EV por versión de estrategia (fracción, no %): 0.002 = 0.2%.
-# Pedidos literalmente por el spec: "¿EV > 0.2%? TRADE / NO TRADE" etc.
+# Umbrales de EV por versión de estrategia (fracción, no %): 0.008 = 0.8%.
+# BUGS_REPORT.md H-21: estaban al revés de lo que dice el docstring de este
+# módulo (Conservadora 0,2 % < Agresiva 0,8 %). Decisión del usuario
+# (auditoría, 2026-10-05): Conservadora exige MÁS que Agresiva, como dice la
+# documentación. Equilibrada queda en medio.
 EV_THRESHOLDS = {
-    "CONSERVATIVE": 0.002,
+    "CONSERVATIVE": 0.008,
     "BALANCED": 0.005,
-    "AGGRESSIVE": 0.008,
+    "AGGRESSIVE": 0.002,
 }
+# Margen sumado al umbral de cada versión "hasta después de fees". Vive aquí
+# para que la abstención (que decide) y el texto de _threshold_check (que lo
+# enseña la app) usen exactamente la misma comparación (H-22).
+EV_ABSTENTION_BUFFER = 0.0050  # 50 bps
 
 # Multiplicadores de magnitud — ver docstring del módulo para el porqué.
 _MAGNITUDE_MULTIPLIER = {
@@ -123,9 +131,14 @@ def _raw_point_estimate(
 
 
 def _threshold_check(ev: float, strategy: str) -> str:
-    threshold = EV_THRESHOLDS[strategy]
-    decision = "TRADE" if ev > threshold else "NO_TRADE"
-    return f"EV={ev * 100:.2f}% {'>' if ev > threshold else '<='} {threshold * 100:.1f}% → {decision}"
+    """Texto del check de umbral que enseña la app. BUGS_REPORT.md H-22: antes
+    comparaba el EV CON SIGNO sin buffer, así que todo SHORT salía como
+    NO_TRADE aunque la abstención lo operara. Ahora es la misma comparación que
+    abstention_engine.decide_for_strategy: |EV| contra umbral + buffer."""
+    threshold = EV_THRESHOLDS[strategy] + EV_ABSTENTION_BUFFER
+    supera = abs(ev) >= threshold
+    decision = "TRADE" if supera else "NO_TRADE"
+    return f"|EV|={abs(ev) * 100:.2f}% {'>=' if supera else '<'} {threshold * 100:.1f}% → {decision}"
 
 
 def position_size_pct(ev: float, confidence_in_conviction: float, strategy: str) -> float:

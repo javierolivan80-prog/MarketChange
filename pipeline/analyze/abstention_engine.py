@@ -50,11 +50,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pipeline import config
-from pipeline.analyze.ev_engine import EV_THRESHOLDS, compute_ev
+from pipeline.analyze.ev_engine import EV_ABSTENTION_BUFFER, EV_THRESHOLDS, compute_ev
 
 NOVELTY_FLOOR = 20
 CONFIDENCE_FLOOR = 40
-EV_ABSTENTION_BUFFER = 0.0050  # 50 bps, sumados al umbral propio de cada versión — "hasta después de fees"
 # Segundo componente del proxy de liquidez (ver docstring del módulo) — MISMO
 # umbral que ya exige universe.in_investable_universe (config.MIN_ADV_USD),
 # reevaluado en el momento del evento en vez de en un snapshot de HOY.

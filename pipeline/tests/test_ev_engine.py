@@ -37,10 +37,12 @@ def test_low_confidence_in_either_dimension_pulls_ev_toward_zero():
 
 
 def test_threshold_check_strings_match_spec_thresholds():
-    # EV balanced de 2% debe superar el umbral BALANCED (0.5%) -> TRADE
+    # EV balanced de ~2,4% supera el umbral BALANCED (0,5%) + buffer (0,5%) -> TRADE
+    from pipeline.analyze.ev_engine import EV_ABSTENTION_BUFFER
+
     result = compute_ev(net_conviction=0.9, confidence_in_conviction=95, expected_magnitude_pct=3.0, impact_confidence=95)
-    assert "TRADE" in result.threshold_balanced
-    assert f"{EV_THRESHOLDS['BALANCED'] * 100:.1f}%" in result.threshold_balanced
+    assert "TRADE" in result.threshold_balanced and "NO_TRADE" not in result.threshold_balanced
+    assert f"{(EV_THRESHOLDS['BALANCED'] + EV_ABSTENTION_BUFFER) * 100:.1f}%" in result.threshold_balanced
 
 
 def test_threshold_check_no_trade_below_threshold():
@@ -76,3 +78,28 @@ def test_as_json_matches_spec_field_names():
     }
     assert set(payload.keys()) == expected_keys
     assert payload["position_sizing_conservative"].endswith("%")
+
+
+def test_conservadora_exige_mas_que_agresiva():
+    """BUGS_REPORT.md H-21: los umbrales estaban al revés del docstring."""
+    assert EV_THRESHOLDS["CONSERVATIVE"] > EV_THRESHOLDS["BALANCED"] > EV_THRESHOLDS["AGGRESSIVE"]
+
+
+@pytest.mark.parametrize("signo", [1.0, -1.0])
+def test_el_texto_del_umbral_coincide_con_la_abstencion_en_largo_y_en_corto(signo):
+    """BUGS_REPORT.md H-22: el texto del umbral comparaba el EV con signo, así
+    que todo SHORT salía como NO_TRADE aunque la abstención lo operara. Ahora
+    ambos usan |EV| contra umbral + buffer."""
+    from pipeline.analyze.abstention_engine import AbstentionInputs, decide_for_strategy
+
+    for magnitud in (0.5, 2.0, 4.0, 8.0):
+        r = compute_ev(signo * 0.9, 90, magnitud, 90)
+        evs = {"CONSERVATIVE": r.ev_conservative, "BALANCED": r.ev_balanced, "AGGRESSIVE": r.ev_aggressive}
+        textos = {"CONSERVATIVE": r.threshold_conservative, "BALANCED": r.threshold_balanced, "AGGRESSIVE": r.threshold_aggressive}
+        entradas = AbstentionInputs(
+            novelty_score=80, confidence_in_conviction=90, net_conviction=signo * 0.9, ev_by_strategy=evs,
+            had_survivorship_warning=False, beta_available=True, adv_usd_60d=1e9, is_fda_crl_without_8k=False,
+        )
+        for estrategia, texto in textos.items():
+            opera = decide_for_strategy(entradas, estrategia).trade_decision != "NO_TRADE"
+            assert ("NO_TRADE" not in texto) == opera, (magnitud, estrategia, texto)

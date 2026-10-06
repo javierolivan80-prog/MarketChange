@@ -306,14 +306,16 @@ usaba un tamaño fijo (1.5%/5%) sin mirar ni el EV ni la confianza). Escribe en
 **Circuit-breaker de drawdown de cartera** (hallazgo de auditoría, prioridad
 máxima — protección de capital): si el drawdown pico-a-valle de la equity de
 UNA versión alcanza el 15%
-(`portfolio_simulator.DRAWDOWN_CIRCUIT_BREAKER_PCT`), esa versión deja de
-abrir posiciones nuevas hasta que la equity se recupere por encima del
-umbral — las posiciones ya abiertas se siguen gestionando con sus reglas
-normales (TP/SL/trailing/max holding), no se liquidan de golpe. La
-recuperación es automática (se recalcula día a día contra el pico histórico
-de la corrida, no hay ningún flag que resetear a mano dentro de una misma
-simulación — ver el docstring de la constante para el razonamiento
-completo). Se persiste día a día en `portfolio_equity_curve.circuit_breaker_active`
+(`portfolio_simulator.DRAWDOWN_CIRCUIT_BREAKER_PCT`), esa versión pasa
+20 sesiones sin abrir posiciones nuevas
+(`CIRCUIT_BREAKER_PAUSE_SESSIONS`); después vuelve a operar a medio tamaño
+(`CIRCUIT_BREAKER_REDUCED_SIZE`) hasta marcar un nuevo máximo de equity, y
+mientras opera a medio tamaño un nuevo disparo se mide contra la equity al
+reanudar (BUGS_REPORT.md H-10). Las posiciones ya abiertas se siguen
+gestionando con sus reglas normales (TP/SL/trailing/max holding), no se
+liquidan de golpe. El freno, el tamaño, los huecos libres y el dinero
+disponible se evalúan con el estado de la cartera al cierre anterior: las
+entradas se ejecutan a la apertura. Se persiste día a día en `portfolio_equity_curve.circuit_breaker_active`
 y se resume en `n_days_circuit_breaker_active` del reporte por versión.
 
 **Tope de posición por %ADV** (hallazgo de auditoría, decidido con el
@@ -471,9 +473,10 @@ antes de conectar el paso a `nightly_pipeline.yml` — ver el historial de
   umbral del trailing real (+20%) como take-profit único estand-in, solo
   para esta simulación de una semana (el backtest histórico de §3.9 sigue
   usando los tramos reales). Sin sizing en dólares (el spec no lo pide,
-  solo `pnl_pct`) — se reutiliza la misma comisión de 10 bps del backtest
-  histórico para que la comparación "¿el paper trading confirma el
-  backtest?" sea consistente.
+  solo `pnl_pct`) — se reutilizan los mismos costes del backtest histórico
+  (comisión de 10 bps y deslizamiento de 10 o 25 pb por lado según la
+  capitalización en D0, H-32) para que la comparación "¿el paper trading
+  confirma el backtest?" sea consistente.
 - `paper_trading/analysis.py`: el spec ilustra `predicted_magnitude` con
   una escala grande ("predice +40%, sube +38%") que no corresponde a
   `ev_conservative/aggressive/balanced` (0.2%-2%, un valor esperado

@@ -416,7 +416,8 @@ class TestForcedCloseWithDataGap:
             trade = cur.fetchone()
         assert trade["exit_reason"] == "DATA_GAP"
         assert float(trade["exit_price"]) == float(trade["entry_price"])  # retorno plano
-        assert float(trade["pnl_pct"]) == pytest.approx(-COMMISSION_BPS_ROUND_TRIP / 100)  # solo la comisión
+        # Solo los costes: comisión + deslizamiento conservador (sin capitalización en D0, H-32).
+        assert float(trade["pnl_pct"]) == pytest.approx(-COMMISSION_BPS_ROUND_TRIP / 100 - 2 * 25.0 / 100)
 
 
 class TestDrawdownCircuitBreaker:
@@ -429,82 +430,193 @@ class TestDrawdownCircuitBreaker:
     modesto (-4%, sin tocar el SL real de -5%) baste para cruzarlo — el
     umbral en sí ya se prueba en puro en test_portfolio_simulator.py."""
 
-    def test_new_entry_blocked_during_drawdown_then_allowed_after_recovery(self, conn):
-        from pipeline.backtest.portfolio_simulator import simulate_portfolio
-
-        cal = _business_days(date(2024, 1, 2), 15)
-
-        # MAIN: entra a 100, se hunde a 96 (low se queda en 95.8, por encima
-        # del SL real de 95.0 -> NO dispara stop-loss, sigue abierta con
-        # pérdida NO realizada), se mantiene hundida varios días, y se
-        # recupera a 100 antes del final del panel.
-        d0_main = cal[0]
+    def _seed_main(self, conn, cal, precios_por_indice):
         _seed_event_with_analysis(
-            conn, "1", "MAIN", d0_main,
+            conn, "1", "MAIN", cal[0],
             trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
             net_conviction=0.7, confidence=100.0,  # confidence=100 -> tamaño máximo Aggressive (20%)
             ev_conservative=0.0, ev_aggressive=0.01, ev_balanced=0.0,
         )
-        main_prices = {
-            cal[1]: (100.0, 101.0, 99.0, 100.0),   # entrada (apertura=100)
-            cal[2]: (100.0, 100.5, 95.8, 96.0),    # se hunde: low > 95.0 (SL), no dispara
-            cal[3]: (96.0, 97.0, 95.8, 96.0),
-            cal[4]: (96.0, 97.0, 95.8, 96.0),
-            cal[5]: (96.0, 97.0, 95.8, 96.0),
-            cal[6]: (100.0, 101.0, 99.0, 100.0),   # recupera
-        }
-        for d in cal[7:]:
-            main_prices[d] = (100.0, 101.0, 99.0, 100.0)
         with conn.cursor() as cur:
-            for d, (o, h, l, c) in main_prices.items():
+            for i, (o, h, l, c) in precios_por_indice.items():
                 cur.execute(
                     "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning) "
                     "VALUES ('MAIN', %s, %s, %s, %s, %s, 1.0, 100000, FALSE)",
+                    (cal[i], o, c, h, l),
+                )
+        conn.commit()
+
+    def _seed_signal(self, conn, cik, ticker, d0, cal_from):
+        _seed_event_with_analysis(
+            conn, cik, ticker, d0,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.7, confidence=80.0, ev_conservative=0.0, ev_aggressive=0.01, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, ticker, cal_from, [100.0] * len(cal_from))
+
+    def _trades(self, conn, tag):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT e.ticker, pt.position_size_pct FROM portfolio_trades pt JOIN events e ON e.event_id = pt.event_id "
+                "WHERE pt.run_batch_tag = %s", (tag,),
+            )
+            return {r["ticker"]: float(r["position_size_pct"]) for r in cur.fetchall()}
+
+    def _curve(self, conn, tag):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT trade_date, circuit_breaker_active FROM portfolio_equity_curve "
+                "WHERE version = 'AGGRESSIVE' AND run_batch_tag = %s ORDER BY trade_date", (tag,),
+            )
+            return {r["trade_date"]: r["circuit_breaker_active"] for r in cur.fetchall()}
+
+    def test_pausa_y_despues_medio_tamano_sin_volver_a_saltar_al_reanudar(self, conn):
+        """BUGS_REPORT.md H-10: al saltar, pausa de N sesiones; después se
+        opera a mitad de tamaño y el freno se mide contra el nivel al
+        reanudar, así que NO vuelve a saltar en cuanto termina la pausa
+        aunque el drawdown frente al máximo siga por encima del umbral."""
+        from pipeline.backtest.portfolio_simulator import CIRCUIT_BREAKER_REDUCED_SIZE, simulate_portfolio
+        from pipeline.backtest.portfolio_strategies import STRATEGIES, compute_position_size_pct
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        # MAIN: entra a 100 en cal[1] y se queda hundida en 96 sin tocar su
+        # stop (95): drawdown no realizado del 0,8 % > 0,5 % del test.
+        precios = {1: (100.0, 101.0, 99.0, 100.0)}
+        for i in range(2, 15):
+            precios[i] = (96.0, 97.0, 95.8, 96.0)
+        self._seed_main(conn, cal, precios)
+        self._seed_signal(conn, "2", "BLOCKED", cal[2], cal[3:])   # entra en cal[3]: en plena pausa
+        self._seed_signal(conn, "3", "HALF", cal[5], cal[6:])      # entra en cal[6]: tras la pausa
+
+        result = simulate_portfolio(
+            conn, "AGGRESSIVE", run_batch_tag="test-breaker-1", starting_capital=100_000.0,
+            circuit_breaker_pct=0.005, circuit_breaker_pause_sessions=3,
+        )
+        curva = self._curve(conn, "test-breaker-1")
+        # El freno mira la equity al cierre ANTERIOR (las entradas son a la
+        # apertura): el hundimiento de cal[2] lo dispara en cal[3].
+        assert curva[cal[2]] is False
+        assert [curva[cal[i]] for i in (3, 4, 5)] == [True, True, True]  # 3 sesiones de pausa
+        assert curva[cal[6]] is False and curva[cal[7]] is False          # reanuda, no vuelve a saltar
+        assert result["n_days_circuit_breaker_active"] == 3
+
+        operadas = self._trades(conn, "test-breaker-1")
+        assert "BLOCKED" not in operadas
+        normal = compute_position_size_pct(80.0, STRATEGIES["AGGRESSIVE"])
+        assert operadas["HALF"] == pytest.approx(normal * CIRCUIT_BREAKER_REDUCED_SIZE, rel=1e-6)
+
+    def test_un_nuevo_maximo_devuelve_el_tamano_completo(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.backtest.portfolio_strategies import STRATEGIES, compute_position_size_pct
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        # MAIN se hunde (pausa de 1 sesión) y luego sube a 110: nuevo máximo.
+        precios = {1: (100.0, 101.0, 99.0, 100.0), 2: (96.0, 97.0, 95.8, 96.0), 3: (96.0, 97.0, 95.8, 96.0)}
+        for i in range(4, 15):
+            precios[i] = (110.0, 111.0, 109.0, 110.0)
+        self._seed_main(conn, cal, precios)
+        self._seed_signal(conn, "3", "FULL", cal[5], cal[6:])
+
+        result = simulate_portfolio(
+            conn, "AGGRESSIVE", run_batch_tag="test-breaker-2", starting_capital=100_000.0,
+            circuit_breaker_pct=0.005, circuit_breaker_pause_sessions=1,
+        )
+        assert result["n_days_circuit_breaker_active"] == 1  # el freno saltó de verdad
+        operadas = self._trades(conn, "test-breaker-2")
+        normal = compute_position_size_pct(80.0, STRATEGIES["AGGRESSIVE"])
+        assert operadas["FULL"] == pytest.approx(normal, rel=1e-6)
+
+
+    def test_a_medio_tamano_un_nuevo_disparo_se_mide_contra_el_nivel_al_reanudar(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 10)
+        # MAIN (20 % de la cartera) entra a 100 y cierra en 96: el freno salta
+        # en cal[3] (1 sesión de pausa) y reanuda en cal[4] con la equity de
+        # entonces (~99.200). En cal[4] toca su stop (95): la equity cae a
+        # ~98.880, un 0,32 % por debajo del nivel al reanudar -> nueva pausa
+        # en cal[5], aunque frente al máximo (100.000) ya estuviera por debajo.
+        precios = {1: (100.0, 101.0, 99.0, 100.0), 2: (96.0, 97.0, 95.8, 96.0), 3: (96.0, 97.0, 95.8, 96.0),
+                   4: (96.0, 96.5, 94.0, 94.5)}
+        for i in range(5, 10):
+            precios[i] = (94.5, 95.0, 94.0, 94.5)
+        self._seed_main(conn, cal, precios)
+        simulate_portfolio(
+            conn, "AGGRESSIVE", run_batch_tag="test-breaker-3", starting_capital=100_000.0,
+            circuit_breaker_pct=0.003, circuit_breaker_pause_sessions=1,
+        )
+        curva = self._curve(conn, "test-breaker-3")
+        assert [curva[cal[i]] for i in (3, 4, 5)] == [True, False, True]
+
+
+class TestEntrySessionEvaluated:
+    """BUGS_REPORT.md H-31: un stop tocado en la misma sesión de entrada se
+    ejecuta ese día; antes se ignoraba hasta el día siguiente."""
+
+    def test_stop_en_la_sesion_de_entrada(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 8)
+        _seed_event_with_analysis(
+            conn, "1", "DROP", cal[0],
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.7, confidence=80.0, ev_conservative=0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        # Entra a 100 en cal[1] y ese mismo día cae a 90 (stop conservador por
+        # debajo de 100); al día siguiente vuelve a 100.
+        precios = {cal[1]: (100.0, 100.5, 90.0, 91.0)}
+        for d in cal[2:]:
+            precios[d] = (100.0, 100.5, 99.5, 100.0)
+        with conn.cursor() as cur:
+            for d, (o, h, l, c) in precios.items():
+                cur.execute(
+                    "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning) "
+                    "VALUES ('DROP', %s, %s, %s, %s, %s, 1.0, 100000, FALSE)",
                     (d, o, c, h, l),
                 )
         conn.commit()
 
-        # BLOCKED: señal cuya entrada cae en cal[3], mientras MAIN sigue
-        # hundida (breaker activo) -> NUNCA debe abrirse.
-        _seed_event_with_analysis(
-            conn, "2", "BLOCKED", cal[2],
-            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
-            net_conviction=0.7, confidence=80.0, ev_conservative=0.0, ev_aggressive=0.01, ev_balanced=0.0,
-        )
-        _seed_price_series(conn, "BLOCKED", cal[3:], [100.0] * len(cal[3:]))
+        simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="test-h31", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT entry_date, exit_date, exit_reason, actual_move_pct FROM portfolio_trades WHERE run_batch_tag='test-h31'")
+            t = cur.fetchone()
+        assert t["exit_reason"] == "STOP_LOSS"
+        assert t["exit_date"] == t["entry_date"] == cal[1]
+        assert float(t["actual_move_pct"]) == pytest.approx(-1.5)  # al nivel del stop (98,5), no al mínimo del día
 
-        # RECOVERED: señal cuya entrada cae en cal[7], después de que MAIN
-        # se recuperase en cal[6] (breaker ya inactivo) -> SÍ debe abrirse.
-        _seed_event_with_analysis(
-            conn, "3", "RECOVERED", cal[6],
-            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
-            net_conviction=0.7, confidence=80.0, ev_conservative=0.0, ev_aggressive=0.01, ev_balanced=0.0,
-        )
-        _seed_price_series(conn, "RECOVERED", cal[7:], [100.0] * len(cal[7:]))
+    def test_un_stop_del_mismo_dia_no_libera_hueco_para_otra_entrada_a_la_misma_apertura(self, conn):
+        """Revisión adversarial: lo que se cierra a media sesión no puede
+        dejar sitio a otra entrada ejecutada a la apertura de esa sesión."""
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
 
-        result = simulate_portfolio(
-            conn, "AGGRESSIVE", run_batch_tag="test-breaker-1", starting_capital=100_000.0, circuit_breaker_pct=0.005
-        )
-        assert result["n_days_circuit_breaker_active"] > 0
+        cal = _business_days(date(2024, 1, 2), 8)
+        # Tres señales Agresivas el mismo día (máximo 2 a la vez). A, la de
+        # mayor |EV|, entra primero y toca su stop (-5 %) en la misma sesión.
+        for cik, ticker, ev in (("1", "AAA", 0.03), ("2", "BBB", 0.02), ("3", "CCC", 0.01)):
+            _seed_event_with_analysis(
+                conn, cik, ticker, cal[0],
+                trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
+                net_conviction=0.7, confidence=80.0, ev_conservative=0.0, ev_aggressive=ev, ev_balanced=0.0,
+            )
+        with conn.cursor() as cur:
+            for d in cal[1:]:
+                low = 90.0 if d == cal[1] else 99.5
+                cur.execute(
+                    "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume, survivorship_warning) "
+                    "VALUES ('AAA', %s, 100, 100, 100.5, %s, 1.0, 100000, FALSE)",
+                    (d, low),
+                )
+        conn.commit()
+        _seed_price_series(conn, "BBB", cal[1:], [100.0] * 7)
+        _seed_price_series(conn, "CCC", cal[1:], [100.0] * 7)
 
+        simulate_portfolio(conn, "AGGRESSIVE", run_batch_tag="test-slots", starting_capital=100_000.0)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT e.ticker FROM portfolio_trades pt JOIN events e ON e.event_id = pt.event_id "
-                "WHERE pt.run_batch_tag = 'test-breaker-1'"
+                "SELECT e.ticker FROM portfolio_trades pt JOIN events e ON e.event_id = pt.event_id WHERE pt.run_batch_tag='test-slots'"
             )
-            tickers_that_traded = {r["ticker"] for r in cur.fetchall()}
-        assert "MAIN" in tickers_that_traded
-        assert "BLOCKED" not in tickers_that_traded  # bloqueado por el breaker, nunca se abrió
-        assert "RECOVERED" in tickers_that_traded    # entró tras la recuperación automática
-
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT trade_date, circuit_breaker_active FROM portfolio_equity_curve "
-                "WHERE version = 'AGGRESSIVE' AND run_batch_tag = 'test-breaker-1' ORDER BY trade_date"
-            )
-            rows = {r["trade_date"]: r["circuit_breaker_active"] for r in cur.fetchall()}
-        assert rows[cal[2]] is True    # el día del hundimiento ya está activo
-        assert rows[cal[6]] is False   # el día de la recuperación ya está inactivo
+            operadas = {r["ticker"] for r in cur.fetchall()}
+        assert operadas == {"AAA", "BBB"}
 
 
 class TestPositionSizeCappedByADV:
@@ -649,3 +761,49 @@ def test_una_operacion_por_empresa_y_dia(conn):
     # Mismo día: primero el de mayor |EV| (orden en que se reparten los huecos).
     ids = [r["event_id"] for r in fetch_events_for_version(conn, "BALANCED")]
     assert ids == [b, otro]
+
+
+def test_deslizamiento_usa_la_capitalizacion_en_d0_sin_look_ahead(conn):
+    """H-32: la capitalización para el deslizamiento es la de D0 (acciones
+    del último 10-K PUBLICADO antes de D0 × precio de D0), no la de hoy."""
+    from pipeline.backtest.portfolio_simulator import _build_entry_plan, fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    dias = _business_days(d0, 5)
+    _seed_price_series(conn, "BIG", dias, [100.0] * 5)
+    _seed_price_series(conn, "GROW", dias, [100.0] * 5)
+    _seed_event_with_analysis(conn, "1", "BIG", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    _seed_event_with_analysis(conn, "2", "GROW", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        # BIG: 200 M acciones × 100 $ = 20.000 M$ en D0.
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('1', '2023-12-31', '2024-02-15', '10-K', 200000000)")
+        # GROW: en D0 solo había 50 M acciones (5.000 M$); el 10-K con 500 M se
+        # publicó DESPUÉS de D0 y no puede contar.
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('2', '2022-12-31', '2023-02-15', '10-K', 50000000), "
+                    "('2', '2023-12-31', '2024-03-20', '10-K', 500000000)")
+    conn.commit()
+
+    eventos = fetch_events_for_version(conn, "BALANCED")
+    plan = {p["ticker"]: p for p in _build_entry_plan(conn, "BALANCED", eventos, {})}
+    assert plan["BIG"]["slippage_bps_por_lado"] == 10.0
+    assert plan["GROW"]["slippage_bps_por_lado"] == 25.0
+
+
+def test_un_contrasplit_posterior_no_convierte_en_grande_a_una_empresa_pequena(conn):
+    """Sesgo de H-04: el precio de D0 viene reexpresado por splits
+    posteriores. Si la capitalización actual es pequeña, manda la menor."""
+    from pipeline.backtest.portfolio_simulator import _build_entry_plan, fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    dias = _business_days(d0, 5)
+    _seed_price_series(conn, "RS", dias, [100.0] * 5)  # reexpresado: en D0 cotizaba a ~10
+    _seed_event_with_analysis(conn, "1", "RS", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+                    "VALUES ('1', '2023-12-31', '2024-02-15', '10-K', 200000000)")  # 200 M × 100 = 20.000 M$ aparentes
+        cur.execute("UPDATE universe SET market_cap_last_usd = 1500000000 WHERE cik = '1'")  # hoy: 1.500 M$
+    conn.commit()
+    plan = _build_entry_plan(conn, "BALANCED", fetch_events_for_version(conn, "BALANCED"), {})
+    assert plan[0]["slippage_bps_por_lado"] == 25.0

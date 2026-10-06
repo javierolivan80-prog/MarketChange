@@ -148,3 +148,14 @@ class TestValidateNoLookaheadAgainstRealPostgres:
         violations = validate_no_lookahead(self.conn, "bad-entry")
         assert len(violations) == 1
         assert "entrada en o antes de D0" in violations[0]
+
+    def test_salida_el_mismo_dia_de_la_entrada_no_es_violacion(self):
+        """H-31: entrar a la apertura y salir por stop ese mismo día es
+        legítimo; no debe forzar el veredicto a REDLIGHT."""
+        from pipeline.backtest.portfolio_validation import validate_no_lookahead
+
+        d0 = date(2024, 1, 2)
+        event_id = self._seed_event(d0)
+        entrada = d0 + timedelta(days=1)
+        self._insert_trade(event_id, entry_date=entrada, exit_date=entrada, tag="same-day")
+        assert validate_no_lookahead(self.conn, "same-day") == []

@@ -80,3 +80,17 @@ def test_greenlight_boundary_is_strict_greater_than_not_equal():
         n_trades=350, walk_forward_passed=True, no_lookahead_violations=[],
     )
     assert result["option"] != "A"
+
+
+def test_sin_operaciones_no_hay_veredicto_positivo():
+    """BUGS_REPORT.md H-40: con 0 operaciones el veredicto caía en
+    YELLOWLIGHT ("condicionalmente viable"). Por debajo del mínimo, C."""
+    from pipeline.validation.decision import MIN_TRADES_FOR_VERDICT, generate_decision
+
+    for n in (0, MIN_TRADES_FOR_VERDICT - 1):
+        d = generate_decision(None, None, None, None, n, None, [])
+        assert d["option"] == "C" and "INSUFFICIENT" in d["label"]
+        assert f"solo {n} operaciones" in d["reasons"][0]
+    # Con muestra suficiente vuelve a evaluarse con las reglas de siempre.
+    d = generate_decision(0.52, 0.9, 0.5, 0.2, MIN_TRADES_FOR_VERDICT, None, [])
+    assert d["option"] == "B"

@@ -368,7 +368,7 @@ CREATE TABLE IF NOT EXISTS portfolio_trades (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Checksums anti-look-ahead (spec Fase Backtesting): la entrada nunca es
     -- D0, y la salida nunca es anterior o igual a la entrada.
-    CONSTRAINT chk_portfolio_no_lookahead CHECK (exit_date > entry_date),
+    CONSTRAINT chk_portfolio_no_lookahead CHECK (exit_date >= entry_date),
     -- Sin esto, reejecutar simulate_portfolio() con el MISMO run_batch_tag
     -- (ej. un re-disparo manual del workflow el mismo día) duplicaría cada
     -- trade — mismo patrón que backtest_runs (Fase 1), que sí lo tenía desde
@@ -461,7 +461,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     ev              NUMERIC NOT NULL,
     prediction      NUMERIC NOT NULL,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT chk_paper_no_lookahead CHECK (exit_date IS NULL OR exit_date > entry_date),
+    CONSTRAINT chk_paper_no_lookahead CHECK (exit_date IS NULL OR exit_date >= entry_date),
     UNIQUE (event_id, version, run_batch_tag)
 );
 CREATE INDEX IF NOT EXISTS idx_paper_trades_version_tag ON paper_trades (version, run_batch_tag);
@@ -853,3 +853,23 @@ ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS input_tokens BIGINT;
 ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS output_tokens BIGINT;
 ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS cost_usd NUMERIC;
 ALTER TABLE ai_batches ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+
+-- BUGS_REPORT.md H-31: la sesión de entrada también se evalúa. Se entra a la
+-- apertura, así que un stop u objetivo tocado ese mismo día es una salida
+-- legítima (exit_date = entry_date); salir ANTES de entrar sigue prohibido.
+-- Las bases ya creadas tenían "exit_date > entry_date": se reemplaza.
+-- Solo si aún tiene la forma antigua: así no se bloquea ni se recorre la
+-- tabla en cada pasada que aplica el schema.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_portfolio_no_lookahead'
+               AND pg_get_constraintdef(oid) LIKE '%exit_date > entry_date%') THEN
+        ALTER TABLE portfolio_trades DROP CONSTRAINT chk_portfolio_no_lookahead;
+        ALTER TABLE portfolio_trades ADD CONSTRAINT chk_portfolio_no_lookahead CHECK (exit_date >= entry_date);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_paper_no_lookahead'
+               AND pg_get_constraintdef(oid) LIKE '%exit_date > entry_date%') THEN
+        ALTER TABLE paper_trades DROP CONSTRAINT chk_paper_no_lookahead;
+        ALTER TABLE paper_trades ADD CONSTRAINT chk_paper_no_lookahead CHECK (exit_date IS NULL OR exit_date >= entry_date);
+    END IF;
+END $$;

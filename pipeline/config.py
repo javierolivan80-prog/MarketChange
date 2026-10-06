@@ -223,6 +223,20 @@ OOS_START = "2024-01-01"
 
 # --- Costes de transacción (T7: barrido de sensibilidad) ---
 SLIPPAGE_BPS_SWEEP = [0, 10, 25, 50]
+# Deslizamiento base por lado (BUGS_REPORT.md H-32; decisión del usuario,
+# auditoría 2026-10-05): se resta del P&L de cada operación en el backtest y
+# en el paper trading, además de la comisión. La capitalización es la de D0
+# (acciones del último 10-K publicado antes de D0 × cierre de D0), no la de
+# hoy; sin ese dato se aplica el de empresa pequeña, el conservador.
+SLIPPAGE_LARGE_CAP_USD = 10_000_000_000
+SLIPPAGE_BPS_PER_SIDE_LARGE = 10.0
+SLIPPAGE_BPS_PER_SIDE_SMALL = 25.0
+
+
+def slippage_bps_por_lado(market_cap_usd: float | None) -> float:
+    if market_cap_usd is not None and market_cap_usd >= SLIPPAGE_LARGE_CAP_USD:
+        return SLIPPAGE_BPS_PER_SIDE_LARGE
+    return SLIPPAGE_BPS_PER_SIDE_SMALL
 
 # --- Memoria de tesis (hallazgo de auditoría: el sistema no recordaba por qué
 # emitió una alerta ayer). Ver pipeline/backtest/thesis_engine.py para la
