@@ -940,3 +940,13 @@ CREATE TABLE IF NOT EXISTS xbrl_descargas (
     cik            TEXT PRIMARY KEY,
     descargado_en  TIMESTAMPTZ NOT NULL
 );
+
+-- ============================================================================
+-- avisos_enviados: avisos de Telegram que solo deben salir una vez (por
+-- ejemplo, «gasto de IA al 80 % del tope», uno por día; ver
+-- notify/gasto_notifier.py). clave = tipo de aviso + fecha.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS avisos_enviados (
+    clave       TEXT PRIMARY KEY,
+    enviado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

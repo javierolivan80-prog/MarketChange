@@ -1,0 +1,68 @@
+name: Backup semanal
+# Copia de seguridad de la base de datos (Tanda 5; decisión del usuario,
+# 2026-10-06): pg_dump comprimido y CIFRADO (AES-256, gpg simétrico) con el
+# secreto BACKUP_PASSPHRASE, guardado como artefacto de Actions 90 días
+# (~13 copias). Coste: 0 € (repositorio público: minutos y almacenamiento de
+# artefactos gratis), ~2-5 min por copia.
+#
+# El repositorio es PÚBLICO: cualquier usuario de GitHub puede descargar sus
+# artefactos. Por eso, sin BACKUP_PASSPHRASE el job FALLA y no sube nada:
+# nunca se publica la base de datos sin cifrar. Si se pierde la contraseña,
+# los backups no se pueden abrir. Restaurar: RUNBOOK.md, «Backup y restauración».
+run-name: Backup semanal
+
+on:
+  schedule:
+    - cron: "17 4 * * 0"   # domingo 04:17 UTC, fuera de las pasadas del nightly
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Comprobar el secreto de cifrado
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error title=Falta BACKUP_PASSPHRASE::Sin contraseña no se hace backup (el repo es público y no se sube nada sin cifrar). Añádela en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Instalar pg_dump de la misma versión que el servidor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          VERSION=$(psql "$DATABASE_URL" -tAc "SHOW server_version_num" | cut -c1-2)
+          echo "Servidor PostgreSQL $VERSION"
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-$VERSION" >/dev/null
+          echo "PG_DUMP=/usr/lib/postgresql/$VERSION/bin/pg_dump" >> "$GITHUB_ENV"
+
+      - name: pg_dump cifrado
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -o pipefail
+          FICHERO="marketchange-$(date -u +%Y-%m-%d).dump.gpg"
+          "$PG_DUMP" --format=custom --compress=9 --no-owner --no-privileges "$DATABASE_URL" \
+            | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-fd 3 3<<<"$BACKUP_PASSPHRASE" -o "$FICHERO"
+          ls -lh "$FICHERO"
+          echo "FICHERO=$FICHERO" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FICHERO }}
+          path: ${{ env.FICHERO }}
+          retention-days: 90
+          if-no-files-found: error

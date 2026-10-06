@@ -61,3 +61,15 @@ def test_oos_sin_motivo_se_rechaza_antes_de_tocar_la_base():
     for modulo in ("pipeline.backtest.portfolio_report", "pipeline.validation.report"):
         r = _cli(modulo, "--oos")
         assert r.returncode == 2 and "--motivo" in r.stderr, modulo
+
+
+def test_el_backup_nunca_sube_la_base_sin_cifrar():
+    """Tanda 5: el repo es público y los artefactos se pueden descargar. El
+    backup exige BACKUP_PASSPHRASE, cifra con gpg y solo sube el .gpg."""
+    texto = _sin_comentarios((WORKFLOWS / "backup.yml").read_text(encoding="utf-8"))
+    assert 'if [ -z "$BACKUP_PASSPHRASE" ]' in texto and "exit 1" in texto
+    assert "| gpg --batch --yes --symmetric --cipher-algo AES256" in texto
+    assert "set -o pipefail" in texto  # si pg_dump falla, el paso falla
+    assert re.search(r'FICHERO="[^"]*\.dump\.gpg"', texto)
+    assert "retention-days: 90" in texto
+    assert "schedule:" in texto and "workflow_dispatch:" in texto

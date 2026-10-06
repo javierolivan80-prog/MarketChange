@@ -73,6 +73,7 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
       - El relleno de enrichment no reescribe controles ya al día.
       - Calidad: índice parcial; los CAR solo se recalculan para tickers revisados o CAR nuevos; se comprueba también la apertura; los índices (^VIX) no se marcan por picos; la ventana del backtest empieza 5 días antes de D0; el paso corre aunque falle el anterior.
     - Caché XBRL: las cuentas de una empresa solo se vuelven a pedir si nunca se pidieron, si hace más de 90 días, o si ya le toca un 10-K nuevo (cierre + 425 días) y no ha llegado (como mucho, una vez por semana).
+  - Tanda 5 «Operación segura» (2026-10-06): backup semanal cifrado (`backup.yml`: pg_dump + gpg AES-256 con `BACKUP_PASSPHRASE`, artefacto 90 días; sin contraseña no sube nada, porque el repositorio es público), aviso de Telegram al 80 % del tope diario de gasto (uno al día) y comprobación de los secretos en cada pasada, sin enseñar sus valores. Restauración probada en local: cifrar, descifrar y `pg_restore` devuelven las 28 tablas, y una contraseña errónea falla.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

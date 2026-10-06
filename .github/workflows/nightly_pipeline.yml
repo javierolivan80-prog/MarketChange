@@ -320,6 +320,17 @@ jobs:
           cache-dependency-path: pipeline/requirements.txt
       - run: pip install -r pipeline/requirements.txt -c pipeline/constraints.txt
 
+      - name: Comprobar que existen los secretos (sin enseñar su valor)
+        # Deja un aviso en el resumen del run por cada secreto que falte y lo
+        # que deja de funcionar sin él (pipeline/ops_secretos.py). No falla.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: python -m pipeline.ops_secretos
+
       - name: Aplicar schema (idempotente)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -534,6 +545,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Aviso al 80 % del tope diario de gasto (notify/gasto_notifier.py).
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ANALYSIS_MIN_MARKET_CAP_USD: ${{ vars.ANALYSIS_MIN_MARKET_CAP_USD }}
           ANALYSIS_MAX_EVENTS_PER_RUN: ${{ vars.ANALYSIS_MAX_EVENTS_PER_RUN }}
         run: python -m pipeline.analyze.event_analysis_pipeline
