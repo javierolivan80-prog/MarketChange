@@ -1315,3 +1315,41 @@ def test_el_analisis_guarda_el_enrichment_con_el_vix(conn, sin_techo_de_ev):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM event_enrichment WHERE vix_d0 IS NOT NULL")
         assert cur.fetchone()["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Prueba de humo (Tanda 6): N eventos con la IA (aquí simulada) y un informe.
+# ---------------------------------------------------------------------------
+
+
+def test_smoke_analiza_n_eventos_y_da_el_informe(conn, sin_techo_de_ev):
+    from pipeline.analyze.smoke import ejecutar_smoke, informe_markdown
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    for i in range(4):
+        _seed_event(conn, "1", "TESTCO", dates[270 + i * 3].date(), filing_text="texto del filing")
+    _con_capitalizacion(conn)
+    scripted = _ScriptedBatchesClient()
+    informe = ejecutar_smoke(conn, SimpleNamespace(messages=SimpleNamespace(batches=scripted)), 2)
+    assert informe["pedidos"] == 2 and informe["en_cola"] == 2
+    assert informe["analizados_con_ia"] + informe["de_cache"] == 2 and informe["sin_guardar"] == 0
+    assert [b["kind"] for b in informe["batches"]] == ["bull_bear", "judge"]
+    assert informe["requests_fallidas"] == {"n_errores": 0, "n_cortadas": 0, "n_json_invalido": 0}
+    assert sum(informe["decisiones_balanced"]["con_ia"].values()) == 2
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM event_analyses")
+        assert cur.fetchone()["n"] == 2  # solo N, no la cola entera
+        cur.execute("SELECT informe FROM smoke_runs WHERE smoke_run_id = %s", (informe["smoke_run_id"],))
+        assert cur.fetchone()["informe"]["en_cola"] == 2
+    texto = informe_markdown(informe)
+    assert "Prueba de humo" in texto and "| bull_bear |" in texto
+
+
+def test_smoke_tiene_tope_y_no_corre_sin_presupuesto(conn, monkeypatch):
+    from pipeline.analyze import smoke
+
+    monkeypatch.setattr(smoke, "remaining_daily_budget_events", lambda c: 0)
+    informe = smoke.ejecutar_smoke(conn, None, 500)
+    assert informe["pedidos"] == smoke.SMOKE_MAX
+    assert informe["motivo_sin_ejecutar"].startswith("el tope diario")
+    assert "no se ejecutó" in smoke.informe_markdown(informe)

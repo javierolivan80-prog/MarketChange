@@ -303,10 +303,12 @@ def cerrar_batch(conn, kind: str):
             conn,
             """
             UPDATE ai_batches
-            SET input_tokens = %s, output_tokens = %s, model = %s, cost_usd = %s, finished_at = now()
+            SET input_tokens = %s, output_tokens = %s, model = %s, cost_usd = %s, finished_at = now(),
+                n_errores = %s, n_cortadas = %s, n_json_invalido = %s
             WHERE batch_id = %s
             """,
-            (uso["input_tokens"], uso["output_tokens"], uso.get("model"), coste, batch_id),
+            (uso["input_tokens"], uso["output_tokens"], uso.get("model"), coste,
+             uso.get("n_errores"), uso.get("n_cortadas"), uso.get("n_json_invalido"), batch_id),
             batch_id,
         )
 
@@ -1167,8 +1169,23 @@ def compute_day3_stats(conn) -> dict:
 
 if __name__ == "__main__":
     import json
+    import sys
 
     import anthropic
+
+    # Prueba de humo con N eventos (Tanda 6): ver pipeline/analyze/smoke.py.
+    if "--smoke" in sys.argv:
+        import argparse
+
+        from pipeline.analyze import smoke
+
+        _parser = argparse.ArgumentParser()
+        _parser.add_argument("--smoke", type=int, required=True, help=f"eventos a analizar (máximo {smoke.SMOKE_MAX})")
+        sys.argv = [sys.argv[0], "--n", str(_parser.parse_args().smoke)]
+        import runpy
+
+        runpy.run_module("pipeline.analyze.smoke", run_name="__main__")
+        raise SystemExit(0)
 
     logging.basicConfig(level=logging.INFO)
     from pipeline import config

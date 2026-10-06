@@ -825,3 +825,29 @@ por cada uno que falte (`pipeline/ops_secretos.py`).
 **Aviso de gasto**: cuando el gasto de IA del día llega al 80 % del tope
 (`DAILY_SPEND_CAP_EUR`), llega un mensaje por Telegram, como mucho uno al día
 (`pipeline/notify/gasto_notifier.py`).
+
+
+## Prueba de humo de la IA (Tanda 6)
+
+Antes de soltar la IA sobre toda la cola, una prueba con pocos eventos:
+
+- **En GitHub:** Actions → «Prueba de humo de la IA» → Run workflow, con N
+  (de 1 a 20; por defecto 5). Gasta saldo de la API, unos 0,01 $ por evento
+  según la estimación; el informe da el coste real.
+- **En local:** `python -m pipeline.analyze.smoke --n 5`, o
+  `python -m pipeline.analyze.event_analysis_pipeline --smoke 5`.
+
+Analiza N eventos de la cola de la IA (los mismos filtros que la pasada:
+posteriores al corte de los modelos, con texto y barra de D0, empresas
+grandes primero) y respeta el tope diario. El informe sale en el log, en el
+resumen del run y en la tabla `smoke_runs`:
+
+- analizados con IA, de caché, descartados sin IA y sin guardar (IA
+  incompleta o Judge inválido);
+- requests fallidas: errores, cortadas por max_tokens, JSON ilegible;
+- tokens y coste real de cada batch (libro `ai_batches`), coste por evento;
+- decisiones de Equilibrada con IA frente al control sin IA;
+- duración.
+
+Los análisis que salen son reales y se quedan guardados como los de cualquier
+pasada.
