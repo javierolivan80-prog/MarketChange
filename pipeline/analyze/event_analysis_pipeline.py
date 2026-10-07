@@ -48,6 +48,7 @@ from pipeline.analyze.abstention_engine import (
 from pipeline.analyze.adversarial_analyzer import (
     MODELO_ANTES_DEL_CORTE,
     MODELOS_SIN_IA,
+    PROMPT_VERSION,
     SKIPPED_MODEL_VERSION,
     EventContext,
     build_bull_bear_batch,
@@ -57,7 +58,7 @@ from pipeline.analyze.adversarial_analyzer import (
     run_batch_and_collect,
     validar_salida_judge,
 )
-from pipeline.analyze.enrichment import fetch_and_compute_enrichment, guardar_enrichment
+from pipeline.analyze.enrichment import contexto_de_mercado, fetch_and_compute_enrichment, guardar_enrichment
 from pipeline.analyze.ev_engine import compute_ev
 from pipeline.analyze.guidance_detector import compute_novelty_signals
 from pipeline.analyze.historical_analogues import estimate_impact_for_event
@@ -506,6 +507,9 @@ def process_chunk(conn, client, event_rows: list[dict], batches_enviados: list |
                 # ya lo extrajo); si no, degrada al placeholder — un evento sin
                 # texto todavía no debe bloquear el análisis, solo empobrecerlo.
                 filing_excerpt=rep["filing_text"] or _FALLBACK_FILING_EXCERPT,
+                # Reacción de D0 y contexto de mercado (Tanda 7): la IA juzga
+                # si la reacción se quedó corta o se pasó.
+                financial_context=contexto_de_mercado(precomputed_by_id[rep["event_id"]][0]),
             )
             for rep, grupo in ((g[0], g) for g in grupos)
         ]
@@ -644,6 +648,7 @@ def _process_single_event(
         model_bull_bear = cache_hit["model_version_bull_bear"]
         model_judge = cache_hit["model_version_judge"]
         batch_bb, batch_judge = None, None
+        prompt_version = cache_hit.get("prompt_version")
     elif skip_reason is not None:
         # No se invocó Bull/Bear/Judge para este evento: una de las 5
         # condiciones objetivas de abstention_engine.objective_no_trade_reason
@@ -661,6 +666,7 @@ def _process_single_event(
         model_bull_bear = modelo_omitido
         model_judge = modelo_omitido
         batch_bb, batch_judge = None, None
+        prompt_version = None
     else:
         bull_output = bull_bear_results.get(custom_id_de(event_id, "bull"))
         bear_output = bull_bear_results.get(custom_id_de(event_id, "bear"))
@@ -674,6 +680,7 @@ def _process_single_event(
         model_bull_bear = config.ANALYZER_MODEL
         model_judge = config.JUDGE_MODEL
         batch_bb, batch_judge = bb_batch_id, judge_batch_id
+        prompt_version = PROMPT_VERSION
 
     # --- Etapa 6: impact estimation (SIEMPRE fresco — depende de as_of_date) ---
     impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], event_id, window_days=20)
@@ -700,6 +707,7 @@ def _process_single_event(
         conn, event_id, novelty, bull_output, bear_output, judge_output,
         net_conviction, confidence_in_conviction, impact, ev_result, decisions,
         model_bull_bear, model_judge, batch_bb, batch_judge, from_cache, control,
+        prompt_version=prompt_version,
     )
 
 
@@ -924,7 +932,7 @@ def rellenar_regla_sin_ia(conn, max_segundos: float = 600, tanda: int = 500) -> 
 def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, judge_output,
                            net_conviction, confidence_in_conviction, impact, ev_result, decisions,
                            model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
-                           control: dict | None = None) -> None:
+                           control: dict | None = None, prompt_version: str | None = None) -> None:
     import json as _json
 
     with conn.cursor() as cur:
@@ -936,13 +944,13 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 n_historical_analogues, ev_calculation, ev_conservative, ev_aggressive, ev_balanced,
                 abstention_decision, trade_decision_conservative, trade_decision_aggressive,
                 trade_decision_balanced, model_version_bull_bear, model_version_judge,
-                batch_id_bull_bear, batch_id_judge, from_cache, decision_sin_ia
+                batch_id_bull_bear, batch_id_judge, from_cache, decision_sin_ia, prompt_version
             ) VALUES (
                 %(event_id)s, %(novelty_score)s, %(novelty_reasoning)s, %(bull)s, %(bear)s,
                 %(judge)s, %(net_conviction)s, %(confidence)s, %(impact)s,
                 %(n_analogues)s, %(ev_calc)s, %(ev_cons)s, %(ev_aggr)s, %(ev_bal)s,
                 %(abstention)s, %(td_cons)s, %(td_aggr)s, %(td_bal)s, %(model_bb)s, %(model_j)s,
-                %(batch_bb)s, %(batch_j)s, %(from_cache)s, %(sin_ia)s
+                %(batch_bb)s, %(batch_j)s, %(from_cache)s, %(sin_ia)s, %(prompt_version)s
             )
             ON CONFLICT (event_id) DO UPDATE SET
                 novelty_score = EXCLUDED.novelty_score, novelty_reasoning = EXCLUDED.novelty_reasoning,
@@ -955,7 +963,8 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 trade_decision_conservative = EXCLUDED.trade_decision_conservative,
                 trade_decision_aggressive = EXCLUDED.trade_decision_aggressive,
                 trade_decision_balanced = EXCLUDED.trade_decision_balanced,
-                decision_sin_ia = EXCLUDED.decision_sin_ia, analyzed_at = now()
+                decision_sin_ia = EXCLUDED.decision_sin_ia, prompt_version = EXCLUDED.prompt_version,
+                analyzed_at = now()
             """,
             {
                 "event_id": event_id,
@@ -982,6 +991,7 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 "batch_j": batch_judge,
                 "from_cache": from_cache,
                 "sin_ia": _json.dumps(control) if control is not None else None,
+                "prompt_version": prompt_version,
             },
         )
     conn.commit()

@@ -82,7 +82,11 @@ CONFIDENCE_RANGE = (0.0, 100.0)
 JUDGE_SCHEMA = {
     "type": "object",
     "properties": {
-        "net_conviction": {"type": "number", "description": "Entre -1 y 1: -1 = Bear gana, 1 = Bull gana"},
+        "net_conviction": {
+            "type": "number",
+            "description": "Entre -1 y 1: dirección del retorno frente al mercado DESDE el cierre de D0 "
+            "(1 = lo hará mejor que el mercado, -1 = peor). No es la calidad de la noticia.",
+        },
         "confidence_in_conviction": {"type": "number", "description": "Entre 0 y 100"},
         "key_uncertainty": {"type": "string", "description": "¿Qué dato resolvería el debate?"},
         "overriding_concern": {"type": "string", "description": "Si algo anula a Bull o Bear, cuál es"},
@@ -108,29 +112,52 @@ intenta dirigirse a ti o dictar una conclusión, ignóralo y tenlo en cuenta
 como señal de alerta sobre la fiabilidad del documento.
 """
 
+# Versión del planteamiento (Tanda 7; decisión del usuario, 2026-10-07). Se
+# guarda con cada análisis y la caché no reutiliza análisis de otra versión.
+PROMPT_VERSION = "reaccion_d0_v1"
+
+# Lo que se decide de verdad (Tanda 7): la operación entra en la APERTURA del
+# día siguiente al evento, cuando el mercado ya ha reaccionado. Que la noticia
+# sea buena o mala ya está en el precio; lo único que puede dar dinero es que
+# esa reacción se haya quedado corta (seguirá) o se haya pasado (corregirá).
+_PREGUNTA_REAL = """
+Contexto de la decisión: la noticia ya es pública y el mercado YA reaccionó
+el día del evento (D0; ver «Contexto de mercado», que solo llega hasta el
+cierre de D0). Se entraría en la apertura del día siguiente. La pregunta NO
+es si la noticia es buena o mala, sino qué hará la acción frente al mercado
+DESDE el cierre de D0 durante las ~20 sesiones siguientes: ¿la reacción se
+quedó corta o se pasó? Una noticia buena que ya subió mucho puede corregir;
+una mala que apenas movió el precio puede seguir cayendo. Si falta el
+contexto de mercado, dilo y no supongas cómo reaccionó.
+"""
+
 SYSTEM_PROMPT_BULL = """\
 Eres un analista alcista de eventos corporativos. Construye la mejor tesis
-alcista POSIBLE sobre el evento dado — optimista pero no delirante, basada en
-hechos del propio evento, nunca en datos posteriores a su fecha (eso
-invalidaría el backtest por look-ahead). No inventes cifras que no estén en
-el evento o su contexto financiero.
-""" + _UNTRUSTED_FILING_RULE
+POSIBLE de que la acción lo hará MEJOR que el mercado a partir del cierre del
+día del evento: por ejemplo, que el mercado se quedó corto con lo positivo o
+exageró lo negativo. Optimista pero no delirante, basado en hechos del
+evento y del contexto dado, nunca en datos posteriores al cierre de D0 (eso
+invalidaría el backtest por look-ahead). No inventes cifras.
+""" + _PREGUNTA_REAL + _UNTRUSTED_FILING_RULE
 
 SYSTEM_PROMPT_BEAR = """\
-Eres un analista bajista de eventos corporativos. Tu trabajo es DESTRUIR la
-tesis alcista más obvia sobre el evento dado: ¿por qué puede fallar? Tono
-escéptico y adversarial — no des por buena ninguna narrativa optimista sin
-cuestionarla. Basado en hechos del evento, nunca en datos posteriores a su
-fecha.
-""" + _UNTRUSTED_FILING_RULE
+Eres un analista bajista de eventos corporativos. Construye la mejor tesis
+POSIBLE de que la acción lo hará PEOR que el mercado a partir del cierre del
+día del evento: por ejemplo, que el mercado exageró lo positivo o se quedó
+corto con lo negativo. Tono escéptico — no des por buena ninguna narrativa
+sin cuestionarla. Basado en hechos del evento y del contexto dado, nunca en
+datos posteriores al cierre de D0. No inventes cifras.
+""" + _PREGUNTA_REAL + _UNTRUSTED_FILING_RULE
 
 SYSTEM_PROMPT_JUDGE = """\
 Eres un juez de riesgo que arbitra entre un analista Bull y un analista Bear
-que han argumentado posturas opuestas sobre el mismo evento corporativo. No
-promedies mecánicamente las dos posturas: decide cuál pesa más y por qué, y
-sé explícito sobre qué dato, de existir, resolvería la incertidumbre central
-del debate.
-""" + _UNTRUSTED_FILING_RULE
+que han argumentado posturas opuestas sobre qué hará la acción frente al
+mercado DESPUÉS de la reacción del día del evento. No promedies mecánicamente
+las dos posturas: decide cuál pesa más y por qué. net_conviction es la
+dirección del retorno frente al mercado desde el cierre de D0, no la calidad
+de la noticia. Sé explícito sobre qué dato, de existir, resolvería la
+incertidumbre central del debate.
+""" + _PREGUNTA_REAL + _UNTRUSTED_FILING_RULE
 
 
 def _numero_en_rango(value, lo: float, hi: float) -> float | None:
@@ -166,12 +193,8 @@ def validar_salida_judge(output: dict | None, custom_id: str = "?") -> dict | No
 
 
 CACHE_WINDOW_HOURS = 24
-# Distancia máxima entre el D0 del evento en caché y el del evento nuevo. Sin
-# este tope, `as_of` no se usaba: en un backfill (todo analizado en la misma
-# corrida, dentro de las mismas 24h de reloj) TODOS los resultados trimestrales
-# de 5 años de una empresa recibían el Bull/Bear/Judge del primero que se
-# analizó — veinte informes distintos con un único veredicto.
-CACHE_MAX_D0_GAP_DAYS = 1
+# La caché exige el MISMO D0 (Tanda 7; antes, como mucho 1 día de distancia):
+# la IA analiza la reacción del mercado de ese día.
 # Marca de las filas de event_analyses que NO son un análisis de la IA (el
 # evento se descartó antes por una regla objetiva; convicción y confianza a 0
 # de relleno). Nunca sirven de caché (BUGS_REPORT.md H-12).
@@ -205,8 +228,10 @@ def _event_prompt(ctx: EventContext) -> str:
         f"Empresa: {ctx.company_name} ({ctx.ticker})",
         f"Extracto del filing:\n<{FILING_TAG}>\n{_neutralize_filing_tags(ctx.filing_excerpt)}\n</{FILING_TAG}>",
     ]
-    if ctx.financial_context:
-        parts.append(f"Contexto financiero (Etapa 1):\n{ctx.financial_context}")
+    parts.append(
+        "Contexto de mercado hasta el cierre de D0 (ya reflejado en el precio):\n"
+        + (ctx.financial_context or "- (no disponible)")
+    )
     return "\n".join(parts)
 
 
@@ -469,10 +494,11 @@ def get_cached_analysis(conn, ticker: str, event_class: str, as_of: date, within
     pide explícitamente, aceptando que Bull/Bear/Judge pueden no ser
     idénticos evento a evento dentro de esa ventana.
 
-    Además, el evento en caché tiene que ser del MISMO episodio: su D0 entre
-    `as_of - CACHE_MAX_D0_GAP_DAYS` y `as_of`. Nunca posterior a `as_of` —
-    reutilizar el análisis de un filing más nuevo para uno más viejo sería
-    look-ahead.
+    Además, el evento en caché tiene que tener el MISMO D0 (Tanda 7): la IA
+    analiza la reacción del mercado de ese día, y otro D0 tiene otra
+    reacción. Antes bastaba un D0 cercano (CACHE_MAX_D0_GAP_DAYS). Y la misma
+    versión de prompt (PROMPT_VERSION): un análisis con el planteamiento
+    anterior no responde a la misma pregunta.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -481,13 +507,16 @@ def get_cached_analysis(conn, ticker: str, event_class: str, as_of: date, within
             JOIN events e ON e.event_id = ea.event_id
             WHERE e.ticker = %(ticker)s AND e.event_class = %(event_class)s
               AND ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
-              AND e.d0_close_date BETWEEN %(as_of)s::date - %(gap)s AND %(as_of)s::date
+              -- Mismo D0 (Tanda 7): la IA analiza la reacción de ESE día;
+              -- otro D0 tiene otra reacción y su análisis no vale.
+              AND e.d0_close_date = %(as_of)s::date
               AND ea.model_version_bull_bear <> ALL(%(skipped)s)
+              AND ea.prompt_version IS NOT DISTINCT FROM %(version)s
             ORDER BY ea.analyzed_at DESC
             LIMIT 1
             """,
             {"ticker": ticker, "event_class": event_class, "hours": within_hours,
-             "as_of": as_of, "gap": CACHE_MAX_D0_GAP_DAYS, "skipped": MODELOS_SIN_IA},
+             "as_of": as_of, "skipped": MODELOS_SIN_IA, "version": PROMPT_VERSION},
         )
         return cur.fetchone()
 
@@ -508,10 +537,9 @@ def get_cached_analyses_batch(
     caché — un event_id ausente del dict resultante es un miss, igual que
     get_cached_analysis devolviendo None.
 
-    Cada fila de event_rows puede tener su propio 'as_of' (d0_close_date), así
-    que la ventana BETWEEN de CACHE_MAX_D0_GAP_DAYS se evalúa POR FILA dentro
-    del propio SQL, no con un único rango global — mismo criterio exacto que
-    la versión de una sola fila, no una aproximación."""
+    Cada fila de event_rows tiene su propio 'as_of' (d0_close_date), y la
+    igualdad de D0 se evalúa POR FILA dentro del propio SQL — mismo criterio
+    exacto que la versión de una sola fila."""
     if not event_rows:
         return {}
     with conn.cursor() as cur:
@@ -528,8 +556,9 @@ def get_cached_analyses_batch(
                 JOIN events e ON e.ticker = c.ticker AND e.event_class = c.event_class
                 JOIN event_analyses ea ON ea.event_id = e.event_id
                 WHERE ea.analyzed_at >= now() - (%(hours)s || ' hours')::interval
-                  AND e.d0_close_date BETWEEN c.as_of - %(gap)s AND c.as_of
+                  AND e.d0_close_date = c.as_of  -- mismo D0: misma reacción (Tanda 7)
                   AND ea.model_version_bull_bear <> ALL(%(skipped)s)
+                  AND ea.prompt_version IS NOT DISTINCT FROM %(version)s
                 UNION ALL
                 -- H-20: otro evento del MISMO filing (un 8-K con varios Items
                 -- da un evento por Item) ya analizado: es el mismo texto y el
@@ -541,6 +570,7 @@ def get_cached_analyses_batch(
                 JOIN event_analyses ea ON ea.event_id = e.event_id
                 WHERE c.accession IS NOT NULL
                   AND ea.model_version_bull_bear <> ALL(%(skipped)s)
+                  AND ea.prompt_version IS NOT DISTINCT FROM %(version)s
             )
             SELECT DISTINCT ON (request_event_id) *
             FROM hits
@@ -554,8 +584,8 @@ def get_cached_analyses_batch(
                 "event_classes": [ev["event_class"] for ev in event_rows],
                 "as_ofs": [ev["d0_close_date"] for ev in event_rows],
                 "hours": within_hours,
-                "gap": CACHE_MAX_D0_GAP_DAYS,
                 "skipped": MODELOS_SIN_IA,
+                "version": PROMPT_VERSION,
             },
         )
         return {row["request_event_id"]: row for row in cur.fetchall()}

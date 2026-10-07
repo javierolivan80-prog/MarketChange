@@ -318,3 +318,54 @@ def test_benchmark_tickers_incluye_spy_vix_y_sectores():
     from pipeline.analyze.enrichment import BENCHMARK_TICKERS
 
     assert {"SPY", "^VIX", "XLK", "XLV", "XLF"} <= set(BENCHMARK_TICKERS)
+
+
+# ---------------------------------------------------------------------------
+# Reacción de D0 y contexto para la IA (Tanda 7)
+# ---------------------------------------------------------------------------
+
+
+def test_reaccion_de_d0_y_retorno_anormal_ajustado_por_beta():
+    ticker = _panel(320, 100.0, 0.0, seed=11)
+    spy = _panel(320, 400.0, 0.0, seed=12)
+    sector = _panel(320, 50.0, 0.0, seed=13)
+    vix = _panel(320, 18.0, 0.0, seed=14)
+    d0_idx = 300
+    # La acción sube un 10 % en D0 y el S&P 500 un 1 %.
+    ticker.iloc[d0_idx, ticker.columns.get_loc("close_raw")] = ticker.iloc[d0_idx - 1]["close_raw"] * 1.10
+    spy.iloc[d0_idx, spy.columns.get_loc("close_raw")] = spy.iloc[d0_idx - 1]["close_raw"] * 1.01
+    d0 = ticker.index[d0_idx].date()
+
+    r = compute_enrichment(ticker, spy, sector, vix, _factors(320), d0, "XLK")
+    assert r.ret_d0_pct == pytest.approx(10.0)
+    assert r.spy_ret_d0_pct == pytest.approx(1.0)
+    beta = r.beta_vs_spy if r.beta_vs_spy is not None else 1.0
+    assert r.abnormal_ret_d0_pct == pytest.approx(10.0 - beta * 1.0)
+
+
+def test_sin_beta_el_anormal_usa_beta_1_y_sin_spy_no_se_inventa():
+    ticker = _panel(320, 100.0, 0.0, seed=21)
+    spy = _panel(320, 400.0, 0.0, seed=22)
+    vacio = ticker.iloc[0:0]
+    d0 = ticker.index[300].date()
+    r = compute_enrichment(ticker, spy, vacio, vacio, pd.DataFrame(), d0, "XLK")
+    assert r.beta_vs_spy is None
+    assert r.abnormal_ret_d0_pct == pytest.approx(r.ret_d0_pct - r.spy_ret_d0_pct)
+    r = compute_enrichment(ticker, vacio, vacio, vacio, pd.DataFrame(), d0, "XLK")
+    assert r.ret_d0_pct is not None and r.abnormal_ret_d0_pct is None
+
+
+def test_el_contexto_de_mercado_solo_escribe_lo_que_hay():
+    from pipeline.analyze.enrichment import EnrichmentResult, contexto_de_mercado
+
+    base = dict(
+        price_d0=None, price_d_minus_5=None, price_d_minus_20=None, volume_d0=None, volume_avg_20d=None,
+        volume_ratio=3.2, beta_vs_spy=None, ff_size_exposure=None, ff_value_exposure=None, vix_d0=None,
+        sector_etf_ticker="XLK", sector_mood=None, pre_event_drift_pct=None, high_low_range_pct=None,
+        adv_usd_60d=None, n_estimation_days=0, had_survivorship_warning=False,
+    )
+    texto = contexto_de_mercado(EnrichmentResult(**base, ret_d0_pct=8.5, spy_ret_d0_pct=0.5, abnormal_ret_d0_pct=8.0))
+    assert "Retorno anormal de D0 (acción − beta × SPY): +8.00 %" in texto
+    assert "3.2×" in texto
+    assert "Beta" not in texto and "VIX" not in texto  # sin dato no se escribe
+    assert contexto_de_mercado(EnrichmentResult(**{**base, "volume_ratio": None})) == ""

@@ -82,6 +82,12 @@ class EnrichmentResult:
     adv_usd_60d: float | None
     n_estimation_days: int
     had_survivorship_warning: bool
+    # Reacción del mercado el día del evento (Tanda 7): la operación entra en
+    # la apertura de D+1, así que esto YA está en el precio. La IA lo recibe
+    # para juzgar si la reacción se quedó corta o se pasó.
+    ret_d0_pct: float | None = None
+    spy_ret_d0_pct: float | None = None
+    abnormal_ret_d0_pct: float | None = None  # ret - beta × SPY (beta 1 si no hay ajuste)
 
 
 def _adjusted_close(prices: pd.DataFrame) -> pd.Series:
@@ -210,7 +216,20 @@ def compute_enrichment(
         if sector_ret is not None and spy_ret is not None:
             sector_mood = (sector_ret - spy_ret) * 100
 
+    ret_d0_pct = spy_ret_d0_pct = abnormal_ret_d0_pct = None
+    ret_d0 = _one_day_return(adj_close, d0_ts)
+    spy_ret_d0 = _one_day_return(_adjusted_close(spy_prices), d0_ts) if not spy_prices.empty else None
+    if ret_d0 is not None:
+        ret_d0_pct = ret_d0 * 100
+        if spy_ret_d0 is not None:
+            spy_ret_d0_pct = spy_ret_d0 * 100
+            beta = beta_vs_spy if beta_vs_spy is not None else 1.0
+            abnormal_ret_d0_pct = (ret_d0 - beta * spy_ret_d0) * 100
+
     return EnrichmentResult(
+        ret_d0_pct=ret_d0_pct,
+        spy_ret_d0_pct=spy_ret_d0_pct,
+        abnormal_ret_d0_pct=abnormal_ret_d0_pct,
         price_d0=price_d0,
         price_d_minus_5=price_d_minus_5,
         price_d_minus_20=price_d_minus_20,
@@ -294,6 +313,7 @@ _COLUMNAS_GUARDADAS = (
     "price_d0", "price_d_minus_5", "price_d_minus_20", "volume_d0", "volume_avg_20d", "volume_ratio",
     "beta_vs_spy", "ff_size_exposure", "ff_value_exposure", "vix_d0", "sector_etf_ticker", "sector_mood",
     "pre_event_drift_pct", "high_low_range_pct", "adv_usd_60d", "n_estimation_days", "had_survivorship_warning",
+    "ret_d0_pct", "spy_ret_d0_pct", "abnormal_ret_d0_pct",
 )
 
 
@@ -315,3 +335,24 @@ def guardar_enrichment(conn, event_id: int, enrichment: EnrichmentResult) -> Non
             f"ON CONFLICT (event_id) DO UPDATE SET {actualizacion}, enriched_at = now()",
             {"event_id": event_id, **valores},
         )
+
+
+def _fmt(valor: float | None, plantilla: str) -> str | None:
+    return plantilla.format(valor) if valor is not None and valor == valor else None
+
+
+def contexto_de_mercado(e: EnrichmentResult) -> str:
+    """Resumen legible para la IA (EventContext.financial_context, Tanda 7).
+    Solo datos hasta el cierre de D0; nada posterior. Lo que falta no se
+    escribe: nunca se inventa una cifra."""
+    lineas = [
+        _fmt(e.ret_d0_pct, "Retorno de la acción el día del evento (D0, cierre a cierre): {:+.2f} %"),
+        _fmt(e.spy_ret_d0_pct, "Retorno del S&P 500 (SPY) ese día: {:+.2f} %"),
+        _fmt(e.abnormal_ret_d0_pct, "Retorno anormal de D0 (acción − beta × SPY): {:+.2f} %"),
+        _fmt(e.volume_ratio, "Volumen de D0 frente a la media de 20 sesiones: {:.1f}×"),
+        _fmt(e.pre_event_drift_pct, "Movimiento previo (D-5 a D-1): {:+.2f} %"),
+        _fmt(e.sector_mood, "Sector frente al S&P 500 en D0: {:+.2f} puntos"),
+        _fmt(e.beta_vs_spy, "Beta frente al mercado: {:.2f}"),
+        _fmt(e.vix_d0, "VIX al cierre de D0: {:.1f}"),
+    ]
+    return "\n".join(f"- {linea}" for linea in lineas if linea)

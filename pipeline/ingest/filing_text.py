@@ -163,11 +163,15 @@ def extract_best_text(documents: list[dict], prefer_exhibit: bool = True) -> dic
 
 
 def fetch_filing_text(source_url: str, event_class: str) -> dict:
-    """Descarga el submission completo y devuelve el texto elegido.
-    prefer_exhibit se activa para clases de earnings — ver extract_best_text."""
+    """Descarga el submission completo y devuelve el texto elegido: el
+    comunicado EX-99 (si lo hay) delante del documento principal, en todas
+    las clases de evento — ver extract_best_text. El parámetro event_class se
+    conserva por compatibilidad."""
     resp = throttled_get(source_url)
     documents = parse_submission_documents(resp.text)
-    prefer_exhibit = event_class == "8K_2.02_EARNINGS"
+    # Todas las clases (Tanda 7): en 8.01, 5.02, 1.01... la noticia también
+    # suele ir en el comunicado EX-99 y el documento principal es un trámite.
+    prefer_exhibit = True
     return extract_best_text(documents, prefer_exhibit=prefer_exhibit)
 
 

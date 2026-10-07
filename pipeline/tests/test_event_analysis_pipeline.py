@@ -441,10 +441,11 @@ def test_process_chunk_second_event_same_ticker_class_uses_cache_not_llm(conn, s
     conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
     assert scripted_client.call_count == 2  # una llamada para bull/bear, otra para judge
 
-    # Segundo evento: mismo ticker, misma clase, al día hábil siguiente (mismo
-    # episodio, p. ej. una corrección) -> debe reusar Bull/Bear/Judge de caché
-    # y NO generar nuevas llamadas al cliente.
-    _seed_event(conn, "1", "TESTCO", dates[281].date())
+    # Segundo evento: mismo ticker, misma clase y mismo D0 (p. ej. una
+    # corrección del filing) -> debe reusar Bull/Bear/Judge de caché y NO
+    # generar nuevas llamadas al cliente. Con otro D0 ya no (Tanda 7: otra
+    # reacción del mercado). Otro número de filing (cik "2") para no chocar.
+    _seed_event(conn, "2", "TESTCO", dates[280].date())
     conn = process_chunk(conn, client, fetch_events_needing_analysis(conn))
 
     assert scripted_client.call_count == 2  # sin llamadas nuevas: se sirvió de caché
@@ -1421,3 +1422,30 @@ def test_un_argumento_mal_escrito_no_lanza_la_pasada_completa():
 
     with pytest.raises(SystemExit):
         es_prueba_de_humo(["x", "--smok", "5"])
+
+
+def test_la_ia_recibe_la_reaccion_de_d0_y_se_guarda_la_version_del_prompt(conn, sin_techo_de_ev, monkeypatch):
+    """Tanda 7: el prompt lleva el contexto de mercado hasta el cierre de D0
+    y cada análisis guarda la versión del planteamiento."""
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    vistos = []
+    original = eap.build_bull_bear_batch
+
+    def espia(contexts):
+        vistos.extend(contexts)
+        return original(contexts)
+
+    monkeypatch.setattr(eap, "build_bull_bear_batch", espia)
+    client = SimpleNamespace(messages=SimpleNamespace(batches=_ScriptedBatchesClient()))
+    conn = eap.process_chunk(conn, client, [e for e in eap.fetch_events_needing_analysis(conn) if e["event_id"] == objetivo])
+    assert len(vistos) == 1
+    assert "Retorno anormal de D0" in vistos[0].financial_context and "VIX al cierre de D0" in vistos[0].financial_context
+    with conn.cursor() as cur:
+        cur.execute("SELECT prompt_version FROM event_analyses WHERE event_id = %s", (objetivo,))
+        assert cur.fetchone()["prompt_version"] == PROMPT_VERSION
+        cur.execute("SELECT abnormal_ret_d0_pct FROM event_enrichment WHERE event_id = %s", (objetivo,))
+        assert cur.fetchone()["abnormal_ret_d0_pct"] is not None
