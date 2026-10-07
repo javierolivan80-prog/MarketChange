@@ -82,6 +82,15 @@ class EnrichmentResult:
     adv_usd_60d: float | None
     n_estimation_days: int
     had_survivorship_warning: bool
+    # Reacción del mercado el día del evento (Tanda 7): la operación entra en
+    # la apertura de D+1, así que esto YA está en el precio. La IA lo recibe
+    # para juzgar si la reacción se quedó corta o se pasó.
+    ret_d0_pct: float | None = None
+    spy_ret_d0_pct: float | None = None
+    abnormal_ret_d0_pct: float | None = None  # ret - beta × SPY (beta 1 si no hay ajuste)
+
+
+MAX_DIAS_SESION_ANTERIOR = 4  # viernes -> martes con lunes festivo
 
 
 def _adjusted_close(prices: pd.DataFrame) -> pd.Series:
@@ -103,9 +112,15 @@ def _one_day_return(series: pd.Series, target: pd.Timestamp) -> float | None:
     idx = series.index.get_loc(target)
     if idx == 0:
         return None
+    # La sesión anterior de verdad (Tanda 7): si falta, el retorno de varios
+    # días no se presenta como el de un día. Un fin de semana largo cabe.
+    if (series.index[idx] - series.index[idx - 1]).days > MAX_DIAS_SESION_ANTERIOR:
+        return None
     prev = series.iloc[idx - 1]
     curr = series.iloc[idx]
-    return (curr / prev - 1) if prev else None
+    if not (pd.notna(prev) and pd.notna(curr)) or not prev:
+        return None
+    return curr / prev - 1
 
 
 def compute_enrichment(
@@ -193,7 +208,7 @@ def compute_enrichment(
         merged["ret"] = adj_close.pct_change()
         merged = merged.join(factor_returns, how="inner")
         fit = fit_factor_model(merged, d0_close_date)
-    beta_vs_spy = fit.beta_mkt if fit else None
+    beta_vs_spy = fit.beta_mkt if fit and pd.notna(fit.beta_mkt) else None
     ff_size_exposure = fit.beta_smb if fit else None
     ff_value_exposure = fit.beta_hml if fit else None
     n_estimation_days = fit.n_estimation_days if fit else 0
@@ -201,7 +216,9 @@ def compute_enrichment(
     vix_d0 = None
     if not vix_prices.empty:
         vix_close = _adjusted_close(vix_prices) if "adj_factor" in vix_prices else vix_prices["close_raw"]
-        vix_d0 = _nearest_at_or_before(vix_close, d0_ts)
+        # Solo el de D0 (Tanda 7): con otro día no se puede llamar «VIX de D0».
+        vix_d0 = vix_close.get(d0_ts)
+        vix_d0 = float(vix_d0) if vix_d0 is not None and pd.notna(vix_d0) else None
 
     sector_mood = None
     if not sector_prices.empty and not spy_prices.empty:
@@ -210,7 +227,20 @@ def compute_enrichment(
         if sector_ret is not None and spy_ret is not None:
             sector_mood = (sector_ret - spy_ret) * 100
 
+    ret_d0_pct = spy_ret_d0_pct = abnormal_ret_d0_pct = None
+    ret_d0 = _one_day_return(adj_close, d0_ts)
+    spy_ret_d0 = _one_day_return(_adjusted_close(spy_prices), d0_ts) if not spy_prices.empty else None
+    if ret_d0 is not None:
+        ret_d0_pct = ret_d0 * 100
+        if spy_ret_d0 is not None:
+            spy_ret_d0_pct = spy_ret_d0 * 100
+            beta = beta_vs_spy if beta_vs_spy is not None else 1.0
+            abnormal_ret_d0_pct = (ret_d0 - beta * spy_ret_d0) * 100
+
     return EnrichmentResult(
+        ret_d0_pct=ret_d0_pct,
+        spy_ret_d0_pct=spy_ret_d0_pct,
+        abnormal_ret_d0_pct=abnormal_ret_d0_pct,
         price_d0=price_d0,
         price_d_minus_5=price_d_minus_5,
         price_d_minus_20=price_d_minus_20,
@@ -294,6 +324,7 @@ _COLUMNAS_GUARDADAS = (
     "price_d0", "price_d_minus_5", "price_d_minus_20", "volume_d0", "volume_avg_20d", "volume_ratio",
     "beta_vs_spy", "ff_size_exposure", "ff_value_exposure", "vix_d0", "sector_etf_ticker", "sector_mood",
     "pre_event_drift_pct", "high_low_range_pct", "adv_usd_60d", "n_estimation_days", "had_survivorship_warning",
+    "ret_d0_pct", "spy_ret_d0_pct", "abnormal_ret_d0_pct",
 )
 
 
@@ -305,7 +336,10 @@ def guardar_enrichment(conn, event_id: int, enrichment: EnrichmentResult) -> Non
     valores = {c: getattr(enrichment, c) for c in _COLUMNAS_GUARDADAS}
     for c, v in valores.items():
         if hasattr(v, "item"):  # numpy -> Python
-            valores[c] = v.item()
+            v = v.item()
+        if isinstance(v, float) and v != v:  # NaN: no hay dato, NULL
+            v = None
+        valores[c] = v
     columnas = ", ".join(_COLUMNAS_GUARDADAS)
     marcadores = ", ".join(f"%({c})s" for c in _COLUMNAS_GUARDADAS)
     actualizacion = ", ".join(f"{c} = EXCLUDED.{c}" for c in _COLUMNAS_GUARDADAS)
@@ -315,3 +349,52 @@ def guardar_enrichment(conn, event_id: int, enrichment: EnrichmentResult) -> Non
             f"ON CONFLICT (event_id) DO UPDATE SET {actualizacion}, enriched_at = now()",
             {"event_id": event_id, **valores},
         )
+
+
+def _fmt(valor: float | None, plantilla: str) -> str | None:
+    return plantilla.format(valor) if valor is not None and valor == valor else None
+
+
+def momento_de_publicacion(filed_at, d0) -> str | None:
+    """Cuándo se publicó el filing respecto a la sesión (hora de Nueva York).
+    Con un filing durante la sesión pero cerca del cierre, casi toda la
+    reacción cae después de D0: la IA tiene que saberlo para no leer un
+    retorno de D0 pequeño como «el mercado ya reaccionó»."""
+    if filed_at is None:
+        return None
+    from zoneinfo import ZoneInfo
+
+    hora = filed_at.astimezone(ZoneInfo("America/New_York")) if getattr(filed_at, "tzinfo", None) else filed_at
+    if hora.date() < d0 and hora.hour >= 16:
+        momento = "después del cierre: la reacción es la del día siguiente (D0), entera"
+    elif hora.date() < d0:
+        momento = "antes de D0 (fuera de la sesión): la reacción de D0 la recoge entera"
+    elif hora.hour < 9 or (hora.hour == 9 and hora.minute < 30):
+        momento = "antes de la apertura de D0: la reacción de D0 la recoge entera"
+    elif hora.hour >= 16:
+        # D0 debería ser el día siguiente (edgar_scraper); si no, se avisa igual.
+        momento = "después del cierre de ese mismo día: la reacción de D0 no la recoge"
+    else:
+        momento = (
+            "durante la sesión de D0: la reacción de D0 es solo la de las horas que quedaban; "
+            "si fue cerca del cierre, parte de la reacción llega después"
+        )
+    return f"Publicado el {hora:%Y-%m-%d} a las {hora:%H:%M} (hora de Nueva York), {momento}"
+
+
+def contexto_de_mercado(e: EnrichmentResult, filed_at=None, d0=None) -> str:
+    """Resumen legible para la IA (EventContext.financial_context, Tanda 7).
+    Solo datos hasta el cierre de D0; nada posterior. Lo que falta no se
+    escribe: nunca se inventa una cifra."""
+    lineas = [
+        momento_de_publicacion(filed_at, d0) if d0 is not None else None,
+        _fmt(e.ret_d0_pct, "Retorno de la acción el día del evento (D0, cierre a cierre): {:+.2f} %"),
+        _fmt(e.spy_ret_d0_pct, "Retorno del S&P 500 (SPY) ese día: {:+.2f} %"),
+        _fmt(e.abnormal_ret_d0_pct, "Retorno anormal de D0 (acción − beta × SPY): {:+.2f} %"),
+        _fmt(e.volume_ratio, "Volumen de D0 frente a la media de 20 sesiones: {:.1f}×"),
+        _fmt(e.pre_event_drift_pct, "Movimiento previo (D-5 a D-1): {:+.2f} %"),
+        _fmt(e.sector_mood, "Sector frente al S&P 500 en D0: {:+.2f} puntos"),
+        _fmt(e.beta_vs_spy, "Beta frente al mercado: {:.2f}"),
+        _fmt(e.vix_d0, "VIX al cierre de D0: {:.1f}"),
+    ]
+    return "\n".join(f"- {linea}" for linea in lineas if linea)

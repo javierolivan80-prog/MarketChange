@@ -406,3 +406,33 @@ class TestPopulateAgainstRealPostgres:
         assert row["filing_text_attempts"] == filing_text.MAX_ATTEMPTS
         # Ya no aparece en la cola pendiente — no hace falta gastar más intentos.
         assert filing_text.populate_missing_filing_text(self.conn, limit=1) == 0
+
+
+@pytest.mark.parametrize("event_class", ["8K_2.02_EARNINGS", "8K_8.01_OTHER", "8K_5.02_EXEC_CHANGE"])
+def test_el_comunicado_ex99_se_usa_en_todas_las_clases(monkeypatch, event_class):
+    """Tanda 7: en 8.01, 5.02... la noticia también suele ir en el EX-99 y el
+    documento principal es un trámite."""
+    from types import SimpleNamespace
+
+    from pipeline.ingest import filing_text
+
+    raw = (FIXTURES / "sample_8k_multidoc.txt").read_text()
+    monkeypatch.setattr(filing_text, "throttled_get", lambda url: SimpleNamespace(text=raw))
+    resultado = filing_text.fetch_filing_text("https://x", event_class)
+    assert resultado["includes_exhibit"] is True
+    assert "Record Quarterly Revenue" in resultado["text"]
+
+
+def test_un_comunicado_largo_no_deja_fuera_el_texto_del_item():
+    """Tanda 7: el documento principal va primero (recortado) y el EX-99
+    detrás; antes, un comunicado largo llenaba los 8000 caracteres."""
+    from pipeline.ingest.filing_text import MAX_TEXT_CHARS
+
+    docs = [
+        {"type": "8-K", "sequence": 1, "raw_text": "<p>Item 1.01 Acuerdo con Megacorp por 5 años.</p>"},
+        {"type": "EX-99.1", "sequence": 2, "raw_text": "<p>" + "Comunicado muy largo. " * 2000 + "</p>"},
+    ]
+    resultado = extract_best_text(docs, prefer_exhibit=True)
+    assert resultado["text"].startswith("Item 1.01 Acuerdo con Megacorp")
+    assert "Comunicado muy largo." in resultado["text"]
+    assert len(resultado["text"]) <= MAX_TEXT_CHARS

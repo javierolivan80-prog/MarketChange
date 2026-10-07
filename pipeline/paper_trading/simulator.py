@@ -38,6 +38,7 @@ import logging
 from datetime import date, timedelta
 
 from pipeline import config as app_config
+from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
 from pipeline.backtest.portfolio_simulator import (
     MARKET_CAP_D0_SQL,
     PRECIO_D0_MINIMO_SQL,
@@ -64,6 +65,11 @@ VERSIONS = ("BALANCED",)
 # config.MODEL_TRAINING_CUTOFF deja el evento fuera (NULL en la comparación).
 # El nombre del modelo se busca como en config.fecha_corte_modelo: exacto o
 # con sufijo de fecha (claude-haiku-4-5-20251001).
+# Solo análisis del planteamiento vigente (Tanda 7): net_conviction cambió de
+# significado (antes, calidad de la noticia; ahora, retorno frente al mercado
+# desde el cierre de D0) y no se mezclan.
+VERSION_VIGENTE_SQL = "ea.prompt_version = %(version)s"
+
 POSTERIOR_AL_CORTE_SQL = """
     e.d0_close_date > (
         SELECT max(c.value::date) FROM jsonb_each_text(%(cortes)s::jsonb) c
@@ -131,12 +137,14 @@ def fetch_events_for_week(conn, version: str, week_start: date, week_end: date) 
                 WHERE ea.{trade_decision_col} != 'NO_TRADE'
                   AND e.d0_close_date BETWEEN %(desde)s AND %(hasta)s
                   AND {POSTERIOR_AL_CORTE_SQL}
+              AND {VERSION_VIGENTE_SQL}
+                  AND {VERSION_VIGENTE_SQL}
                   AND {PRECIO_D0_MINIMO_SQL}
                 ORDER BY e.ticker, e.d0_close_date, abs(ea.ev_{version.lower()}) DESC, e.event_id
             ) unicos
             ORDER BY d0_close_date, abs(ev_{version.lower()}) DESC, event_id
             """,
-            {"desde": week_start, "hasta": week_end, "cortes": cortes_json()},
+            {"desde": week_start, "hasta": week_end, "cortes": cortes_json(), "version": PROMPT_VERSION},
         )
         return cur.fetchall()
 
@@ -160,9 +168,10 @@ def fetch_all_events_for_week(conn, week_start: date, week_end: date) -> list[di
             JOIN event_analyses ea ON ea.event_id = e.event_id
             WHERE e.d0_close_date BETWEEN %(desde)s AND %(hasta)s
               AND {POSTERIOR_AL_CORTE_SQL}
+              AND {VERSION_VIGENTE_SQL}
             ORDER BY e.d0_close_date
             """,
-            {"desde": week_start, "hasta": week_end, "cortes": cortes_json()},
+            {"desde": week_start, "hasta": week_end, "cortes": cortes_json(), "version": PROMPT_VERSION},
         )
         return cur.fetchall()
 

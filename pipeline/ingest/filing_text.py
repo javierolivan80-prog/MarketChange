@@ -48,6 +48,9 @@ _PRESS_RELEASE_EXHIBIT_PREFIX = "EX-99"
 
 MAX_ATTEMPTS = 3  # intentos fallidos antes de dejar un evento sin texto para siempre
 MAX_TEXT_CHARS = 8000  # tope de longitud guardada — controla coste de prompt en Bull/Bear/Judge
+# Con comunicado EX-99, el documento principal ocupa como mucho esto (va
+# delante) y el comunicado el resto.
+MAX_PRIMARY_CHARS_WITH_EXHIBIT = 2500
 # Solo se extrae texto de eventos recientes: la IA analiza lo más nuevo
 # primero y novelty.py mira como mucho 180 días atrás. Sin este tope, la
 # pasada nocturna (más recientes primero) acabaría recorriendo hacia atrás
@@ -129,9 +132,10 @@ def _truncate_at_sentence_boundary(text: str, limit: int) -> str:
 def extract_best_text(documents: list[dict], prefer_exhibit: bool = True) -> dict:
     """Elige qué documento(s) usar como texto del evento.
 
-    Estrategia (ver docstring del módulo): si prefer_exhibit=True (eventos de
-    earnings) y existe un exhibit tipo EX-99*, se antepone su texto al del
-    documento primario — porque suele ser donde está la noticia real. Si no
+    Estrategia (ver docstring del módulo): si prefer_exhibit=True y existe un
+    exhibit tipo EX-99*, va el documento primario (recortado a
+    MAX_PRIMARY_CHARS_WITH_EXHIBIT) y detrás el exhibit, que suele ser donde
+    está la noticia real. Si no
     hay exhibit, o prefer_exhibit=False, se usa solo el documento primario
     (el de sequence=1, o el primero de la lista si no hay sequence).
 
@@ -156,18 +160,29 @@ def extract_best_text(documents: list[dict], prefer_exhibit: bool = True) -> dic
             exhibit_text = strip_html_to_text(exhibit["raw_text"])
             includes_exhibit = True
 
-    combined = f"{exhibit_text}\n\n{primary_text}" if includes_exhibit else primary_text
+    if includes_exhibit:
+        # Primero el texto del Item (corto: el qué y el porqué del filing), y
+        # el comunicado detrás con el resto del espacio (Tanda 7). Antes iba
+        # el comunicado delante y uno largo dejaba fuera el Item entero.
+        primary_corto = _truncate_at_sentence_boundary(primary_text.strip(), MAX_PRIMARY_CHARS_WITH_EXHIBIT)
+        combined = f"{primary_corto}\n\n{exhibit_text}"
+    else:
+        combined = primary_text
     combined = _truncate_at_sentence_boundary(combined.strip(), MAX_TEXT_CHARS)
 
     return {"text": combined, "includes_exhibit": includes_exhibit, "length_chars": len(combined)}
 
 
 def fetch_filing_text(source_url: str, event_class: str) -> dict:
-    """Descarga el submission completo y devuelve el texto elegido.
-    prefer_exhibit se activa para clases de earnings — ver extract_best_text."""
+    """Descarga el submission completo y devuelve el texto elegido: el
+    comunicado EX-99 (si lo hay) delante del documento principal, en todas
+    las clases de evento — ver extract_best_text. El parámetro event_class se
+    conserva por compatibilidad."""
     resp = throttled_get(source_url)
     documents = parse_submission_documents(resp.text)
-    prefer_exhibit = event_class == "8K_2.02_EARNINGS"
+    # Todas las clases (Tanda 7): en 8.01, 5.02, 1.01... la noticia también
+    # suele ir en el comunicado EX-99 y el documento principal es un trámite.
+    prefer_exhibit = True
     return extract_best_text(documents, prefer_exhibit=prefer_exhibit)
 
 

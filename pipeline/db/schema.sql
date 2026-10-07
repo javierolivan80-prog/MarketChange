@@ -966,3 +966,12 @@ CREATE TABLE IF NOT EXISTS smoke_runs (
     lanzado_en    TIMESTAMPTZ NOT NULL DEFAULT now(),
     informe       JSONB NOT NULL
 );
+
+-- Reacción del mercado en D0 (Tanda 7): la IA la recibe para juzgar si la
+-- reacción se quedó corta o se pasó (la operación entra en D+1).
+ALTER TABLE event_enrichment ADD COLUMN IF NOT EXISTS ret_d0_pct NUMERIC;
+ALTER TABLE event_enrichment ADD COLUMN IF NOT EXISTS spy_ret_d0_pct NUMERIC;
+ALTER TABLE event_enrichment ADD COLUMN IF NOT EXISTS abnormal_ret_d0_pct NUMERIC;
+-- Versión del prompt de la IA con la que se hizo cada análisis (Tanda 7):
+-- la caché nunca reutiliza un análisis de otra versión.
+ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS prompt_version TEXT;

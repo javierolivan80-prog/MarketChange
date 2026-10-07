@@ -48,6 +48,7 @@ from pipeline.analyze.abstention_engine import (
 from pipeline.analyze.adversarial_analyzer import (
     MODELO_ANTES_DEL_CORTE,
     MODELOS_SIN_IA,
+    PROMPT_VERSION,
     SKIPPED_MODEL_VERSION,
     EventContext,
     build_bull_bear_batch,
@@ -57,7 +58,7 @@ from pipeline.analyze.adversarial_analyzer import (
     run_batch_and_collect,
     validar_salida_judge,
 )
-from pipeline.analyze.enrichment import fetch_and_compute_enrichment, guardar_enrichment
+from pipeline.analyze.enrichment import contexto_de_mercado, fetch_and_compute_enrichment, guardar_enrichment
 from pipeline.analyze.ev_engine import compute_ev
 from pipeline.analyze.guidance_detector import compute_novelty_signals
 from pipeline.analyze.historical_analogues import estimate_impact_for_event
@@ -83,6 +84,13 @@ _D0_BAR_EXISTS = (
     "EXISTS (SELECT 1 FROM prices p WHERE p.ticker = e.ticker AND p.trade_date = e.d0_close_date "
     "AND p.high_raw IS NOT NULL AND p.low_raw IS NOT NULL)"
 )
+
+
+def hoy_en_nueva_york() -> date:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("America/New_York")).date()
 
 
 def _queue_filters(
@@ -112,6 +120,11 @@ def _queue_filters(
         where.append("(e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)")
     if require_d0_bar:
         where.append(_D0_BAR_EXISTS)
+        # Y D0 ya cerrado (Tanda 7): una pasada lanzada a mano durante la
+        # sesión guarda la barra viva de hoy, y la IA leería un precio de
+        # media sesión como «cierre de D0».
+        where.append("e.d0_close_date < %(hoy_nueva_york)s")
+        params["hoy_nueva_york"] = hoy_en_nueva_york()
     if exclude_ids:
         where.append("NOT (e.event_id = ANY(%(exclude)s))")
         params["exclude"] = list(exclude_ids)
@@ -144,7 +157,7 @@ def fetch_events_needing_analysis(
         cur.execute(
             f"""
             SELECT e.event_id, e.cik, e.ticker, e.event_class, e.source, e.accession_number, e.d0_close_date,
-                   e.filing_text, u.company_name, u.sic_code
+                   e.filed_at, e.filing_text, u.company_name, u.sic_code
             FROM events e
             JOIN universe u ON u.cik = e.cik
             LEFT JOIN event_analyses ea ON ea.event_id = e.event_id
@@ -506,6 +519,11 @@ def process_chunk(conn, client, event_rows: list[dict], batches_enviados: list |
                 # ya lo extrajo); si no, degrada al placeholder — un evento sin
                 # texto todavía no debe bloquear el análisis, solo empobrecerlo.
                 filing_excerpt=rep["filing_text"] or _FALLBACK_FILING_EXCERPT,
+                # Reacción de D0 y contexto de mercado (Tanda 7): la IA juzga
+                # si la reacción se quedó corta o se pasó.
+                financial_context=contexto_de_mercado(
+                    precomputed_by_id[rep["event_id"]][0], rep.get("filed_at"), rep["d0_close_date"]
+                ),
             )
             for rep, grupo in ((g[0], g) for g in grupos)
         ]
@@ -644,6 +662,7 @@ def _process_single_event(
         model_bull_bear = cache_hit["model_version_bull_bear"]
         model_judge = cache_hit["model_version_judge"]
         batch_bb, batch_judge = None, None
+        prompt_version = cache_hit.get("prompt_version")
     elif skip_reason is not None:
         # No se invocó Bull/Bear/Judge para este evento: una de las 5
         # condiciones objetivas de abstention_engine.objective_no_trade_reason
@@ -661,6 +680,7 @@ def _process_single_event(
         model_bull_bear = modelo_omitido
         model_judge = modelo_omitido
         batch_bb, batch_judge = None, None
+        prompt_version = None
     else:
         bull_output = bull_bear_results.get(custom_id_de(event_id, "bull"))
         bear_output = bull_bear_results.get(custom_id_de(event_id, "bear"))
@@ -674,6 +694,7 @@ def _process_single_event(
         model_bull_bear = config.ANALYZER_MODEL
         model_judge = config.JUDGE_MODEL
         batch_bb, batch_judge = bb_batch_id, judge_batch_id
+        prompt_version = PROMPT_VERSION
 
     # --- Etapa 6: impact estimation (SIEMPRE fresco — depende de as_of_date) ---
     impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], event_id, window_days=20)
@@ -700,6 +721,7 @@ def _process_single_event(
         conn, event_id, novelty, bull_output, bear_output, judge_output,
         net_conviction, confidence_in_conviction, impact, ev_result, decisions,
         model_bull_bear, model_judge, batch_bb, batch_judge, from_cache, control,
+        prompt_version=prompt_version,
     )
 
 
@@ -924,7 +946,7 @@ def rellenar_regla_sin_ia(conn, max_segundos: float = 600, tanda: int = 500) -> 
 def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, judge_output,
                            net_conviction, confidence_in_conviction, impact, ev_result, decisions,
                            model_bull_bear, model_judge, batch_bb, batch_judge, from_cache,
-                           control: dict | None = None) -> None:
+                           control: dict | None = None, prompt_version: str | None = None) -> None:
     import json as _json
 
     with conn.cursor() as cur:
@@ -936,13 +958,13 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 n_historical_analogues, ev_calculation, ev_conservative, ev_aggressive, ev_balanced,
                 abstention_decision, trade_decision_conservative, trade_decision_aggressive,
                 trade_decision_balanced, model_version_bull_bear, model_version_judge,
-                batch_id_bull_bear, batch_id_judge, from_cache, decision_sin_ia
+                batch_id_bull_bear, batch_id_judge, from_cache, decision_sin_ia, prompt_version
             ) VALUES (
                 %(event_id)s, %(novelty_score)s, %(novelty_reasoning)s, %(bull)s, %(bear)s,
                 %(judge)s, %(net_conviction)s, %(confidence)s, %(impact)s,
                 %(n_analogues)s, %(ev_calc)s, %(ev_cons)s, %(ev_aggr)s, %(ev_bal)s,
                 %(abstention)s, %(td_cons)s, %(td_aggr)s, %(td_bal)s, %(model_bb)s, %(model_j)s,
-                %(batch_bb)s, %(batch_j)s, %(from_cache)s, %(sin_ia)s
+                %(batch_bb)s, %(batch_j)s, %(from_cache)s, %(sin_ia)s, %(prompt_version)s
             )
             ON CONFLICT (event_id) DO UPDATE SET
                 novelty_score = EXCLUDED.novelty_score, novelty_reasoning = EXCLUDED.novelty_reasoning,
@@ -955,7 +977,8 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 trade_decision_conservative = EXCLUDED.trade_decision_conservative,
                 trade_decision_aggressive = EXCLUDED.trade_decision_aggressive,
                 trade_decision_balanced = EXCLUDED.trade_decision_balanced,
-                decision_sin_ia = EXCLUDED.decision_sin_ia, analyzed_at = now()
+                decision_sin_ia = EXCLUDED.decision_sin_ia, prompt_version = EXCLUDED.prompt_version,
+                analyzed_at = now()
             """,
             {
                 "event_id": event_id,
@@ -982,6 +1005,7 @@ def _store_event_analysis(conn, event_id, novelty, bull_output, bear_output, jud
                 "batch_j": batch_judge,
                 "from_cache": from_cache,
                 "sin_ia": _json.dumps(control) if control is not None else None,
+                "prompt_version": prompt_version,
             },
         )
     conn.commit()
