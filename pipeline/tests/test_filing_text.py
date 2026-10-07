@@ -421,3 +421,18 @@ def test_el_comunicado_ex99_se_usa_en_todas_las_clases(monkeypatch, event_class)
     resultado = filing_text.fetch_filing_text("https://x", event_class)
     assert resultado["includes_exhibit"] is True
     assert "Record Quarterly Revenue" in resultado["text"]
+
+
+def test_un_comunicado_largo_no_deja_fuera_el_texto_del_item():
+    """Tanda 7: el documento principal va primero (recortado) y el EX-99
+    detrás; antes, un comunicado largo llenaba los 8000 caracteres."""
+    from pipeline.ingest.filing_text import MAX_TEXT_CHARS
+
+    docs = [
+        {"type": "8-K", "sequence": 1, "raw_text": "<p>Item 1.01 Acuerdo con Megacorp por 5 años.</p>"},
+        {"type": "EX-99.1", "sequence": 2, "raw_text": "<p>" + "Comunicado muy largo. " * 2000 + "</p>"},
+    ]
+    resultado = extract_best_text(docs, prefer_exhibit=True)
+    assert resultado["text"].startswith("Item 1.01 Acuerdo con Megacorp")
+    assert "Comunicado muy largo." in resultado["text"]
+    assert len(resultado["text"]) <= MAX_TEXT_CHARS

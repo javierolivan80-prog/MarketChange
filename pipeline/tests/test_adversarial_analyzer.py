@@ -339,6 +339,28 @@ class TestCacheAgainstRealPostgres:
         assert req_mismo_dia in results
         assert req_dia_siguiente not in results
 
+    def test_batch_no_reutiliza_otra_version_ni_siquiera_del_mismo_filing(self):
+        """La caché por lotes (la que usa producción) y su rama H-20 (mismo
+        filing) también exigen la versión vigente del prompt."""
+        from pipeline.analyze.adversarial_analyzer import get_cached_analyses_batch
+
+        viejo = self._insert_event_with_analysis("50", "ACME", "8K_2.02_EARNINGS", "1 hour")
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE event_analyses SET prompt_version = NULL WHERE event_id = %s", (viejo,))
+            cur.execute("SELECT accession_number FROM events WHERE event_id = %s", (viejo,))
+            accession = cur.fetchone()["accession_number"]
+        self.conn.commit()
+        req = self._insert_pending_event("51", "ACME", "8K_2.02_EARNINGS", "2024-01-01")
+        filas = [
+            {"event_id": req, "ticker": "ACME", "event_class": "8K_2.02_EARNINGS", "d0_close_date": date(2024, 1, 1),
+             "source": "EDGAR", "accession_number": accession},
+        ]
+        assert get_cached_analyses_batch(self.conn, filas) == {}
+        with self.conn.cursor() as cur:
+            cur.execute("UPDATE event_analyses SET prompt_version = %s WHERE event_id = %s", (PROMPT_VERSION, viejo))
+        self.conn.commit()
+        assert req in get_cached_analyses_batch(self.conn, filas)
+
     def test_cache_no_reutiliza_analisis_con_otra_version_de_prompt(self):
         """Tanda 7: un análisis con el planteamiento anterior no responde a la
         misma pregunta."""

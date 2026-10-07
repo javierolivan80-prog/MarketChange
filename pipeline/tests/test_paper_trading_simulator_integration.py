@@ -6,6 +6,7 @@ import os
 from datetime import date, timedelta
 
 import pytest
+from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -73,6 +74,7 @@ def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_convic
             """,
             (event_id, net_conviction, confidence, ev, ev, ev, decision, decision, decision, modelo_judge),
         )
+        cur.execute("UPDATE event_analyses SET prompt_version = %s WHERE event_id = %s", (PROMPT_VERSION, event_id))
         # Precio de D0 (por encima del mínimo de 5 $) si el test no siembra su serie.
         cur.execute(
             "INSERT INTO prices (ticker, trade_date, open_raw, close_raw, high_raw, low_raw, adj_factor, volume) "
@@ -213,3 +215,18 @@ def test_paper_trading_solo_opera_la_equilibrada(conn):
     assert VERSIONS == ("BALANCED",)
     with pytest.raises(AssertionError):
         simulate_paper_trading_week(conn, "CONSERVATIVE", WEEK_START, WEEK_END, run_batch_tag="x")
+
+
+def test_paper_trading_no_mezcla_analisis_del_planteamiento_anterior(conn):
+    """Tanda 7: net_conviction cambió de significado; los análisis sin la
+    versión vigente del prompt no entran en el paper trading."""
+    from pipeline.paper_trading.simulator import fetch_all_events_for_week, fetch_events_for_week
+
+    nuevo = _seed_event(conn, "1", "AAA", date(2026, 3, 2), "LONG", 0.8, 80, 0.03)
+    viejo = _seed_event(conn, "2", "BBB", date(2026, 3, 2), "LONG", 0.8, 80, 0.03)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE event_analyses SET prompt_version = NULL WHERE event_id = %s", (viejo,))
+    conn.commit()
+    desde, hasta = date(2026, 3, 2), date(2026, 3, 6)
+    assert [r["event_id"] for r in fetch_events_for_week(conn, "BALANCED", desde, hasta)] == [nuevo]
+    assert [r["event_id"] for r in fetch_all_events_for_week(conn, desde, hasta)] == [nuevo]

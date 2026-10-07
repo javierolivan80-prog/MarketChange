@@ -1449,3 +1449,17 @@ def test_la_ia_recibe_la_reaccion_de_d0_y_se_guarda_la_version_del_prompt(conn, 
         assert cur.fetchone()["prompt_version"] == PROMPT_VERSION
         cur.execute("SELECT abnormal_ret_d0_pct FROM event_enrichment WHERE event_id = %s", (objetivo,))
         assert cur.fetchone()["abnormal_ret_d0_pct"] is not None
+
+
+def test_la_cola_no_coge_un_d0_que_aun_no_ha_cerrado(conn, monkeypatch):
+    """Tanda 7: una pasada a mano durante la sesión guarda la barra viva de
+    hoy; con D0 = hoy (Nueva York) el evento espera a la pasada siguiente."""
+    from pipeline.analyze import event_analysis_pipeline as eap
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    hoy = dates[280].date()
+    evento = _seed_event(conn, "1", "TESTCO", hoy)
+    monkeypatch.setattr(eap, "hoy_en_nueva_york", lambda: hoy)
+    assert [e for e in eap.fetch_events_needing_analysis(conn, require_d0_bar=True) if e["event_id"] == evento] == []
+    monkeypatch.setattr(eap, "hoy_en_nueva_york", lambda: dates[281].date())
+    assert [e["event_id"] for e in eap.fetch_events_needing_analysis(conn, require_d0_bar=True)] == [evento]

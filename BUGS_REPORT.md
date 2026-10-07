@@ -87,6 +87,15 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
     - Versión del planteamiento (`PROMPT_VERSION`) guardada con cada análisis. La caché exige la misma versión y el mismo D0, porque otro D0 tiene otra reacción; antes bastaba un D0 a ±1 día.
     - El comunicado EX-99 se usa en todas las clases de evento, no solo en resultados.
     - Sin cambios: la confianza (0-100) y su uso en el EV y la abstención; el control sin IA y la regla histórica.
+    - Revisión adversarial: no hay look-ahead en las pasadas programadas. Corregido:
+      - La cola exige D0 < hoy en Nueva York; una pasada a mano en plena sesión daba la barra viva como «cierre de D0».
+      - La IA recibe a qué hora se publicó el filing respecto a la sesión: con uno cerca del cierre, la reacción de D0 se queda a medias.
+      - El retorno de D0 exige la sesión anterior de verdad.
+      - El VIX solo se da si es el de D0.
+      - Los NaN se guardan como NULL.
+      - El texto del Item va delante del comunicado y ya no lo tapa.
+      - El paper trading solo usa análisis de la versión vigente.
+    - **Abierto (PREGUNTA):** la IA (y los análogos, con CAR anormal) predicen el retorno FRENTE AL MERCADO, pero las operaciones son absolutas (LONG/SHORT sin cubrir con el S&P 500), y el paper trading evalúa el acierto con el movimiento absoluto a 5 días.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

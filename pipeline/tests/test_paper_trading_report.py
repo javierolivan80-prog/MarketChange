@@ -5,6 +5,7 @@ import os
 from datetime import date, timedelta
 
 import pytest
+from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -78,6 +79,7 @@ def _seed_event(conn, cik: str, ticker: str, d0: date, decision: str, net_convic
             """,
             (event_id, net_conviction, confidence, ev, ev, ev, decision, decision, decision),
         )
+        cur.execute("UPDATE event_analyses SET prompt_version = %s WHERE event_id = %s", (PROMPT_VERSION, event_id))
     conn.commit()
     return event_id
 

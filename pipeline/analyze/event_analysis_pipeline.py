@@ -86,6 +86,13 @@ _D0_BAR_EXISTS = (
 )
 
 
+def hoy_en_nueva_york() -> date:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
 def _queue_filters(
     min_market_cap: float | None, require_text: bool, exclude_ids, require_d0_bar: bool = False,
     d0_desde: date | None = None, d0_antes_de: date | None = None,
@@ -113,6 +120,11 @@ def _queue_filters(
         where.append("(e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)")
     if require_d0_bar:
         where.append(_D0_BAR_EXISTS)
+        # Y D0 ya cerrado (Tanda 7): una pasada lanzada a mano durante la
+        # sesión guarda la barra viva de hoy, y la IA leería un precio de
+        # media sesión como «cierre de D0».
+        where.append("e.d0_close_date < %(hoy_nueva_york)s")
+        params["hoy_nueva_york"] = hoy_en_nueva_york()
     if exclude_ids:
         where.append("NOT (e.event_id = ANY(%(exclude)s))")
         params["exclude"] = list(exclude_ids)
@@ -145,7 +157,7 @@ def fetch_events_needing_analysis(
         cur.execute(
             f"""
             SELECT e.event_id, e.cik, e.ticker, e.event_class, e.source, e.accession_number, e.d0_close_date,
-                   e.filing_text, u.company_name, u.sic_code
+                   e.filed_at, e.filing_text, u.company_name, u.sic_code
             FROM events e
             JOIN universe u ON u.cik = e.cik
             LEFT JOIN event_analyses ea ON ea.event_id = e.event_id
@@ -509,7 +521,9 @@ def process_chunk(conn, client, event_rows: list[dict], batches_enviados: list |
                 filing_excerpt=rep["filing_text"] or _FALLBACK_FILING_EXCERPT,
                 # Reacción de D0 y contexto de mercado (Tanda 7): la IA juzga
                 # si la reacción se quedó corta o se pasó.
-                financial_context=contexto_de_mercado(precomputed_by_id[rep["event_id"]][0]),
+                financial_context=contexto_de_mercado(
+                    precomputed_by_id[rep["event_id"]][0], rep.get("filed_at"), rep["d0_close_date"]
+                ),
             )
             for rep, grupo in ((g[0], g) for g in grupos)
         ]
