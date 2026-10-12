@@ -204,6 +204,19 @@ def test_survivorship_warning_propagates_when_present_near_d0():
     assert result.had_survivorship_warning is True
 
 
+def test_un_dia_sin_precio_pero_sin_marca_no_cuenta():
+    """El aviso exige la marca de hueco, no solo que falte el precio."""
+    ticker = _panel(320, 100.0, 0.0, seed=17)
+    d0_idx = 300
+    d0 = ticker.index[d0_idx].date()
+    ticker.loc[ticker.index[d0_idx - 2], "close_raw"] = float("nan")
+    spy = _panel(320, 400.0, 0.0, seed=18)
+    sector = _panel(320, 50.0, 0.0, seed=19)
+    vix = _panel(320, 18.0, 0.0, seed=20)
+    result = compute_enrichment(ticker, spy, sector, vix, _factors(320), d0, "XLK")
+    assert result.had_survivorship_warning is False
+
+
 def test_la_marca_sobre_una_vela_con_precio_no_cuenta_es_del_futuro():
     """Tanda 10: una descarga posterior marca la última vela con precio de
     un ticker que dejó de devolver datos. En D0 eso no se sabía: no cuenta."""

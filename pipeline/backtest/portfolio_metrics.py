@@ -236,8 +236,10 @@ def compute_metrics_by_event_type(trades_with_event_class: list[dict]) -> dict[s
 # Clase de evento que pierde más que esto de sus eventos por falta de precios
 # (sin CAR a 20 sesiones) no es fiable (ARCHITECTURE_LEAN.md, auditoría T4).
 PERDIDA_MAXIMA_FIABLE_PCT = 20.0
-# Margen para que la ventana de 20 sesiones de un evento ya haya terminado.
-DIAS_VENTANA_CERRADA = 45
+# Margen para que el CAR a 20 sesiones de un evento ya pueda existir: la
+# ventana (~28 días naturales) más el retraso con que se publican los
+# factores de Fama-French (de uno a dos meses) y las descargas por tandas.
+DIAS_VENTANA_CERRADA = 120
 
 
 def perdida_por_clase(conn) -> list[dict]:
@@ -282,7 +284,9 @@ def compute_bias_report(conn) -> dict:
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM universe")
         n_total = cur.fetchone()["n"]
-        cur.execute("SELECT count(*) AS n FROM prices WHERE survivorship_warning")
+        # Huecos reales (marca sin precio), la misma definición que el aviso
+        # de supervivencia de enrichment.py (Tanda 10).
+        cur.execute("SELECT count(*) AS n FROM prices WHERE survivorship_warning AND close_raw IS NULL")
         n_gaps = cur.fetchone()["n"]
         cur.execute("SELECT count(*) AS n FROM prices")
         n_price_rows = cur.fetchone()["n"]

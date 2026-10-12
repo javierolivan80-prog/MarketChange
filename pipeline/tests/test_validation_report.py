@@ -491,3 +491,17 @@ def test_sensitivity_table_muestra_n_missing_vix():
 
     assert "Trades sin vix_d0 disponible" in tabla
     assert "Conservative=2" in tabla
+
+
+def test_sensitivity_table_muestra_el_escenario_de_deslistado_con_las_afectadas():
+    """Tanda 10: el escenario hipotético de deslistado sale en la tabla con
+    cuántas operaciones toca (con 0, el resultado igual al base no significa
+    «robusto»: no había ninguna)."""
+    from pipeline.validation.report import _sensitivity_table
+
+    escenarios = _sensitivity_fixture()["scenarios"]
+    for v in escenarios.values():
+        v["delisting_minus_30pct"] = {**_escenario(0.01, 20), "n_afectadas": 3}
+    tabla = _sensitivity_table({"run_batch_tag": "t", "scenarios": escenarios})
+    fila = next(linea for linea in tabla.splitlines() if linea.startswith("| Las que dejaron de cotizar"))
+    assert fila.count("afectadas=3") == 3

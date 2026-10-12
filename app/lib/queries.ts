@@ -349,6 +349,8 @@ export interface SensitivityScenarioResult {
   total_return?: number | null;
   /** El escenario no aplica (p. ej. el de confianza con la regla sin IA, H-06). */
   no_aplica?: string;
+  /** Escenario hipotético de deslistado (Tanda 10): operaciones a las que toca. */
+  n_afectadas?: number;
 }
 
 export interface Sensitivity {

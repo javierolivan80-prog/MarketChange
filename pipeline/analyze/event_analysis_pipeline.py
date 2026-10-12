@@ -95,7 +95,7 @@ def hoy_en_nueva_york() -> date:
 
 def _queue_filters(
     min_market_cap: float | None, require_text: bool, exclude_ids, require_d0_bar: bool = False,
-    d0_desde: date | None = None, d0_antes_de: date | None = None, capitalizacion_en_d0: bool = False,
+    d0_desde: date | None = None, d0_antes_de: date | None = None,
 ) -> tuple[str, dict]:
     where = ["ea.event_id IS NULL"]
     params: dict = {}
@@ -108,15 +108,7 @@ def _queue_filters(
     if d0_antes_de is not None:
         where.append("e.d0_close_date < %(d0_antes_de)s")
         params["d0_antes_de"] = d0_antes_de
-    if min_market_cap is not None and capitalizacion_en_d0:
-        # Histórico (H-14, Tanda 10): el tamaño de ENTONCES, no el de hoy. La
-        # lista invertible de hoy solo tiene supervivientes: elegía los
-        # eventos del pasado por cómo les fue después.
-        from pipeline.backtest.portfolio_simulator import CAPITALIZACION_D0_SIN_HOY_SQL
-
-        where.append(f"{CAPITALIZACION_D0_SIN_HOY_SQL} >= %(min_cap)s")
-        params["min_cap"] = min_market_cap
-    elif min_market_cap is not None:
+    if min_market_cap is not None:
         # Solo el universo invertible, y a partir de cierto tamaño: es la
         # palanca para gastar la IA en empresas grandes primero.
         where.append("u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s")
@@ -149,15 +141,12 @@ def fetch_events_needing_analysis(
     exclude_ids=(),
     d0_desde: date | None = None,
     d0_antes_de: date | None = None,
-    capitalizacion_en_d0: bool = False,
 ) -> list[dict]:
     """Siguiente tanda de la cola. Sin filtros (los defaults) devuelve todo lo
     pendiente en orden de event_id; run_pipeline() la llama con los filtros
     de config: más recientes primero y, a igualdad de fecha, las empresas más
     grandes primero."""
-    where, params = _queue_filters(
-        min_market_cap, require_text, exclude_ids, require_d0_bar, d0_desde, d0_antes_de, capitalizacion_en_d0,
-    )
+    where, params = _queue_filters(min_market_cap, require_text, exclude_ids, require_d0_bar, d0_desde, d0_antes_de)
     order = (
         "e.d0_close_date DESC, u.market_cap_last_usd DESC NULLS LAST, e.event_id"
         if min_market_cap is not None
@@ -1114,10 +1103,8 @@ def analizar_antes_del_corte(conn, max_segundos: float = 300, min_market_cap: fl
     y no se puede validar con ellos. Se guarda su fila de análisis con la
     regla sin IA, gratis, para que entren en el backtest histórico.
 
-    Misma cola que la IA (desde ANALYSIS_MIN_MARKET_CAP_USD y con barra de
-    D0), pero con la capitalización EN D0, no la lista invertible de hoy
-    (H-14, Tanda 10: esa lista solo tiene supervivientes), y sin exigir el
-    texto del filing, que solo usa la IA. No
+    Misma cola que la IA (universo invertible desde ANALYSIS_MIN_MARKET_CAP_USD
+    y barra de D0), sin exigir el texto del filing, que solo usa la IA. No
     depende de ANTHROPIC_API_KEY: lo lanza el paso de backtest, por tandas
     hasta acabar o agotar `max_segundos`. Devuelve cuántos guardó."""
     min_market_cap = config.ANALYSIS_MIN_MARKET_CAP_USD if min_market_cap is None else min_market_cap
@@ -1132,7 +1119,7 @@ def analizar_antes_del_corte(conn, max_segundos: float = 300, min_market_cap: fl
     while time.monotonic() - inicio < max_segundos:
         tanda = fetch_events_needing_analysis(
             conn, CHUNK_SIZE, min_market_cap=min_market_cap, require_d0_bar=True,
-            exclude_ids=intentados, d0_antes_de=inicio_ia, capitalizacion_en_d0=True,
+            exclude_ids=intentados, d0_antes_de=inicio_ia,
         )
         if not tanda:
             break

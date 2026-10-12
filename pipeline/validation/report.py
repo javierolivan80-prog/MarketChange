@@ -230,7 +230,7 @@ def _sensitivity_table(sensitivity: dict) -> str:
         "commission_plus_0.1pct": "Comisiones +0.1%/trade",
         "spread_plus_0.2pct": "Spread +0.2%",
         "latency_d_plus_2": "Entrada D+2 en vez de D+1 (latencia)",
-        "delisting_minus_30pct": "Deslistadas (DATA_GAP) pierden un 30 % al salir (hipótesis)",
+        "delisting_minus_30pct": "Las que dejaron de cotizar pierden un 30 % al salir (hipótesis)",
         "confidence_minus_20pct": "Modelo reduce confidence 20%",
         "high_vix_regime": "Régimen alto-VIX (proxy de 'VIX sube', ver sensitivity.py)",
         "low_vix_regime": "Régimen bajo-VIX",
@@ -246,7 +246,8 @@ def _sensitivity_table(sensitivity: dict) -> str:
         # (n) por escenario (IMPROVEMENT_PLAN.md R14): sin esto, un return
         # que se desploma en un escenario podía ser "el escenario importa" o
         # simplemente "la muestra se redujo a la mitad" — indistinguibles.
-        return f"{_fmt_pct(scenario.get('total_return'))} (n={scenario.get('n_trades', 0)})"
+        afectadas = f", afectadas={scenario['n_afectadas']}" if "n_afectadas" in scenario else ""
+        return f"{_fmt_pct(scenario.get('total_return'))} (n={scenario.get('n_trades', 0)}{afectadas})"
 
     for key in scenario_keys:
         c, b, a = cons.get(key, {}), bal.get(key, {}), aggr.get(key, {})

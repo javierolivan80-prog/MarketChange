@@ -107,10 +107,7 @@ COMMISSION_BPS_ROUND_TRIP = config.COMMISSION_BPS_ROUND_TRIP  # 0.10% por posici
 # actual (universe.market_cap_last_usd): el error que queda va hacia el
 # deslizamiento alto (25 pb), el conservador. Sin cifra en D0 no se usa la de
 # hoy: NULL, que también es 25 pb.
-def _sql_capitalizacion_d0(sin_precio_negociado: str) -> str:
-    """Capitalización en D0 (ver arriba). `sin_precio_negociado`: la fórmula
-    cuando el ticker aún no tiene el historial de splits revisado."""
-    return """
+MARKET_CAP_D0_SQL = """
     (SELECT CASE WHEN a.acciones IS NULL OR d0.cierre IS NULL THEN NULL
                  -- Acciones del 10-K llevadas a D0 con los splits entre su
                  -- presentación y D0 (un contrasplit en medio las divide).
@@ -118,7 +115,7 @@ def _sql_capitalizacion_d0(sin_precio_negociado: str) -> str:
                      SELECT exp(sum(ln(s.ratio))) FROM splits s
                      WHERE s.ticker = e.ticker AND s.split_date > a.presentado AND s.split_date <= e.d0_close_date
                  ), 1)
-                 ELSE """ + sin_precio_negociado + """ END
+                 ELSE LEAST(a.acciones * d0.cierre, u.market_cap_last_usd) END
        FROM (SELECT f.shares_outstanding AS acciones, f.filed_at AS presentado
                FROM (SELECT 1) uno
                LEFT JOIN LATERAL (
@@ -135,18 +132,6 @@ def _sql_capitalizacion_d0(sin_precio_negociado: str) -> str:
        ) d0 ON TRUE
        LEFT JOIN universe u ON u.cik = e.cik)
 """
-
-
-MARKET_CAP_D0_SQL = _sql_capitalizacion_d0("LEAST(a.acciones * d0.cierre, u.market_cap_last_usd)")
-
-# Para ELEGIR qué eventos del histórico se analizan (H-14, Tanda 10) no vale
-# el tope con la capitalización de hoy: dejaría fuera a las empresas que
-# después se hundieron, que es justo el sesgo de supervivencia. Sin historial
-# de splits se usa close_raw tal cual: un split posterior la infravalora (deja
-# fuera a una que luego creció) y un contrasplit posterior la sobrevalora
-# (deja dentro a una que luego se hundió); los dos errores van en contra de
-# los supervivientes, no a su favor.
-CAPITALIZACION_D0_SIN_HOY_SQL = _sql_capitalizacion_d0("a.acciones * d0.cierre")
 
 # Circuit-breaker de drawdown de cartera (hallazgo de la auditoría — protección
 # de capital, prioridad máxima). Deliberadamente MÁS BAJO que

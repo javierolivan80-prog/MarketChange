@@ -373,6 +373,21 @@ export default async function FuncionaPage() {
               </tbody>
             </table>
           </div>
+          {(() => {
+            // Tanda 10: con 0 operaciones afectadas, un resultado igual al
+            // normal no significa «robusto»: no había ninguna que tocar.
+            const afectadas = VERSION_ORDER.map((ver) => validationReport.sensitivity.scenarios[ver]?.delisting_minus_30pct?.n_afectadas);
+            if (afectadas.every((n) => n === undefined)) return null;
+            const texto = VERSION_ORDER.map((ver, i) => `${versionLabel(ver, locale)}: ${afectadas[i] ?? "—"}`).join(" · ");
+            return (
+              <p className="mt-2 text-xs text-text-tertiary">
+                {t(
+                  `Operaciones que dejaron de cotizar, a las que se aplica la hipótesis del −30 %: ${texto}.`,
+                  `Trades that stopped trading, to which the −30% assumption applies: ${texto}.`,
+                )}
+              </p>
+            );
+          })()}
         </section>
       )}
 

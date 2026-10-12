@@ -361,12 +361,13 @@ def test_bias_report_against_real_postgres():
                 "VALUES (%s,%s,'X','2024-01-01','2024-01-01',%s)",
                 (str(i), f"T{i}", i == 0),
             )
-        # 10 filas de precio, 2 con survivorship_warning.
+        # 10 filas de precio: 2 huecos reales (marca sin precio) y una marca
+        # sobre una vela con precio, que no es un hueco (Tanda 10).
         for i in range(10):
             cur.execute(
                 "INSERT INTO prices (ticker, trade_date, close_raw, survivorship_warning) "
-                "VALUES ('T0', %s, 100.0, %s)",
-                (date(2024, 1, i + 1), i < 2),
+                "VALUES ('T0', %s, %s, %s)",
+                (date(2024, 1, i + 1), None if i < 2 else 100.0, i < 3),
             )
     conn.commit()
 
@@ -481,7 +482,12 @@ def test_perdida_por_clase_cuenta_los_eventos_sin_car_con_la_ventana_cerrada():
         cur.execute("TRUNCATE car_results, event_analyses, event_enrichment, events, prices, universe RESTART IDENTITY CASCADE")
         cur.execute("INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) VALUES ('1','T','X','2024-01-01','2024-01-01')")
         hoy = date.today()
-        eventos = [("8K_2.02_EARNINGS", True)] * 4 + [("8K_1.03_BANKRUPTCY", True), ("8K_1.03_BANKRUPTCY", False)]
+        eventos = (
+            [("8K_2.02_EARNINGS", True)] * 4
+            + [("8K_1.03_BANKRUPTCY", True), ("8K_1.03_BANKRUPTCY", False)]
+            # Justo en el límite: pierde el 20 %, sigue siendo fiable.
+            + [("8K_5.02_EXEC_CHANGE", True)] * 4 + [("8K_5.02_EXEC_CHANGE", False)]
+        )
         for i, (clase, con_car) in enumerate(eventos):
             cur.execute(
                 "INSERT INTO events (cik, ticker, source, event_class, accession_number, source_url, filed_at, d0_close_date, "
@@ -504,5 +510,7 @@ def test_perdida_por_clase_cuenta_los_eventos_sin_car_con_la_ventana_cerrada():
     assert clases["8K_2.02_EARNINGS"]["n_eventos"] == 4 and clases["8K_2.02_EARNINGS"]["n_sin_car"] == 0
     assert clases["8K_2.02_EARNINGS"]["fiable"] is True
     assert clases["8K_1.03_BANKRUPTCY"]["pct_perdido"] == pytest.approx(50.0)
+    assert clases["8K_5.02_EXEC_CHANGE"]["pct_perdido"] == pytest.approx(20.0)
+    assert clases["8K_5.02_EXEC_CHANGE"]["fiable"] is True
     assert report["clases_no_fiables"] == ["8K_1.03_BANKRUPTCY"]
     conn.close()

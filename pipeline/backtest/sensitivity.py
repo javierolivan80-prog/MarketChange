@@ -31,10 +31,14 @@ aproximación deliberada, documentada aquí en vez de en cada función:
   las métricas de cada mitad — la misma pregunta que PARTE 4 pide bajo
   "regime dependency", resuelta una sola vez y reportada en ambos sitios.
 
-- Deslistado −30 % (Tanda 10, HIPÓTESIS, no dato): las operaciones que se
-  cerraron por falta de datos (DATA_GAP: el ticker dejó de cotizar a mitad
-  de la operación) se marcan a la última cotización o al precio de entrada,
-  sin pérdida por el deslistado. Aquí la acción cae un 30 % más al salir, la
+- Deslistado −30 % (Tanda 10, HIPÓTESIS, no dato): las operaciones cuyo
+  ticker dejó de cotizar se cierran a la última cotización (o al precio de
+  entrada), sin pérdida por el deslistado. Se reconocen por DATA_GAP o porque
+  su vela de salida tiene precio y lleva la marca de supervivencia: así deja
+  yfinance_backfill la última vela de un ticker que ya no devuelve datos, y
+  esa operación sale como MAX_HOLDING en esa vela. Con varios tramos (trailing)
+  se aplica al precio medio de salida, que incluye los tramos ya cobrados: es
+  una aproximación pesimista. Aquí la acción cae un 30 % más al salir, la
   media que estima la literatura para los deslistados por mal desempeño
   (Shumway, 1997). Para un corto es a favor; una OPA iría en contra. Mide
   cuánto depende el resultado de ese supuesto.
@@ -180,13 +184,33 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
 DESLISTADO_CAIDA_PCT = 30.0
 
 
-def apply_delisting_haircut(trades: list[dict], caida_pct: float = DESLISTADO_CAIDA_PCT) -> tuple[list[dict], int]:
-    """(trades, n_afectados): los DATA_GAP con la acción un `caida_pct` por
-    debajo de su precio de salida (ver docstring del módulo). Con cobertura,
-    la pata de SPY no cambia; los costes son los del original."""
+def salidas_en_vela_marcada(conn, trades: list[dict]) -> set[tuple[str, date]]:
+    """(ticker, fecha) de las salidas cuya vela tiene precio y la marca de
+    supervivencia: la última vela de un ticker que dejó de devolver datos."""
+    tickers = sorted({t["ticker"] for t in trades if t.get("ticker")})
+    if not tickers:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ticker, trade_date FROM prices WHERE ticker = ANY(%s) AND survivorship_warning AND close_raw IS NOT NULL",
+            (tickers,),
+        )
+        marcadas = {(r["ticker"], r["trade_date"]) for r in cur.fetchall()}
+    return {(t["ticker"], t["exit_date"]) for t in trades if (t.get("ticker"), t.get("exit_date")) in marcadas}
+
+
+def apply_delisting_haircut(
+    trades: list[dict], salidas_marcadas: set | None = None, caida_pct: float = DESLISTADO_CAIDA_PCT,
+) -> tuple[list[dict], int]:
+    """(trades, n_afectados): las operaciones cuyo ticker dejó de cotizar
+    (DATA_GAP o salida en una vela marcada, `salidas_marcadas`) con la acción
+    un `caida_pct` por debajo de su precio de salida (ver docstring del
+    módulo). Con cobertura, la pata de SPY no cambia; los costes son los del
+    original."""
+    marcadas = salidas_marcadas or set()
     adjusted, afectados = [], 0
     for t in trades:
-        if t.get("exit_reason") != "DATA_GAP":
+        if t.get("exit_reason") != "DATA_GAP" and (t.get("ticker"), t.get("exit_date")) not in marcadas:
             adjusted.append(t)
             continue
         afectados += 1
@@ -287,7 +311,7 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
         commission_trades = apply_extra_cost_bps(trades, COMMISSION_SENSITIVITY_BPS)
         spread_trades = apply_extra_cost_bps(trades, SPREAD_SENSITIVITY_BPS)
         latency_trades = apply_latency_sensitivity(conn, trades)
-        deslistado_trades, n_deslistados = apply_delisting_haircut(trades)
+        deslistado_trades, n_deslistados = apply_delisting_haircut(trades, salidas_en_vela_marcada(conn, trades))
         vix_split = split_by_vix_regime(conn, trades)
 
         scenarios[version] = {
@@ -298,7 +322,7 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
             "delisting_minus_30pct": {
                 **summarize_scenario(deslistado_trades, starting_capital),
                 "n_afectadas": n_deslistados,
-                "hipotesis": "las cerradas por falta de datos (DATA_GAP) pierden un 30 % más al salir",
+                "hipotesis": "las que dejaron de cotizar pierden un 30 % más al salir",
             },
             # El histórico decide con la regla sin IA, con la confianza fija
             # en 100 (H-06): recortarla un 20 % nunca la baja del mínimo, así
