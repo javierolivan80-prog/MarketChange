@@ -9,10 +9,14 @@ import { useT } from "@/components/i18n/LocaleProvider";
 
 // Nav.tsx — barra de navegación.
 //
-// La pestaña activa se deduce de la URL (usePathname) en vez de depender
-// solo de la prop: así error.tsx y not-found.tsx, que no saben en qué página
-// están, también marcan bien la sección. La prop `active` se mantiene por
-// compatibilidad y se usa si no hay ruta.
+// La pestaña activa se deduce de la URL (usePathname): así error.tsx y
+// not-found.tsx, que no saben en qué página están, también marcan bien la
+// sección.
+//
+// Vive en el layout raíz (Tanda 12), con el mismo ancho en todas las
+// páginas: antes cada página la pintaba dentro de su propio <main> (3xl, 5xl
+// o 7xl) y en pantallas anchas la cabecera saltaba de sitio al cambiar de
+// pestaña o al llegar la página tras la pantalla de carga.
 //
 // Antes la cabecera usaba márgenes negativos (-mx-6) para "salirse" del
 // padding de la página — con páginas de padding 4 eso la hacía 8px más ancha
@@ -28,9 +32,9 @@ const TABS = [
   { href: "/como-funciona", es: "Cómo funciona", en: "How it works" },
 ] as const;
 
-export function Nav({ active }: { active?: string }) {
+export function Nav() {
   const pathname = usePathname();
-  const current = pathname ?? active ?? "";
+  const current = pathname ?? "";
   const t = useT();
   // En móvil las pestañas no caben (Tanda 12): la activa se desplaza a la
   // vista y un degradado en el borde avisa de que hay más mientras quede
@@ -44,14 +48,31 @@ export function Nav({ active }: { active?: string }) {
     setMas({ izquierda: el.scrollLeft > 4, derecha: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
   }
 
+  // Posiciones medidas en pantalla y relativas a la tira (offsetLeft lo es
+  // al documento); el margen es el ancho del degradado, para que la activa
+  // no quede debajo. Sin scrollIntoView: también movería la página en
+  // vertical si la cabecera no está a la vista.
   useEffect(() => {
     const el = tira.current;
     const activa = el?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (el && activa && (activa.offsetLeft < el.scrollLeft || activa.offsetLeft + activa.offsetWidth > el.scrollLeft + el.clientWidth)) {
-      el.scrollLeft = activa.offsetLeft - 16;
+    if (el && activa) {
+      const margen = 32;
+      const caja = el.getBoundingClientRect();
+      const a = activa.getBoundingClientRect();
+      if (a.left < caja.left + margen) el.scrollLeft -= caja.left + margen - a.left;
+      else if (a.right > caja.right - margen) el.scrollLeft += a.right - (caja.right - margen);
     }
     medir();
   }, [current]);
+
+  // Al girar el móvil o cambiar el ancho, cambia si hay pestañas ocultas.
+  useEffect(() => {
+    const el = tira.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observador = new ResizeObserver(medir);
+    observador.observe(el);
+    return () => observador.disconnect();
+  }, []);
 
   const mascara =
     mas.izquierda && mas.derecha
@@ -82,7 +103,7 @@ export function Nav({ active }: { active?: string }) {
                 key={tab.href}
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
-                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm pointer-coarse:py-3 active:bg-surface-raised ${
+                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm pointer-coarse:py-3 active:bg-surface-pressed ${
  isActive
                     ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
                     : "border-transparent text-text-secondary hover:text-foreground"

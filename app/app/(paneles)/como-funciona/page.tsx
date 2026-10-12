@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { Nav } from "@/components/Nav";
 import { getT } from "@/lib/locale";
 
 export async function generateMetadata() {
@@ -39,8 +38,7 @@ export default async function ComoFuncionaPage() {
   );
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
-      <Nav active="/como-funciona" />
+    <main className="mx-auto max-w-3xl px-4 pb-4 sm:px-6">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Cómo funciona", "How it works")}</h1>
         <p className="mt-1 text-sm text-text-secondary">

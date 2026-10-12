@@ -1,7 +1,6 @@
 import { isDatabaseConfigured } from "@/lib/db";
 import { getLatestQualityScoreDate, getQualityScores } from "@/lib/data";
 import type { QualityScoreRow } from "@/lib/queries";
-import { Nav } from "@/components/Nav";
 import { QualityCard } from "@/components/QualityCard";
 import { NoDataYet, NotConfigured } from "@/components/ui/PageState";
 import { getT } from "@/lib/locale";
@@ -39,13 +38,13 @@ function scoreColorClass(score: number | null): string {
 export default async function LargoPlazoPage() {
   const { locale, t } = await getT();
   const title = t("Largo plazo", "Long term");
-  if (!isDatabaseConfigured()) return <NotConfigured active="/largo-plazo" title={title} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={title} />;
 
   const asOfDate = await getLatestQualityScoreDate();
 
   if (!asOfDate)
     return (
-      <NoDataYet active="/largo-plazo" title={title} what={t("Todavía no se han analizado las cuentas de ninguna empresa.", "No company accounts have been analysed yet.")} />
+      <NoDataYet title={title} what={t("Todavía no se han analizado las cuentas de ninguna empresa.", "No company accounts have been analysed yet.")} />
     );
 
   const scores: QualityScoreRow[] = await getQualityScores(asOfDate);
@@ -53,8 +52,7 @@ export default async function LargoPlazoPage() {
   const sinNota = scores.filter((s) => s.total_score === null);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
-      <Nav active="/largo-plazo" />
+    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="num mt-1 text-sm text-text-secondary">

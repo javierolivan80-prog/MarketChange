@@ -33,7 +33,9 @@ export function ConfidenceBucketBars({ buckets, label }: { buckets: ConfidenceBu
           />
           <Bar {...seriesMotion} dataKey="hit_rate_pct" fill="var(--chart-series)">
             {data.map((d, i) => (
-              <Cell key={i} fill={d.n < 5 ? "var(--chart-series-weak)" : "var(--chart-series)"} />
+              // Muestra pequeña (n<5): relleno tenue con el contorno de la serie,
+              // para que la barra se vea en los dos temas sin pesar como las demás.
+              <Cell key={i} fill={d.n < 5 ? "var(--chart-series-weak)" : "var(--chart-series)"} stroke={d.n < 5 ? "var(--chart-series)" : undefined} />
             ))}
           </Bar>
         </BarChart>

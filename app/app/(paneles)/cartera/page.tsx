@@ -1,7 +1,6 @@
 import { isDatabaseConfigured } from "@/lib/db";
 import { getLatestPortfolioRunBatchTag, getPortfolioReport, getLatestPaperTradingRunBatchTag, getPaperTradingReport } from "@/lib/data";
 import { PortfolioVersionCard } from "@/components/PortfolioVersionCard";
-import { Nav } from "@/components/Nav";
 import { ExportPdfButton } from "@/components/ExportPdfButton";
 import { DailyPnLChart } from "@/components/DailyPnLChart";
 import { ConfidenceBucketBars } from "@/components/ConfidenceBucketBars";
@@ -30,18 +29,18 @@ export async function generateMetadata() {
 export default async function CarteraPage() {
   const { locale, t } = await getT();
   const title = t("Cartera", "Portfolio");
-  if (!isDatabaseConfigured()) return <NotConfigured active="/cartera" title={title} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={title} />;
 
   const [portfolioTag, paperTag] = await Promise.all([getLatestPortfolioRunBatchTag(), getLatestPaperTradingRunBatchTag()]);
 
   if (!portfolioTag)
-    return <NoDataYet active="/cartera" title={title} what={t("Todavía no hay resultados de la cartera.", "There are no portfolio results yet.")} />;
+    return <NoDataYet title={title} what={t("Todavía no hay resultados de la cartera.", "There are no portfolio results yet.")} />;
 
   const [report, paperReport] = await Promise.all([getPortfolioReport(portfolioTag), paperTag ? getPaperTradingReport(paperTag) : Promise.resolve(null)]);
 
   if (!report) {
     return (
-      <StatePage active="/cartera" title={title}>
+      <StatePage title={title}>
         <StateBox title={t("Los resultados de la cartera no están disponibles ahora mismo.", "Portfolio results are not available right now.")}>
           {t("Inténtalo de nuevo en unos minutos.", "Please try again in a few minutes.")}
         </StateBox>
@@ -52,8 +51,7 @@ export default async function CarteraPage() {
   const { bias_report } = report;
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
-      <Nav active="/cartera" />
+    <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
@@ -77,7 +75,7 @@ export default async function CarteraPage() {
         <SampleBadge sample={report.sample} warning={report.oos_warning} />
         <div className="mb-4" />
 
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 lg:auto-cols-fr lg:grid-flow-col">
           {VERSION_ORDER.filter((v) => report.versions[v]).map((version) => (
             <PortfolioVersionCard key={version} report={report.versions[version]} startingCapital={report.starting_capital} locale={locale} />
           ))}
@@ -136,7 +134,7 @@ export default async function CarteraPage() {
                 `From ${formatDate(paperReport.week_start, locale)} to ${formatDate(paperReport.week_end, locale)}, at real market prices since each signal.`,
               )}
             </p>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:auto-cols-fr lg:grid-flow-col">
               {VERSION_ORDER.filter((v) => paperReport.versions[v]).map((version) => {
                 const v = paperReport.versions[version];
                 return (

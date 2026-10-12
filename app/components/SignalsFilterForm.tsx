@@ -156,7 +156,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
               type="button"
               onClick={() => removeFilter(f.key)}
               aria-label={`${t("Quitar filtro", "Remove filter")} ${f.label}`}
-              className="inline-flex min-h-7 items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:border-accent-500 hover:bg-surface active:bg-surface-sunken pointer-coarse:min-h-11 pointer-coarse:px-3"
+              className="inline-flex min-h-7 items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:border-accent-500 hover:bg-surface active:bg-surface-pressed pointer-coarse:min-h-11 pointer-coarse:px-3"
             >
               {f.label}
               <span aria-hidden="true" className="text-text-tertiary">×</span>

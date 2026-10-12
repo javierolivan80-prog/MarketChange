@@ -33,7 +33,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="w-full p-4 text-left [outline-offset:-2px] hover:bg-surface-raised active:bg-surface-sunken"
+        className="w-full p-4 text-left [outline-offset:-2px] hover:bg-surface-raised active:bg-surface-pressed"
       >
         <div className="flex items-center gap-4">
           <span className="num w-6 text-xs text-text-tertiary">{rank}</span>

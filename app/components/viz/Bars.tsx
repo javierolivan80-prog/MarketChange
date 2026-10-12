@@ -20,14 +20,14 @@ export function HBars({
 }) {
   const top = max ?? Math.max(...rows.map((r) => r.value), 1);
   return (
-    <ul className="viz-color space-y-1.5 text-sm">
+    <ul className="space-y-1.5 text-sm">
       {rows.map((r) => (
         <li key={r.key ?? r.label} className="grid items-center gap-3" style={{ gridTemplateColumns: `${labelWidth} 1fr` }}>
           <span className="truncate text-text-secondary" title={r.label}>
             {r.label}
           </span>
           <span className="flex max-w-md items-center gap-2">
-            <span className={`h-2 rounded-r-sm bg-accent-500 dark:bg-accent-400 ${animate ? "m-fill-right" : ""}`} style={{ width: `${Math.max(2, (r.value / top) * 100)}%`, maxWidth: "calc(100% - 5rem)" }} />
+            <span className={`viz-color h-2 rounded-r-sm bg-accent-500 dark:bg-accent-400 ${animate ? "m-fill-right" : ""}`} style={{ width: `${Math.max(2, (r.value / top) * 100)}%`, maxWidth: "calc(100% - 5rem)" }} />
             <span className="num shrink-0 whitespace-nowrap text-xs text-text-secondary">{format(r.value)}</span>
           </span>
         </li>

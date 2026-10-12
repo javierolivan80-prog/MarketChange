@@ -39,7 +39,7 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={bins} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="label" tick={{ fontSize: 9 }} unit="%" />
+          <XAxis dataKey="label" tick={chartAxisTick} unit="%" />
           <YAxis tick={chartAxisTick} width={30} allowDecimals={false} />
           <Tooltip {...chartTooltipMotion}
             formatter={(value, _name, item) => [

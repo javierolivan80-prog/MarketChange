@@ -6,17 +6,16 @@
 // raíz envuelve también /senales/[id], y con él la respuesta empieza a
 // enviarse (con estado 200) antes de saber si la señal existe — una señal
 // inexistente devolvía 200 en vez de 404.
+//
+// La barra de pestañas no se pinta aquí: está en el layout raíz y se queda
+// quieta (y ya marcada) mientras llega la página.
 import { getT } from "@/lib/locale";
-import { Nav } from "@/components/Nav";
 
 export default async function Loading() {
   const { t } = await getT();
   return (
-    <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6" aria-busy="true">
+    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6" aria-busy="true">
       <p className="sr-only">{t("Cargando…", "Loading…")}</p>
-      {/* La navegación de verdad, no un hueco (Tanda 12): al pulsar una pestaña
-          se ve marcada en el acto mientras llega la página. */}
-      <Nav />
       {/* Misma forma que una página de datos (título, franja de cifras,
           tabla), para que al llegar el contenido no salte nada de sitio. El
           pulso es .m-skeleton: poca amplitud y nada con movimiento reducido. */}

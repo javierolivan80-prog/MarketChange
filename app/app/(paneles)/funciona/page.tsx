@@ -1,7 +1,6 @@
 import { isDatabaseConfigured } from "@/lib/db";
 import { getLatestPortfolioRunBatchTag, getPortfolioReport, getLatestValidationRunBatchTag, getValidationReport } from "@/lib/data";
 import type { CalibrationDiagnostics, EventStudyClassResult, PortfolioVersionReport, StrategyVersion, VersionDecision } from "@/lib/queries";
-import { Nav } from "@/components/Nav";
 import { CalibrationCurve } from "@/components/CalibrationCurve";
 import { ComparisonTable, type ComparisonRow } from "@/components/ComparisonTable";
 import { SampleBadge } from "@/components/ui/SampleBadge";
@@ -154,12 +153,12 @@ export default async function FuncionaPage() {
   const title = t("Fiabilidad", "Reliability");
   const RELIABILITY = reliability(locale);
   const SCENARIO_LABELS = scenarioLabels(t);
-  if (!isDatabaseConfigured()) return <NotConfigured active="/funciona" title={title} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={title} />;
 
   const [portfolioTag, validationTag] = await Promise.all([getLatestPortfolioRunBatchTag(), getLatestValidationRunBatchTag()]);
 
   if (!portfolioTag)
-    return <NoDataYet active="/funciona" title={title} what={t("Todavía no hay resultados para evaluar el sistema.", "There are no results to assess the system yet.")} />;
+    return <NoDataYet title={title} what={t("Todavía no hay resultados para evaluar el sistema.", "There are no results to assess the system yet.")} />;
 
   const [report, validationReport] = await Promise.all([
     getPortfolioReport(portfolioTag),
@@ -168,7 +167,7 @@ export default async function FuncionaPage() {
 
   if (!report) {
     return (
-      <StatePage active="/funciona" title={title}>
+      <StatePage title={title}>
         <StateBox title={t("Estos resultados no están disponibles ahora mismo.", "These results are not available right now.")}>
           {t("Inténtalo de nuevo en unos minutos.", "Please try again in a few minutes.")}
         </StateBox>
@@ -212,8 +211,7 @@ export default async function FuncionaPage() {
   const eventClasses = validationReport ? Object.keys(validationReport.event_study).sort() : [];
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
-      <Nav active="/funciona" />
+    <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="mt-1 text-sm text-text-secondary">
@@ -305,7 +303,7 @@ export default async function FuncionaPage() {
             {NO_APLICA_CONFIANZA(t)}
           </p>
         ) : (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 lg:auto-cols-fr lg:grid-flow-col">
           {VERSION_ORDER.filter((ver) => report.versions[ver]).map((ver) => {
             const diag = report.versions[ver].confidence_calibration;
             const { label, adjustment } = interpretCalibration(diag, t);

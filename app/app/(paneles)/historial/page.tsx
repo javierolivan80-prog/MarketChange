@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { isDatabaseConfigured } from "@/lib/db";
 import { getRecommendedVersion, getSignalHistory } from "@/lib/data";
-import { Nav } from "@/components/Nav";
 import { NotConfigured, NoDataYet } from "@/components/ui/PageState";
 import { DirectionBadge, SignedPct } from "@/components/ui/DirectionBadge";
 import { formatDate, formatDateTime, formatIntervalo } from "@/lib/format";
@@ -30,12 +29,12 @@ export default async function HistorialPage() {
     CLOSED_SL: "Stop loss",
     CLOSED_TIMEOUT: t("Plazo máximo", "Maximum holding period"),
   };
-  if (!isDatabaseConfigured()) return <NotConfigured active="/historial" title={title} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={title} />;
 
   const version = await getRecommendedVersion();
   const history = await getSignalHistory(version, 200);
   if (history.rows.length === 0) {
-    return <NoDataYet active="/historial" title={title} what={t("Todavía no se ha emitido ninguna señal operable.", "No tradable signal has been issued yet.")} />;
+    return <NoDataYet title={title} what={t("Todavía no se ha emitido ninguna señal operable.", "No tradable signal has been issued yet.")} />;
   }
 
   // Escala común de la columna de resultados: la operación con el mayor
@@ -43,8 +42,7 @@ export default async function HistorialPage() {
   const maxAbsPnl = Math.max(0, ...history.rows.map((r) => (r.pnl_pct !== null ? Math.abs(r.pnl_pct) : 0)));
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
-      <Nav active="/historial" />
+    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
       <header className="mb-5">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">

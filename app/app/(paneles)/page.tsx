@@ -2,7 +2,6 @@ import Link from "next/link";
 import { isDatabaseConfigured } from "@/lib/db";
 import { getAbstentionSummary, getHomeSummary, getPipelineFreshness, getRecentTradeSignals, getRecommendedVersion } from "@/lib/data";
 import type { AbstentionCategory } from "@/lib/queries";
-import { Nav } from "@/components/Nav";
 import { WelcomeNote } from "@/components/WelcomeNote";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { SampleBadge } from "@/components/ui/SampleBadge";
@@ -64,7 +63,7 @@ function Stat({ label, value, hint, children }: { label: string; value: string; 
 
 export default async function InicioPage() {
   const { locale, t } = await getT();
-  if (!isDatabaseConfigured()) return <NotConfigured active="/" title={t("Resumen", "Overview")} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={t("Resumen", "Overview")} />;
   const RELIABILITY = reliability(locale);
   const levelLabels = {
     stop: "Stop",
@@ -95,8 +94,7 @@ export default async function InicioPage() {
   const isStale = hoursSince !== null && hoursSince > STALE_AFTER_HOURS;
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
-      <Nav active="/" />
+    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
 
       <header className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Resumen", "Overview")}</h1>

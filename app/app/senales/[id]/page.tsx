@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { isDatabaseConfigured } from "@/lib/db";
 import { getRecommendedVersion, getSignalDetail } from "@/lib/data";
-import { Nav } from "@/components/Nav";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { SignalAnalysis } from "@/components/SignalAnalysis";
 import { NotConfigured } from "@/components/ui/PageState";
@@ -24,7 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function SignalPage({ params }: { params: Promise<{ id: string }> }) {
   const { locale, t } = await getT();
-  if (!isDatabaseConfigured()) return <NotConfigured active="/senales" title={t("Señal", "Signal")} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={t("Señal", "Signal")} />;
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
 
@@ -33,8 +32,7 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
   if (!detail) notFound();
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
-      <Nav active="/senales" />
+    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
       <Breadcrumbs
         items={[{ label: t("Resumen", "Overview"), href: "/" }, { label: t("Señales", "Signals"), href: "/senales" }, { label: detail.ticker }]}
       />

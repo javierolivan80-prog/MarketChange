@@ -94,6 +94,9 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
     columns,
     state: { sorting },
     onSortingChange: setSorting,
+    // Clave estable por evento, no por posición: al filtrar, la fila que
+    // hereda una posición no hereda el detalle (ni el análisis) de otra.
+    getRowId: (r) => String(r.event_id),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -162,9 +165,11 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       botones): el realce al pasar por encima ya prometía que
                       era pulsable. Con teclado, el botón ▸. */}
                   <tr
-                    className="cursor-pointer border-b border-border-subtle hover:bg-surface-raised active:bg-surface-sunken"
+                    className="cursor-pointer border-b border-border-subtle [-webkit-tap-highlight-color:transparent] hover:bg-surface-raised active:bg-surface-pressed"
                     onClick={(e) => {
                       if ((e.target as HTMLElement).closest("a, button")) return;
+                      // Seleccionar texto (arrastrar, doble clic) no despliega.
+                      if (window.getSelection()?.toString()) return;
                       toggle(row.original.event_id);
                     }}
                   >
@@ -190,7 +195,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       </td>
                     ))}
                   </tr>
-                  {isExpanded && <SignalRowDetail eventId={row.original.event_id} colSpan={columns.length + 1} />}
+                  {isExpanded && <SignalRowDetail key={row.original.event_id} eventId={row.original.event_id} colSpan={columns.length + 1} />}
                 </Fragment>
               );
             })}

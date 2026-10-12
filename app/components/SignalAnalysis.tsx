@@ -69,6 +69,14 @@ export function SignalAnalysis({
 }) {
   const t = makeT(locale);
   const { bull_output: bull, bear_output: bear, judge_output: judge, novelty_reasoning: novelty, impact_estimation: impact, ev_calculation: ev, abstention_decision: abstention } = detail;
+  // Una fila con el JSON incompleto se muestra como sin datos: antes un
+  // .toFixed sobre un campo ausente tiraba la página entera con un 500.
+  const impactoCompleto =
+    impact != null &&
+    typeof impact.expected_magnitude === "string" &&
+    [impact.confidence, impact.probability_5pct_move, impact.probability_10pct_move, impact.probability_20pct_move].every(
+      (v) => typeof v === "number" && Number.isFinite(v),
+    );
   const rec = abstention?.[recommended];
   const sinIa = detail.decision_sin_ia;
   // Evento anterior a la fecha de corte: no pasó por la IA y el control (que
@@ -218,9 +226,7 @@ export function SignalAnalysis({
         </Section>
 
         <Section title={t("Casos parecidos en el pasado", "Similar past cases")}>
-          {/* Una fila sin la confianza (JSON incompleto) se muestra como sin
-              datos: antes el .toFixed tiraba la página entera con un 500. */}
-          {impact && typeof impact.confidence === "number" ? (
+          {impact && impactoCompleto ? (
             <>
               <p className="num font-medium text-foreground">
                 {detail.n_historical_analogues ?? "?"} {t("casos · confianza", "cases · confidence")} {impact.confidence.toFixed(0)}/100

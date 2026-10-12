@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Disclaimer } from "@/components/ui/Disclaimer";
+import { Nav } from "@/components/Nav";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import { getLocale, getT } from "@/lib/locale";
 
@@ -53,6 +54,11 @@ export default async function RootLayout({
       </head>
       <body className="antialiased font-sans">
         <LocaleProvider locale={locale}>
+          {/* Cabecera común, mismo ancho en todas las páginas (ver Nav.tsx);
+              las páginas solo ponen su <main>. */}
+          <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
+            <Nav />
+          </div>
           {children}
           <Disclaimer />
         </LocaleProvider>
