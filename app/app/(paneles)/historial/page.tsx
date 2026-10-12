@@ -48,8 +48,8 @@ export default async function HistorialPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           {t(
-            `Cada señal emitida por la estrategia ${versionLabel(version, locale).toLowerCase()}, con la hora a la que se publicó y lo que hizo después la acción, medido con precios reales de mercado. Son resultados posteriores a cada señal, no una reconstrucción del pasado.`,
-            `Every signal issued by the ${versionLabel(version, locale).toLowerCase()} strategy, with the time it was published and what the stock did afterwards, measured at real market prices. These are results after each signal, not a reconstruction of the past.`,
+            `Cada señal emitida por la estrategia ${versionLabel(version, locale).toLowerCase()}, con la hora a la que se publicó y lo que hizo después la acción frente al S&P 500 (cada operación se cubre con una posición contraria en SPY), medido con precios reales de mercado. Son resultados posteriores a cada señal, no una reconstrucción del pasado.`,
+            `Every signal issued by the ${versionLabel(version, locale).toLowerCase()} strategy, with the time it was published and what the stock did afterwards relative to the S&P 500 (every trade is hedged with an opposite SPY position), measured at real market prices. These are results after each signal, not a reconstruction of the past.`,
           )}
         </p>
       </header>

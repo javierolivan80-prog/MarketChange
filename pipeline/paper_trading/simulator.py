@@ -30,6 +30,11 @@ parciales:
    hasta el fin de semana simulado, la posición queda OPEN — es lo correcto
    ("todavía no lo sabemos"), no un caso sin cubrir. Si SÍ hay datos hasta
    el fin de semana y no disparó nada, se cierra CLOSED_TIMEOUT ahí.
+
+4. Cobertura con SPY (Tanda 8): igual que el backtest, cada operación lleva
+   una pata contraria en SPY con el mismo nocional; pnl_pct es el resultado
+   frente a SPY con los costes de las dos patas (ver portfolio_simulator.py,
+   «COBERTURA CON SPY»). Sin apertura de SPY en la entrada no se opera.
 """
 from __future__ import annotations
 
@@ -42,9 +47,12 @@ from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
 from pipeline.backtest.portfolio_simulator import (
     MARKET_CAP_D0_SQL,
     PRECIO_D0_MINIMO_SQL,
+    TICKER_COBERTURA,
     OpenPosition,
+    SerieCobertura,
     compute_tp_sl_prices,
     consolidate_trade_record,
+    cubrir_cierres_nuevos,
     step_position_forward,
 )
 from pipeline.backtest.portfolio_strategies import (
@@ -224,11 +232,18 @@ def _build_paper_plan(ev: dict, version: str) -> dict:
     }
 
 
-def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, entry_date: date, entry_price: float, week_end: date) -> dict:
+def simulate_single_paper_trade(
+    ticker_prices: dict[date, dict], plan: dict, entry_date: date, entry_price: float, week_end: date,
+    spy: SerieCobertura | None = None,
+) -> dict:
     """Simula UNA posición desde su entrada (D+1, ya calculada por el
     caller) hasta que dispara TP/SL o llega el fin de semana simulada — lo
     que pase primero. Devuelve un dict con 'status' y, si se cerró, los
-    campos de salida. Pura respecto a BD (recibe los precios ya cargados)."""
+    campos de salida. Pura respecto a BD (recibe los precios ya cargados).
+
+    `spy`: pata de cobertura; el caller garantiza su apertura en entry_date.
+    None solo en pruebas de la mecánica de la acción."""
+    spy_entry_price = spy.apertura(entry_date) if spy is not None else None
     take_profit_pct, stop_loss_pct = _paper_tp_sl_pct(plan["execution_style"])
     tp_price, sl_price = compute_tp_sl_prices(plan["direction"], entry_price, take_profit_pct, stop_loss_pct)
 
@@ -251,6 +266,7 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
         prediction=plan["prediction"],
         had_survivorship_warning=False,
         slippage_bps_por_lado=plan.get("slippage_bps_por_lado", app_config.SLIPPAGE_BPS_PER_SIDE_SMALL),
+        spy_entry_price=spy_entry_price,
     )
 
     # Desde la sesión de entrada inclusive (BUGS_REPORT.md H-31): se entra a
@@ -260,10 +276,13 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
         bar = ticker_prices[d]
         if bar["high_raw"] is None or bar["low_raw"] is None or bar["close_raw"] is None:
             continue
+        # En la sesión de entrada la apertura ES el precio de entrada.
+        open_hoy = entry_price if d == entry_date else (float(bar["open_raw"]) if bar.get("open_raw") is not None else None)
+        n_antes = len(position.closes)
         step_position_forward(
-            position, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), d,
-            open_=float(bar["open_raw"]) if bar.get("open_raw") is not None else None,
+            position, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), d, open_=open_hoy,
         )
+        cubrir_cierres_nuevos(position, n_antes, spy, open_accion=open_hoy)
         if position.remaining_fraction <= 1e-9:
             break
 
@@ -274,8 +293,10 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
             # se cierra a mercado en el último día de negociación <= week_end.
             close_date = trading_dates_in_week[-1]
             close_price = float(ticker_prices[close_date]["close_raw"])
+            n_antes = len(position.closes)
             position.closes.append((close_date, 1.0, close_price, "MAX_HOLDING"))
             position.remaining_fraction = 0.0
+            cubrir_cierres_nuevos(position, n_antes, spy)
         else:
             # Todavía no sabemos — la semana simulada no ha "terminado" en
             # términos de datos de precio disponibles.
@@ -290,6 +311,9 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
                 "exit_price": None,
                 "exit_reason": None,
                 "pnl_pct": None,
+                "spy_entry_price": spy_entry_price,
+                "spy_exit_price": None,
+                "spy_move_pct": None,
                 "confidence": plan["confidence"],
                 "ev": plan["ev"],
                 "prediction": plan["prediction"],
@@ -307,6 +331,9 @@ def simulate_single_paper_trade(ticker_prices: dict[date, dict], plan: dict, ent
         "exit_price": record["exit_price"],
         "exit_reason": _EXIT_REASON_TO_PAPER_LABEL[record["exit_reason"]],
         "pnl_pct": record["pnl_pct"],
+        "spy_entry_price": record["spy_entry_price"],
+        "spy_exit_price": record["spy_exit_price"],
+        "spy_move_pct": record["spy_move_pct"],
         "confidence": plan["confidence"],
         "ev": plan["ev"],
         "prediction": plan["prediction"],
@@ -327,6 +354,7 @@ def simulate_paper_trading_week(conn, version: str, week_start: date, week_end: 
         return []
 
     ticker_cache: dict[str, dict[date, dict]] = {}
+    spy = SerieCobertura(load_ticker_prices(conn, TICKER_COBERTURA))
     results = []
     for ev in events:
         ticker = ev["ticker"]
@@ -346,10 +374,13 @@ def simulate_paper_trading_week(conn, version: str, week_start: date, week_end: 
         if entry_bar["open_raw"] is None:
             logger.warning("Evento %d (%s): sin precio de apertura en la entrada, se omite", ev["event_id"], ticker)
             continue
+        if spy.apertura(entry_date) is None:
+            logger.warning("Evento %d (%s): sin apertura de %s el %s, no se puede cubrir — se omite", ev["event_id"], ticker, TICKER_COBERTURA, entry_date)
+            continue
 
         plan = _build_paper_plan(ev, version)
         plan["version"] = version
-        result = simulate_single_paper_trade(prices, plan, entry_date, float(entry_bar["open_raw"]), week_end)
+        result = simulate_single_paper_trade(prices, plan, entry_date, float(entry_bar["open_raw"]), week_end, spy=spy)
         result["version"] = version
         result["run_batch_tag"] = run_batch_tag
         result["week_start"] = week_start
@@ -370,16 +401,19 @@ def _store_paper_trades(conn, trades: list[dict]) -> None:
                 INSERT INTO paper_trades (
                     run_batch_tag, week_start, week_end, event_id, version, direction,
                     entry_date, entry_price, exit_date, exit_price, exit_reason, status,
-                    pnl_pct, confidence, ev, prediction
+                    pnl_pct, confidence, ev, prediction, spy_entry_price, spy_exit_price, spy_move_pct
                 ) VALUES (
                     %(run_batch_tag)s, %(week_start)s, %(week_end)s, %(event_id)s, %(version)s, %(direction)s,
                     %(entry_date)s, %(entry_price)s, %(exit_date)s, %(exit_price)s, %(exit_reason)s, %(status)s,
-                    %(pnl_pct)s, %(confidence)s, %(ev)s, %(prediction)s
+                    %(pnl_pct)s, %(confidence)s, %(ev)s, %(prediction)s,
+                    %(spy_entry_price)s, %(spy_exit_price)s, %(spy_move_pct)s
                 )
                 ON CONFLICT (event_id, version, run_batch_tag) DO UPDATE SET
                     exit_date = EXCLUDED.exit_date, exit_price = EXCLUDED.exit_price,
                     exit_reason = EXCLUDED.exit_reason, status = EXCLUDED.status,
-                    pnl_pct = EXCLUDED.pnl_pct, updated_at = now()
+                    pnl_pct = EXCLUDED.pnl_pct, spy_entry_price = EXCLUDED.spy_entry_price,
+                    spy_exit_price = EXCLUDED.spy_exit_price, spy_move_pct = EXCLUDED.spy_move_pct,
+                    updated_at = now()
                 """,
                 t,
             )

@@ -10,7 +10,7 @@ import logging
 from datetime import date
 
 from pipeline.backtest.portfolio_metrics import compute_calibration_diagnostics, compute_trade_metrics
-from pipeline.backtest.portfolio_simulator import gain_pct
+from pipeline.backtest.portfolio_simulator import TICKER_COBERTURA, SerieCobertura, gain_pct
 from pipeline.backtest.portfolio_validation import WIN_RATE_DIVERGENCE_THRESHOLD_PP
 from pipeline.backtest.sample_split import NO_ES_OOS_SQL
 from pipeline.paper_trading.analysis import compute_alerts, compute_prediction_accuracy
@@ -84,6 +84,16 @@ def _serialize_open_position(conn, t: dict, ticker_cache: dict[str, dict[date, d
     unrealized_pnl_pct = (
         gain_pct(t["direction"], float(t["entry_price"]), current_price) if current_price is not None else None
     )
+    # Con cobertura (Tanda 8), frente a SPY a la misma fecha. Sin cierre de
+    # SPY desde la entrada no se puede valorar la pata: None, no se inventa.
+    if unrealized_pnl_pct is not None and t.get("spy_entry_price") is not None:
+        if TICKER_COBERTURA not in ticker_cache:
+            ticker_cache[TICKER_COBERTURA] = load_ticker_prices(conn, TICKER_COBERTURA)
+        spy_hoy = SerieCobertura(ticker_cache[TICKER_COBERTURA]).cierre_hasta(latest_date, t["entry_date"])
+        unrealized_pnl_pct = (
+            unrealized_pnl_pct - gain_pct(t["direction"], float(t["spy_entry_price"]), spy_hoy)
+            if spy_hoy is not None else None
+        )
     return {
         "event_id": t["event_id"],
         "ticker": ticker,

@@ -14,6 +14,7 @@ from pipeline.backtest.sensitivity import (
     apply_extra_cost_bps,
 )
 from pipeline.tests.regla_historica import copiar_a_regla_historica
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -87,6 +88,7 @@ class TestSensitivityIntegration:
                 "universe RESTART IDENTITY CASCADE"
             )
         c.commit()
+        sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
         yield c
         c.close()
 
@@ -161,6 +163,32 @@ class TestSensitivityIntegration:
         # pnl_abs se recalcula de forma consistente con el nuevo pnl_pct.
         size = float(adjusted[0]["position_size_dollars"])
         assert adjusted[0]["pnl_abs"] == pytest.approx(size * (adjusted[0]["pnl_pct"] / 100))
+
+    def test_latencia_tambien_reprecia_la_pata_de_spy_en_d_mas_2(self, conn):
+        """Tanda 8: con cobertura, SPY también entra a su apertura de D+2, y
+        los costes (de las dos patas) son los mismos que en el original."""
+        from pipeline.backtest.portfolio_simulator import gain_pct, simulate_portfolio
+        from pipeline.backtest.sensitivity import _fetch_trades_with_context, apply_latency_sensitivity
+        from pipeline.tests.cobertura import sembrar_spy
+
+        d0 = date(2024, 3, 4)
+        cal = self._business_days(d0, 15)
+        closes = [100.0 + i * 0.3 for i in range(len(cal))]
+        self._seed(conn, "lat2", "LAT2", d0, cal, closes, decision="LONG", confidence=80.0, ev=0.01)
+        sembrar_spy(conn, {cal[1]: 400.0, cal[2]: 402.0}, aperturas={cal[1]: 400.0, cal[2]: 401.0})
+
+        simulate_portfolio(conn, "CONSERVATIVE", "sens-test-spy", starting_capital=100_000.0)
+        t = _fetch_trades_with_context(conn, "CONSERVATIVE", "sens-test-spy")[0]
+        assert float(t["spy_entry_price"]) == pytest.approx(400.0)
+
+        a = apply_latency_sensitivity(conn, [t])[0]
+        assert a["spy_entry_price"] == pytest.approx(401.0)
+        esperado = gain_pct("LONG", float(a["entry_price"]), float(t["exit_price"])) - gain_pct(
+            "LONG", 401.0, float(t["spy_exit_price"])
+        )
+        assert a["actual_move_pct"] == pytest.approx(esperado)
+        costes = float(t["actual_move_pct"]) - float(t["pnl_pct"])
+        assert a["pnl_pct"] == pytest.approx(esperado - costes)
 
     def test_apply_latency_sensitivity_logs_dropped_trades_without_d2(self, conn, caplog):
         """IMPROVEMENT_PLAN.md R14: antes, un trade sin D+2 disponible se

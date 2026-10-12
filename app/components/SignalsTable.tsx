@@ -70,7 +70,7 @@ const buildColumns = (t: T, locale: Locale) => [
   }),
   columnHelper.accessor("ev_balanced", { header: t("Valor esperado", "Expected value"), cell: (c) => <span className="num">{formatFracAsPct(c.getValue())}</span> }),
   columnHelper.accessor("pnl_pct", {
-    header: t("Resultado (si se operó)", "Result (if traded)"),
+    header: t("Resultado frente al S&P 500 (si se operó)", "Result vs S&P 500 (if traded)"),
     cell: (c) => <SignedPct value={c.getValue()} />,
   }),
 ];

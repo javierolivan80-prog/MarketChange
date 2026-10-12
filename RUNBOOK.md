@@ -323,6 +323,14 @@ fórmula EV×confianza que `ev_engine.py` (Etapa 7) ya calculaba y persistía en
 usaba un tamaño fijo (1.5%/5%) sin mirar ni el EV ni la confianza). Escribe en
 `portfolio_trades` + `portfolio_equity_curve`, junto con las otras 3:
 
+**Cobertura con SPY (Tanda 8).** Cada operación lleva una pata contraria en
+SPY con el mismo nocional: el resultado (`pnl_pct`, `actual_move_pct`) es
+frente al mercado y descuenta los costes de las dos patas; las dos se pagan
+con efectivo (2× nocional). Necesita los precios de SPY con apertura (los baja
+el paso de precios como índice de referencia): sin apertura de SPY en D+1 la
+señal no se opera, y el informe lo cuenta en `cobertura.senales_sin_cobertura`.
+Detalles en el docstring de `pipeline/backtest/portfolio_simulator.py`.
+
 **Circuit-breaker de drawdown de cartera** (hallazgo de auditoría, prioridad
 máxima — protección de capital): si el drawdown pico-a-valle de la equity de
 UNA versión alcanza el 15%

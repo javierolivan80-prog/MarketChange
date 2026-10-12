@@ -34,7 +34,8 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
         t("Entrada", "Entry"),
         t("Salida", "Exit"),
         t("Motivo salida", "Exit reason"),
-        "P&L (%)",
+        t("P&L frente al S&P 500 (%)", "P&L vs S&P 500 (%)"),
+        t("Cubierta con SPY", "Hedged with SPY"),
       ],
       rows.map((r) => [
         r.d0_close_date,
@@ -51,6 +52,7 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
         r.exit_date,
         r.exit_reason,
         r.pnl_pct !== null ? r.pnl_pct.toFixed(2) : null,
+        r.cubierta === null ? null : r.cubierta ? t("Sí", "Yes") : "No",
       ])
     );
   }

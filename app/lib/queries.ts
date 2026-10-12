@@ -564,6 +564,9 @@ export interface SignalFeedRow {
   exit_date: string | null;
   exit_reason: string | null;
   pnl_pct: number | null;
+  /** Operación cubierta con SPY (Tanda 8): pnl_pct es frente al S&P 500.
+   * false = fila de antes de la cobertura; null = no se operó. */
+  cubierta: boolean | null;
   /** Confianza técnica 0-100 y si pasa los filtros de riesgo; null si la señal no tiene plan. */
   tech_confidence: number | null;
   tech_passes: boolean | null;
@@ -671,6 +674,7 @@ function signalSelect(version: StrategyVersion, extraColumns: string): string {
         ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
         ${VERSION_COLUMN[version]} AS value,
         pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct,
+        CASE WHEN pt.event_id IS NULL THEN NULL ELSE pt.spy_entry_price IS NOT NULL END AS cubierta,
         ta.confidence AS tech_confidence, ta.passes_filters AS tech_passes
         ${extraColumns}
       FROM events e
@@ -701,6 +705,7 @@ function mapFeedRow(r: any, version: StrategyVersion): SignalFeedRow {
     exit_date: toDateStr(r.exit_date),
     exit_reason: r.exit_reason,
     pnl_pct: r.pnl_pct !== null && r.pnl_pct !== undefined ? parseFloat(r.pnl_pct) : null,
+    cubierta: r.cubierta ?? null,
     tech_confidence: r.tech_confidence ?? null,
     tech_passes: r.tech_passes ?? null,
   };

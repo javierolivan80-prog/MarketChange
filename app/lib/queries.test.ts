@@ -117,6 +117,17 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.deepEqual(rows.map((r) => r.event_id).sort(), [a, b].sort());
     // El resultado es el de la corrida más reciente (pnl = daysAgo = 1).
     assert.equal(rows.find((r) => r.event_id === a)?.pnl_pct, 1);
+    // Fila sin pata de SPY (anterior a la Tanda 8): sin cubrir; sin operación: null.
+    assert.equal(rows.find((r) => r.event_id === a)?.cubierta, false);
+    assert.equal(rows.find((r) => r.event_id === b)?.cubierta, null);
+  });
+
+  test("una operación con pata de SPY llega como cubierta (Tanda 8)", async () => {
+    const a = await seedEvent({ ticker: "AAA", d0: "2026-01-01", decisions: ["NO_TRADE", "LONG", "LONG"] });
+    await seedPortfolioRun("run-1", 1, [a]);
+    await getPool().query("UPDATE portfolio_trades SET spy_entry_price = 400, spy_exit_price = 404, spy_move_pct = 1");
+    const [row] = await getSignalsFeed({ limit: 5 });
+    assert.equal(row.cubierta, true);
   });
 
   test("la columna Señal es la decisión de la versión mostrada", async () => {

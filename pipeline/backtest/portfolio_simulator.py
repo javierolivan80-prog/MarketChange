@@ -46,15 +46,38 @@ que ya usa portfolio_mtm() para marcar a mercado un día sin dato — "no
 inventar una ganancia ni una pérdida que no se puede observar"). Ambos casos
 se etiquetan 'DATA_GAP', distinto de 'MAX_HOLDING', para que no se confundan
 con un cierre normal por fin de holding period en los reportes.
+
+COBERTURA CON SPY (Tanda 8; decisión del usuario, 2026-10-12): la regla y la
+IA predicen el movimiento de la acción FRENTE AL MERCADO (CAR anormal de los
+análogos), así que cada operación abre a la vez una pata contraria en SPY
+con el mismo nocional: comprar la acción = vender SPY y al revés. Así lo que
+se opera es lo que se predice. Detalles:
+  - SPY entra a su apertura de la misma sesión que la acción (D+1). Sin
+    apertura de SPY ese día la operación no se abre (no se inventa la pata).
+  - Los niveles (stop, objetivo, tramos) se miden SOLO sobre la acción,
+    dentro de la sesión, como siempre. SPY sale el mismo día que cada
+    cierre: a su apertura si la acción salió a la apertura (hueco o cierre
+    por tesis) y a su cierre en cualquier otro caso. Es una aproximación
+    declarada: solo hay velas diarias de SPY, no su precio en el momento
+    intradía en que la acción tocó el nivel.
+  - Resultado = movimiento de la acción − movimiento de SPY (ambos en el
+    sentido de la operación), menos comisión y deslizamiento de CADA pata
+    (SPY paga el de gran capitalización: 10 pb por lado).
+  - Capital: cada pata se paga con efectivo (2× nocional, sin margen ni
+    apalancamiento); position_size_dollars es el nocional de UNA pata.
+  - Sesgo conocido: precios sin ajustar, así que los dividendos de SPY no
+    se cuentan (vender SPY los pagaría, ~0,03 % en 5 sesiones); tampoco el
+    coste de préstamo de los cortos (BUGS_REPORT.md).
 """
 from __future__ import annotations
 
 import logging
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date
 
 from pipeline import config
-from pipeline.config import SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
+from pipeline.config import SLIPPAGE_BPS_PER_SIDE_LARGE, SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
 from pipeline.analyze.historical_analogues import estimate_impact_for_event, get_historical_analogues
 from pipeline.backtest import thesis_engine
 from pipeline.backtest.portfolio_strategies import (
@@ -232,6 +255,65 @@ def gain_pct(direction: str, entry_price: float, price: float) -> float:
     return (entry_price - price) / entry_price * 100
 
 
+# Cobertura con SPY (ver "COBERTURA CON SPY" en el docstring del módulo).
+TICKER_COBERTURA = "SPY"
+SLIPPAGE_BPS_COBERTURA_POR_LADO = SLIPPAGE_BPS_PER_SIDE_LARGE
+# Cierres de nivel que pueden ejecutarse a la apertura por un hueco
+# (fill_con_gap); MAX_HOLDING/EXPIRED/DATA_GAP son siempre al cierre.
+MOTIVOS_CON_HUECO = frozenset({"STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP"})
+
+
+def direccion_contraria(direction: str) -> str:
+    return "SHORT" if direction == "LONG" else "LONG"
+
+
+class SerieCobertura:
+    """Velas diarias de SPY para la pata de cobertura. Pura respecto a BD
+    (recibe las filas ya cargadas, mismo formato que _load_ticker_prices)."""
+
+    def __init__(self, prices: dict[date, dict]):
+        self.prices = prices
+        self._fechas_con_cierre = sorted(d for d, bar in prices.items() if bar.get("close_raw") is not None)
+
+    def apertura(self, d: date) -> float | None:
+        bar = self.prices.get(d)
+        return float(bar["open_raw"]) if bar and bar.get("open_raw") is not None else None
+
+    def cierre_hasta(self, d: date, desde: date) -> float | None:
+        """Último cierre conocido en [desde, d]. Nunca uno anterior a
+        `desde` (la entrada): sería un precio de antes de abrir la pata."""
+        i = bisect_right(self._fechas_con_cierre, d)
+        if i == 0 or self._fechas_con_cierre[i - 1] < desde:
+            return None
+        return float(self.prices[self._fechas_con_cierre[i - 1]]["close_raw"])
+
+    def precio_de_salida(self, d: date, desde: date, a_la_apertura: bool) -> float | None:
+        if a_la_apertura:
+            apertura = self.apertura(d)
+            if apertura is not None:
+                return apertura
+        return self.cierre_hasta(d, desde)
+
+
+def cubrir_cierres_nuevos(
+    position: "OpenPosition", n_antes: int, spy: SerieCobertura | None,
+    open_accion: float | None = None, a_la_apertura: bool = False,
+) -> None:
+    """Pone precio de SPY a los cierres de la acción añadidos desde
+    `n_antes` (position.spy_closes queda alineada con position.closes).
+    SPY sale a su apertura si la acción salió a la apertura: todo el lote
+    con a_la_apertura=True (cierres por tesis), o un nivel ejecutado por
+    hueco (su precio es exactamente la apertura de la acción, fill_con_gap).
+    Sin vela de SPY ese día, su último cierre desde la entrada; sin ninguno,
+    el de entrada (pata plana: no se inventa un movimiento)."""
+    if position.spy_entry_price is None or spy is None:
+        return
+    for d, _fraccion, precio, motivo in position.closes[n_antes:]:
+        hueco = motivo in MOTIVOS_CON_HUECO and open_accion is not None and precio == open_accion
+        p = spy.precio_de_salida(d, position.entry_date, a_la_apertura or hueco)
+        position.spy_closes.append(p if p is not None else position.spy_entry_price)
+
+
 def compute_tp_sl_prices(direction: str, entry_price: float, take_profit_pct: float | None, stop_loss_pct: float) -> tuple[float | None, float]:
     if direction == "LONG":
         tp = entry_price * (1 + take_profit_pct / 100) if take_profit_pct is not None else None
@@ -268,6 +350,12 @@ class OpenPosition:
     tiers_hit: frozenset = field(default_factory=frozenset)
     used_trailing_stop: bool = False
     closes: list[tuple[date, float, float, str]] = field(default_factory=list)  # (fecha, fracción, precio, motivo)
+    # Pata de SPY (cobertura): precio de entrada y un precio de salida por
+    # cada elemento de `closes` (cubrir_cierres_nuevos). None = sin
+    # cobertura: solo filas antiguas o pruebas de la mecánica de la acción;
+    # el simulador y el paper trading siempre la abren.
+    spy_entry_price: float | None = None
+    spy_closes: list[float] = field(default_factory=list)
 
     # Memoria de tesis (config.THESIS_MEMORY_ENABLED) — todos None cuando la
     # posición no tiene tesis asociada (memoria desactivada, o versión que no
@@ -365,21 +453,32 @@ def step_position_forward(
     return position
 
 
-def compute_position_mtm_dollars(position: OpenPosition, current_price: float) -> float:
+def compute_position_mtm_dollars(position: OpenPosition, current_price: float, spy_price: float | None = None) -> float:
     """Valor a mercado de una posición, en $, incluyendo el caso de cierres
     parciales ya realizados (trailing stop a mitad de camino): cada tramo ya
     cerrado se valora a SU PROPIO precio de cierre (ganancia ya asegurada, no
     sujeta al precio de hoy); lo que queda abierto se valora al precio de
     hoy. Sin esto, la curva de equity durante los días entre tramos de un
     trailing stop trataría el 100% del tamaño original como expuesto al
-    precio actual, sobreestimando el riesgo de lo que ya se aseguró."""
+    precio actual, sobreestimando el riesgo de lo que ya se aseguró.
+
+    Con cobertura suma también la pata de SPY (sentido contrario, mismo
+    nocional): `spy_price` es su cierre de hoy; sin él, su precio de entrada."""
+    size = position.position_size_dollars
+    cubierta = position.spy_entry_price is not None
+    contraria = direccion_contraria(position.direction)
     realized = 0.0
-    for _, fraction, price, _ in position.closes:
+    for i, (_, fraction, price, _) in enumerate(position.closes):
         move = gain_pct(position.direction, position.entry_price, price)
-        realized += position.position_size_dollars * fraction * (1 + move / 100)
+        realized += size * fraction * (1 + move / 100)
+        if cubierta:
+            realized += size * fraction * (1 + gain_pct(contraria, position.spy_entry_price, position.spy_closes[i]) / 100)
     if position.remaining_fraction > 1e-9:
         move = gain_pct(position.direction, position.entry_price, current_price)
-        realized += position.position_size_dollars * position.remaining_fraction * (1 + move / 100)
+        realized += size * position.remaining_fraction * (1 + move / 100)
+        if cubierta:
+            spy_hoy = spy_price if spy_price is not None else position.spy_entry_price
+            realized += size * position.remaining_fraction * (1 + gain_pct(contraria, position.spy_entry_price, spy_hoy) / 100)
     return realized
 
 
@@ -414,11 +513,24 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
     # apertura y el stop u objetivo se toca después), nunca antes.
     assert final_exit_date >= position.entry_date, "VIOLACIÓN ANTI-LOOK-AHEAD: exit_date anterior a entry_date"
 
-    actual_move_pct = gain_pct(position.direction, position.entry_price, weighted_exit_price)
+    stock_move_pct = gain_pct(position.direction, position.entry_price, weighted_exit_price)
     commission_pct = COMMISSION_BPS_ROUND_TRIP / 100
     # Deslizamiento (H-32): un lado al entrar y otro al salir, restado del P&L
     # igual que la comisión; los niveles de TP/SL no se mueven.
     slippage_pct = 2 * position.slippage_bps_por_lado / 100
+    spy_exit_price = spy_move_pct = None
+    if position.spy_entry_price is not None:
+        # Cobertura (docstring del módulo): el movimiento es el de la acción
+        # frente a SPY, y la pata de SPY paga su propia comisión y su
+        # deslizamiento. Todo en % del nocional de una pata.
+        assert len(position.spy_closes) == len(position.closes), "cada cierre de la acción necesita su precio de SPY"
+        spy_exit_price = sum(f * p for (_, f, _, _), p in zip(position.closes, position.spy_closes)) / total_fraction
+        spy_move_pct = gain_pct(position.direction, position.spy_entry_price, spy_exit_price)
+        actual_move_pct = stock_move_pct - spy_move_pct
+        commission_pct *= 2
+        slippage_pct += 2 * SLIPPAGE_BPS_COBERTURA_POR_LADO / 100
+    else:
+        actual_move_pct = stock_move_pct
     pnl_pct = actual_move_pct - commission_pct - slippage_pct
     pnl_abs = position.position_size_dollars * (pnl_pct / 100)
 
@@ -440,6 +552,9 @@ def consolidate_trade_record(position: OpenPosition) -> dict:
         "ev": position.ev,
         "prediction": position.prediction,
         "actual_move_pct": actual_move_pct,
+        "spy_entry_price": position.spy_entry_price,
+        "spy_exit_price": spy_exit_price,
+        "spy_move_pct": spy_move_pct,
         "had_survivorship_warning": position.had_survivorship_warning,
         "had_adv_cap_applied": position.had_adv_cap_applied,
         "thesis_id": position.thesis_id,
@@ -463,6 +578,7 @@ def open_position(
     adv_usd_60d: float | None = None,
     slippage_bps_por_lado: float = SLIPPAGE_BPS_PER_SIDE_SMALL,
     size_multiplier: float = 1.0,
+    spy_entry_price: float | None = None,
 ) -> OpenPosition:
     """Construye una OpenPosition con el sizing y los umbrales TP/SL/trailing
     de execution_style (STRATEGIES[execution_style] — para BALANCED, ver
@@ -510,6 +626,7 @@ def open_position(
         had_survivorship_warning=had_survivorship_warning,
         had_adv_cap_applied=adv_cap_applied,
         slippage_bps_por_lado=slippage_bps_por_lado,
+        spy_entry_price=spy_entry_price,
     )
 
 
@@ -891,6 +1008,12 @@ def _resolve_forced_close(prices: dict[date, dict], entry_date: date, entry_pric
     return last_date, entry_price, "DATA_GAP"
 
 
+def _efectivo_comprometido(pos: OpenPosition) -> float:
+    """Efectivo que inmoviliza una posición: las dos patas con cobertura
+    (2× nocional, sin margen), una sin ella."""
+    return pos.position_size_dollars * (2 if pos.spy_entry_price is not None else 1)
+
+
 def simulate_portfolio(
     conn,
     version: str,
@@ -929,6 +1052,11 @@ def simulate_portfolio(
     if not entry_plan:
         logger.warning("Ningún evento de %s tiene un plan de entrada válido", version)
         return {"version": version, "n_trades": 0, "n_equity_days": 0}
+
+    # Pata de cobertura (docstring del módulo): SPY se carga aparte, no entra
+    # en ticker_cache ni en el calendario maestro.
+    spy = SerieCobertura(_load_ticker_prices(conn, TICKER_COBERTURA))
+    n_sin_cobertura = 0
 
     # Memoria de tesis: calendario de TODOS los eventos nuevos por ticker (no
     # solo los que generan entrada en esta versión — ver
@@ -978,7 +1106,7 @@ def simulate_portfolio(
             for pos in style_positions:
                 bar = ticker_cache[pos.ticker].get(today)
                 price = float(bar["close_raw"]) if bar and bar["close_raw"] is not None else pos.entry_price
-                total += compute_position_mtm_dollars(pos, price)
+                total += compute_position_mtm_dollars(pos, price, spy.cierre_hasta(today, pos.entry_date))
         return total
 
     for today in master_calendar:
@@ -998,16 +1126,18 @@ def simulate_portfolio(
                 if bar is None or bar["high_raw"] is None or bar["low_raw"] is None or bar["close_raw"] is None:
                     still_open.append(pos)  # sin dato ese día (festivo local/halt) — se mantiene abierta
                     continue
+                open_hoy = float(bar["open_raw"]) if bar["open_raw"] is not None else None
+                n_antes = len(pos.closes)
                 step_position_forward(
-                    pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today,
-                    open_=float(bar["open_raw"]) if bar["open_raw"] is not None else None,
+                    pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today, open_=open_hoy,
                 )
+                cubrir_cierres_nuevos(pos, n_antes, spy, open_accion=open_hoy)
                 if pos.remaining_fraction <= 1e-9:
                     record = consolidate_trade_record(pos)
                     record["version"] = version
                     record["run_batch_tag"] = run_batch_tag
                     completed_trades.append(record)
-                    cash += pos.position_size_dollars + record["pnl_abs"]
+                    cash += _efectivo_comprometido(pos) + record["pnl_abs"]
                     _maybe_close_thesis(conn, pos, record)
                 else:
                     still_open.append(pos)
@@ -1033,8 +1163,15 @@ def simulate_portfolio(
                         still_open.append(pos)
                         continue
                     current_price = float(bar["open_raw"])
+                    n_antes = len(pos.closes)
                     for new_event in new_events_today:
+                        # Con cobertura, el movimiento realizado es frente a
+                        # SPY (el mismo que se predice y que mide la
+                        # saturación, sobre CAR anormales).
                         realized_move_pct = gain_pct(pos.direction, pos.entry_price, current_price)
+                        spy_ahora = spy.precio_de_salida(today, pos.entry_date, a_la_apertura=True)
+                        if pos.spy_entry_price is not None and spy_ahora is not None:
+                            realized_move_pct -= gain_pct(pos.direction, pos.spy_entry_price, spy_ahora)
                         saturation_threshold_pct = _compute_saturation_threshold_for_event_class(
                             conn, pos.thesis_origin_event_class, today, pos.event_id
                         )
@@ -1080,12 +1217,14 @@ def simulate_portfolio(
                             if pos.remaining_fraction <= 1e-9:
                                 break
                         # HOLD: nada que cambiar; se sigue con el siguiente evento nuevo de hoy si lo hubiera.
+                    # Los cierres por tesis son a la apertura: SPY también.
+                    cubrir_cierres_nuevos(pos, n_antes, spy, a_la_apertura=True)
                     if pos.remaining_fraction <= 1e-9:
                         record = consolidate_trade_record(pos)
                         record["version"] = version
                         record["run_batch_tag"] = run_batch_tag
                         completed_trades.append(record)
-                        cash += pos.position_size_dollars + record["pnl_abs"]
+                        cash += _efectivo_comprometido(pos) + record["pnl_abs"]
                         _maybe_close_thesis(conn, pos, record, close_rationale=result.rationale, close_reason_code=result.reason_code)
                     else:
                         still_open.append(pos)
@@ -1137,6 +1276,14 @@ def simulate_portfolio(
                 bar = ticker_cache[plan["ticker"]].get(today)
                 if bar is None or bar["open_raw"] is None:
                     continue
+                spy_entrada = spy.apertura(today)
+                if spy_entrada is None:
+                    # Sin apertura de SPY no hay pata de cobertura: la
+                    # operación no se abre (no se inventa la pata ni se
+                    # mezcla una operación sin cubrir con las cubiertas).
+                    logger.warning("Evento %d (%s): sin apertura de %s el %s, no se puede cubrir — se omite", plan["event_id"], plan["ticker"], TICKER_COBERTURA, today)
+                    n_sin_cobertura += 1
+                    continue
                 adv_usd_60d = compute_trailing_adv_usd(ticker_cache[plan["ticker"]], today)
                 pos = open_position(
                     event_id=plan["event_id"], version=version, execution_style=style, direction=plan["direction"],
@@ -1145,13 +1292,15 @@ def simulate_portfolio(
                     had_survivorship_warning=bool(bar["survivorship_warning"]), adv_usd_60d=adv_usd_60d,
                     slippage_bps_por_lado=plan.get("slippage_bps_por_lado", SLIPPAGE_BPS_PER_SIDE_SMALL),
                     size_multiplier=CIRCUIT_BREAKER_REDUCED_SIZE if reduced_size else 1.0,
+                    spy_entry_price=spy_entrada,
                 )
+                # Las dos patas se pagan con efectivo (2× nocional).
                 disponible = cash_al_abrir - gastado_hoy
-                if pos.position_size_dollars > disponible:
-                    logger.warning("Evento %d: tamaño deseado %.2f excede el cash disponible %.2f — se reduce", plan["event_id"], pos.position_size_dollars, disponible)
-                    pos.position_size_dollars = max(disponible, 0.0)
-                cash -= pos.position_size_dollars
-                gastado_hoy += pos.position_size_dollars
+                if _efectivo_comprometido(pos) > disponible:
+                    logger.warning("Evento %d: tamaño deseado %.2f (dos patas) excede el cash disponible %.2f — se reduce", plan["event_id"], _efectivo_comprometido(pos), disponible)
+                    pos.position_size_dollars = max(disponible, 0.0) / 2
+                cash -= _efectivo_comprometido(pos)
+                gastado_hoy += _efectivo_comprometido(pos)
                 if thesis_memory_enabled:
                     expected_move_pct = abs(
                         estimate_impact_for_event(conn, plan["event_class"], plan["d0_close_date"], plan["event_id"], window_days=20).expected_magnitude_pct
@@ -1190,12 +1339,13 @@ def simulate_portfolio(
                             pos, float(bar["high_raw"]), float(bar["low_raw"]), float(bar["close_raw"]), today,
                             open_=pos.entry_price,
                         )
+                        cubrir_cierres_nuevos(pos, 0, spy, open_accion=pos.entry_price)
                     if pos.remaining_fraction <= 1e-9:
                         record = consolidate_trade_record(pos)
                         record["version"] = version
                         record["run_batch_tag"] = run_batch_tag
                         completed_trades.append(record)
-                        cash += pos.position_size_dollars + record["pnl_abs"]
+                        cash += _efectivo_comprometido(pos) + record["pnl_abs"]
                         _maybe_close_thesis(conn, pos, record)
                     else:
                         open_positions[style].append(pos)
@@ -1216,12 +1366,17 @@ def simulate_portfolio(
             close_date, close_price, close_reason = _resolve_forced_close(
                 ticker_cache[pos.ticker], pos.entry_date, pos.entry_price
             )
+            n_antes = len(pos.closes)
             pos.closes.append((close_date, pos.remaining_fraction, close_price, close_reason))
             pos.remaining_fraction = 0.0
+            cubrir_cierres_nuevos(pos, n_antes, spy)
             record = consolidate_trade_record(pos)
             record["version"] = version
             record["run_batch_tag"] = run_batch_tag
             completed_trades.append(record)
+            # Antes este efectivo no volvía a la caja (no afectaba a la curva,
+            # ya escrita, pero dejaba mal el saldo final).
+            cash += _efectivo_comprometido(pos) + record["pnl_abs"]
             _maybe_close_thesis(conn, pos, record)
 
     _store_portfolio_results(conn, version, run_batch_tag, completed_trades, equity_rows)
@@ -1231,6 +1386,8 @@ def simulate_portfolio(
         "n_equity_days": len(equity_rows),
         "n_days_circuit_breaker_active": n_days_circuit_breaker_active,
         "n_days_reduced_size": n_days_reduced_size,
+        "n_sin_cobertura": n_sin_cobertura,
+        "final_cash": cash,
     }
 
 
@@ -1243,11 +1400,13 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
                     event_id, version, execution_style, direction, entry_date, entry_price,
                     exit_date, exit_price, exit_reason, pnl_pct, pnl_abs, position_size_pct,
                     position_size_dollars, confidence, ev, prediction, actual_move_pct,
+                    spy_entry_price, spy_exit_price, spy_move_pct,
                     had_survivorship_warning, had_adv_cap_applied, thesis_id, run_batch_tag
                 ) VALUES (
                     %(event_id)s, %(version)s, %(execution_style)s, %(direction)s, %(entry_date)s, %(entry_price)s,
                     %(exit_date)s, %(exit_price)s, %(exit_reason)s, %(pnl_pct)s, %(pnl_abs)s, %(position_size_pct)s,
                     %(position_size_dollars)s, %(confidence)s, %(ev)s, %(prediction)s, %(actual_move_pct)s,
+                    %(spy_entry_price)s, %(spy_exit_price)s, %(spy_move_pct)s,
                     %(had_survivorship_warning)s, %(had_adv_cap_applied)s, %(thesis_id)s, %(run_batch_tag)s
                 )
                 ON CONFLICT (event_id, version, run_batch_tag) DO UPDATE SET
@@ -1257,7 +1416,9 @@ def _store_portfolio_results(conn, version: str, run_batch_tag: str, trades: lis
                     exit_reason = EXCLUDED.exit_reason, pnl_pct = EXCLUDED.pnl_pct, pnl_abs = EXCLUDED.pnl_abs,
                     position_size_pct = EXCLUDED.position_size_pct, position_size_dollars = EXCLUDED.position_size_dollars,
                     confidence = EXCLUDED.confidence, ev = EXCLUDED.ev, prediction = EXCLUDED.prediction,
-                    actual_move_pct = EXCLUDED.actual_move_pct, had_survivorship_warning = EXCLUDED.had_survivorship_warning,
+                    actual_move_pct = EXCLUDED.actual_move_pct, spy_entry_price = EXCLUDED.spy_entry_price,
+                    spy_exit_price = EXCLUDED.spy_exit_price, spy_move_pct = EXCLUDED.spy_move_pct,
+                    had_survivorship_warning = EXCLUDED.had_survivorship_warning,
                     had_adv_cap_applied = EXCLUDED.had_adv_cap_applied, thesis_id = EXCLUDED.thesis_id
                 """,
                 t,

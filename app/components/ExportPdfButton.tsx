@@ -51,8 +51,8 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
     doc.setTextColor(100);
     doc.text(
       `${t("Generado el", "Generated on")} ${new Date().toLocaleDateString(intlTag(locale))} · ${t(
-        "Rentabilidades pasadas no garantizan resultados futuros.",
-        "Past performance does not guarantee future results.",
+        "Operaciones cubiertas con el S&P 500 (SPY). Rentabilidades pasadas no garantizan resultados futuros.",
+        "Trades hedged with the S&P 500 (SPY). Past performance does not guarantee future results.",
       )}`,
       14,
       y,

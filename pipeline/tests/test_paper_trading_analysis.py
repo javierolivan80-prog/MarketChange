@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -79,6 +80,7 @@ class TestPredictionAccuracyIntegration:
                 "fama_french_factors, universe RESTART IDENTITY CASCADE"
             )
         c.commit()
+        sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
         yield c
         c.close()
 
@@ -148,6 +150,36 @@ class TestPredictionAccuracyIntegration:
         assert r["was_correct"] is True
         assert r["confidence_given"] == pytest.approx(77.0)
         assert r["was_traded"] is True
+
+    def test_actual_move_5d_es_frente_a_spy(self, conn):
+        """Tanda 8: subir lo mismo que el mercado no es acertar."""
+        from pipeline.paper_trading.analysis import compute_prediction_accuracy
+        from pipeline.tests.cobertura import sembrar_spy
+
+        d0 = date(2026, 3, 2)
+        cal = [d0 + timedelta(days=i) for i in range(10) if (d0 + timedelta(days=i)).weekday() < 5]
+        closes = [100.0 + i * 2.0 for i in range(len(cal))]  # entra a 102 (D+1), 5ª sesión tras la entrada: 112
+        self._seed_price_series(conn, "MKT1", cal, closes)
+        self._seed_event(conn, "a9", "MKT1", d0, decision="LONG", net_conviction=0.6, confidence=77.0, ev=0.01)
+        sembrar_spy(conn, {cal[1]: 400.0, cal[6]: 440.0}, aperturas={cal[1]: 400.0})  # SPY +10 % en la misma ventana
+
+        r = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))[0]
+        assert r["actual_move_5d"] == pytest.approx((112.0 - 102.0) / 102.0 * 100 - 10.0)
+        assert r["was_correct"] is False
+
+    def test_actual_move_5d_none_sin_apertura_de_spy(self, conn):
+        from pipeline.paper_trading.analysis import compute_prediction_accuracy
+
+        d0 = date(2026, 3, 2)
+        cal = [d0 + timedelta(days=i) for i in range(10) if (d0 + timedelta(days=i)).weekday() < 5]
+        self._seed_price_series(conn, "NOSPY", cal, [100.0 + i for i in range(len(cal))])
+        self._seed_event(conn, "a10", "NOSPY", d0, decision="LONG", net_conviction=0.6, confidence=77.0, ev=0.01)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE prices SET open_raw = NULL WHERE ticker = 'SPY' AND trade_date = %s", (cal[1],))
+        conn.commit()
+
+        r = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))[0]
+        assert r["actual_move_5d"] is None and r["was_correct"] is None
 
     def test_includes_no_trade_events_with_was_traded_false(self, conn):
         from pipeline.paper_trading.analysis import compute_prediction_accuracy

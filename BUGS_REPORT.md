@@ -95,7 +95,15 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
       - Los NaN se guardan como NULL.
       - El texto del Item va delante del comunicado y ya no lo tapa.
       - El paper trading solo usa análisis de la versión vigente.
-    - **Abierto (PREGUNTA):** la IA (y los análogos, con CAR anormal) predicen el retorno FRENTE AL MERCADO, pero las operaciones son absolutas (LONG/SHORT sin cubrir con el S&P 500), y el paper trading evalúa el acierto con el movimiento absoluto a 5 días.
+    - La PREGUNTA que quedó abierta (se predice frente al mercado pero se operaba en absoluto) se resolvió en la Tanda 8.
+  - Tanda 8 «Cobertura con SPY» (2026-10-12; decisiones del usuario: opción 1, niveles sobre la acción, capital 2× nocional):
+    - Cada operación abre a la vez una pata contraria en SPY con el mismo nocional, a su apertura de D+1. Sin apertura de SPY no se opera (el informe cuenta esas señales en `cobertura.senales_sin_cobertura`).
+    - Stop, objetivo y tramos se miden solo sobre la acción, dentro de la sesión. SPY sale el mismo día que cada cierre: a su apertura si la acción salió a la apertura (hueco o cierre por tesis) y a su cierre si no. Es una aproximación declarada: solo hay velas diarias de SPY.
+    - Resultado = acción − SPY (en el sentido de la operación), menos comisión y deslizamiento de cada pata (SPY, 10 pb por lado). Capital: las dos patas se pagan con efectivo; la valoración diaria, la curva de capital y el freno de pérdidas incluyen las dos patas.
+    - Mismo cálculo en el paper trading. El acierto a 5 días (`actual_move_5d`), la calibración y el no realizado de las posiciones abiertas pasan a ser frente a SPY. La sensibilidad a la latencia también reprecia SPY en D+2. Columnas nuevas `spy_entry_price`, `spy_exit_price` y `spy_move_pct` (NULL = fila de antes, sin cubrir).
+    - De paso: el cierre forzado al final de los datos no devolvía el efectivo a la caja (no afectaba a la curva, ya escrita).
+    - De paso: un test (`test_analysis_queue.py`) caducaba con el paso de los días (histórico «hasta hoy» con D0 fijos); ahora el histórico empieza en una fecha fija.
+    - **Sesgos conocidos, sin corregir (SOSPECHA de magnitud pequeña):** precios sin ajustar, así que no se cuentan los dividendos de SPY (vender SPY los pagaría, ~0,03 % en 5 sesiones); tampoco el coste de préstamo de los cortos.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

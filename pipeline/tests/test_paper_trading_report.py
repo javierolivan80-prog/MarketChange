@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pytest
 from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -23,6 +24,7 @@ def conn():
             "prices, fama_french_factors, universe RESTART IDENTITY CASCADE"
         )
     c.commit()
+    sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
     yield c
     c.close()
 
@@ -238,3 +240,22 @@ def test_open_position_unrealized_pnl_uses_latest_available_price(conn):
     pos = cons["open_positions"][0]
     assert pos["unrealized_pnl_pct"] is not None
     assert pos["unrealized_pnl_pct"] > 0  # entró a 102 (D+1), último precio disponible 102.5 -> positivo
+
+
+def test_posicion_abierta_no_realizado_frente_a_spy(conn):
+    """Tanda 8: el resultado no realizado de una posición abierta es frente
+    a SPY a la misma fecha."""
+    from pipeline.paper_trading.report import run_paper_trading_report
+    from pipeline.tests.cobertura import sembrar_spy
+
+    d0 = date(2026, 3, 2)
+    cal = [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4)]
+    _seed_price_series(conn, "OPENSPY", cal, [100.0, 102.0, 102.5])
+    _seed_event(conn, "openspy", "OPENSPY", d0, decision="LONG", net_conviction=0.6, confidence=80.0, ev=0.01)
+    sembrar_spy(conn, {cal[1]: 400.0, cal[2]: 404.0}, aperturas={cal[1]: 400.0})
+    conn.commit()
+
+    report = run_paper_trading_report(conn, run_batch_tag="paper-test-spy", as_of=date(2026, 3, 9))
+    pos = report["versions"]["BALANCED"]["open_positions"][0]
+    # La acción +0,49 % (102 -> 102,5) y SPY +1 %: va por detrás del mercado.
+    assert pos["unrealized_pnl_pct"] == pytest.approx((102.5 - 102.0) / 102.0 * 100 - 1.0)

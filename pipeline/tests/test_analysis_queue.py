@@ -82,8 +82,15 @@ def sin_techo_de_ev(monkeypatch):
 
 
 
-def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, history_days=290):
+# Inicio fijo del histórico: los D0 de este fichero son fijos (2026-09-01),
+# así que su ventana de estimación también. Antes eran "290 días hasta hoy",
+# y al pasar los días la ventana se quedaba corta y los tests caducaban.
+HISTORIA_DESDE = date(2025, 6, 1)
+
+
+def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, history_days=None):
     last_day = last_day or date.today()
+    history_days = history_days or max((last_day - HISTORIA_DESDE).days + 1, 290)
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) "
@@ -97,9 +104,9 @@ def _empresa(conn, cik, ticker, price, shares, volume=1_000_000, last_day=None, 
         # factores (beta_vs_spy, componente "a" del proxy de contradicción),
         # y process_chunk/run_pipeline necesitan que ambos resuelvan a
         # "disponible" para los tests que quieren probar la mecánica de
-        # reintentos del batch, no la de abstención. 290 días cubre de sobra
-        # el estimation_window de fit_factor_model ([-250,-30] respecto a
-        # cualquier D0 usado en este fichero) con margen. high/low a +-0.1%
+        # reintentos del batch, no la de abstención. Desde HISTORIA_DESDE se cubre
+        # de sobra el estimation_window de fit_factor_model ([-250,-30]
+        # respecto a cualquier D0 usado en este fichero) con margen. high/low a +-0.1%
         # (ya no decide nada: BUGS_REPORT.md H-08).
         for i in range(history_days):
             d = last_day - timedelta(days=i)

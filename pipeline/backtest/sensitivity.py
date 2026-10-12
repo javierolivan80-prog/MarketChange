@@ -46,7 +46,7 @@ import numpy as np
 
 from pipeline.analyze.abstention_engine import CONFIDENCE_FLOOR
 from pipeline.backtest.portfolio_metrics import compute_equity_metrics, compute_trade_metrics
-from pipeline.backtest.portfolio_simulator import COMMISSION_BPS_ROUND_TRIP, gain_pct
+from pipeline.backtest.portfolio_simulator import TICKER_COBERTURA, gain_pct
 
 # Escenario de confianza y calibración de la confianza en el histórico
 # (H-06): la regla sin IA no tiene una confianza que medir.
@@ -107,6 +107,7 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
         d0_by_event = {r["event_id"]: r["d0_close_date"] for r in cur.fetchall()}
 
     ticker_cache: dict[str, dict[date, dict]] = {}
+    spy_aperturas: dict[date, float] | None = None
     adjusted = []
     for t in trades:
         ticker = t["ticker"]
@@ -125,13 +126,29 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
             continue
         new_entry_price = float(prices[future_dates[1]])
         actual_move_pct = gain_pct(t["direction"], new_entry_price, float(t["exit_price"]))
-        # Mismos costes que el baseline: comisión + el deslizamiento que ya
-        # llevaba la operación (H-32), que no se guarda aparte y se recupera
-        # como movimiento bruto - P&L neto - comisión.
-        slippage_pct = float(t["actual_move_pct"]) - float(t["pnl_pct"]) - COMMISSION_BPS_ROUND_TRIP / 100
-        new_pnl_pct = actual_move_pct - COMMISSION_BPS_ROUND_TRIP / 100 - slippage_pct
+        extra = {}
+        if t.get("spy_entry_price") is not None:
+            # Cobertura (Tanda 8): la pata de SPY también entra en D+2, a su
+            # apertura de esa misma sesión; sin ella no se puede recalcular.
+            if spy_aperturas is None:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT trade_date, open_raw FROM prices WHERE ticker = %s AND open_raw IS NOT NULL", (TICKER_COBERTURA,))
+                    spy_aperturas = {r["trade_date"]: float(r["open_raw"]) for r in cur.fetchall()}
+            spy_d2 = spy_aperturas.get(future_dates[1])
+            if spy_d2 is None:
+                continue
+            actual_move_pct -= gain_pct(t["direction"], spy_d2, float(t["spy_exit_price"]))
+            extra = {"spy_entry_price": spy_d2}
+        # Mismos costes que el baseline (comisión y deslizamiento de cada
+        # pata, H-32), que no se guardan aparte y se recuperan como
+        # movimiento bruto - P&L neto.
+        costes_pct = float(t["actual_move_pct"]) - float(t["pnl_pct"])
+        new_pnl_pct = actual_move_pct - costes_pct
         size = float(t["position_size_dollars"])
-        adjusted.append({**t, "entry_price": new_entry_price, "pnl_pct": new_pnl_pct, "pnl_abs": size * (new_pnl_pct / 100)})
+        adjusted.append({
+            **t, **extra, "entry_price": new_entry_price, "actual_move_pct": actual_move_pct,
+            "pnl_pct": new_pnl_pct, "pnl_abs": size * (new_pnl_pct / 100),
+        })
 
     dropped = len(trades) - len(adjusted)
     if dropped:

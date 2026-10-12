@@ -7,6 +7,7 @@ from datetime import date, timedelta
 
 import pytest
 from pipeline.analyze.adversarial_analyzer import PROMPT_VERSION
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -24,6 +25,7 @@ def conn():
             "fama_french_factors, universe RESTART IDENTITY CASCADE"
         )
     c.commit()
+    sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
     yield c
     c.close()
 
