@@ -64,7 +64,9 @@ export function TradeLevels({
       {segment(entry, stop, "bg-loss")}
       {segment(entry, target, "bg-gain")}
       {target2 !== null && segment(target, target2, "bg-gain opacity-40")}
-      <span className="absolute top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground" style={{ left: `${pos(entry)}%` }} />
+      {/* Con colores forzados la marca conserva el color del tema (viz-color):
+          se pinta con el del texto del sistema para que no quede invisible. */}
+      <span className="absolute top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground forced-colors:bg-[CanvasText]" style={{ left: `${pos(entry)}%` }} />
     </span>
   );
 
@@ -79,7 +81,7 @@ export function TradeLevels({
           {labels.risk} −{risk.toFixed(1)}% ({labels.stop} {stop.toFixed(2)})
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className="viz-color h-3 w-0.5 bg-foreground" />
+          <span aria-hidden="true" className="viz-color h-3 w-0.5 bg-foreground forced-colors:bg-[CanvasText]" />
           {labels.entry} {entry.toFixed(2)}
         </span>
         <span className="inline-flex items-center gap-1.5">

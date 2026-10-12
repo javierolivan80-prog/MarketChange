@@ -290,8 +290,10 @@ export function SignalAnalysis({
                 <p className="mb-1 flex items-center justify-between font-medium text-foreground">
                   <span>
                     {versionLabel(strategy, locale)}
-                    {/* Con espacio de texto, no solo margen: el lector de pantalla leía "Equilibradarecomendada". */}
-                    {isRec && <> <span className="ml-0.5 text-xs font-normal text-accent-700 dark:text-accent-400">{t("recomendada", "recommended")}</span></>}
+                    {/* Con espacio de texto, no solo margen: el lector de pantalla leía
+                        "Equilibradorecomendada". Concuerda con la etiqueta (Conservador,
+                        Equilibrado, Agresivo): antes decía "recomendada". */}
+                    {isRec && <> <span className="ml-0.5 text-xs font-normal text-accent-700 dark:text-accent-400">{t("recomendado", "recommended")}</span></>}
                   </span>
                   <DirectionBadge value={decision} />
                 </p>

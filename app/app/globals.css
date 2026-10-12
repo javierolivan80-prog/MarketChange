@@ -162,14 +162,16 @@
      viudas. El espaciado entre letras va por tamaño en cada componente:
      apretado en títulos y cifras grandes, abierto en etiquetas en
      mayúsculas pequeñas, normal en el texto. */
+  /* Formas largas: text-wrap (abreviada) también fija text-wrap-mode y
+     anularía un white-space: nowrap heredado, como el de los tooltips. */
   h1,
   h2,
   h3 {
-    text-wrap: balance;
+    text-wrap-style: balance;
   }
   p,
   li {
-    text-wrap: pretty;
+    text-wrap-style: pretty;
   }
 
   /* Con la cabecera fija, los saltos a un ancla (#plan, #analisis) y el foco
@@ -394,18 +396,19 @@ html[data-welcome-dismissed] [data-welcome-note] {
   /* Paneles plegables nativos: se abren y se cierran por el mismo camino
      (Tanda 12b, guía de Apple: simetría). La altura y la opacidad van con
      transición, así que pulsar otra vez a mitad la invierte desde donde
-     esté, y no se retiene ninguna acción esperando a la salida. Donde el
-     navegador no tiene ::details-content, se mantiene la entrada con fundido
-     y plegar es instantáneo. */
-  @supports selector(::details-content) {
+     esté, y no se retiene ninguna acción esperando a la salida. Hace falta
+     ::details-content e interpolate-size (hoy, Chromium); en el resto se
+     mantiene la entrada con fundido y plegar es instantáneo. */
+  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
     :root {
       interpolate-size: allow-keywords;
     }
     details::details-content {
       block-size: 0;
       opacity: 0;
-      overflow-y: clip;
-      /* Que el anillo de foco de lo que queda en el borde no se recorte. */
+      /* clip en los dos ejes: overflow-clip-margin solo se aplica así, y es lo
+         que evita que se recorte el anillo de foco de lo que queda en el borde. */
+      overflow: clip;
       overflow-clip-margin: 0.25rem;
       transition:
         block-size var(--motion-duration-base) var(--motion-ease-out),
@@ -417,7 +420,7 @@ html[data-welcome-dismissed] [data-welcome-note] {
       opacity: 1;
     }
   }
-  @supports not selector(::details-content) {
+  @supports not ((interpolate-size: allow-keywords) and selector(::details-content)) {
     details[open] > :not(summary) {
       animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
     }

@@ -46,6 +46,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
   function removeFilter(key: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.delete(key);
+    if (key === "minConfidence") setConfianzaIlegible(false);
     ({ ticker: setTicker, eventClass: setEventClass, signal: setSignal, dateFrom: setDateFrom, dateTo: setDateTo, minConfidence: setMinConfidence } as Record<string, (v: string) => void>)[key]?.("");
     startTransition(() => router.push(`/senales${params.size ? `?${params.toString()}` : ""}`));
   }
@@ -61,14 +62,20 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
   };
 
   // Validación mientras se escribe (Tanda 12b, guía de Apple: avisar en el
-  // momento, no al enviar). Antes un rango de fechas al revés o una
-  // confianza de 150 devolvían una tabla vacía sin decir por qué.
-  const fechasAlReves = dateFrom !== "" && dateTo !== "" && dateFrom > dateTo;
+  // momento, no al enviar). Antes un rango de fechas al revés devolvía una
+  // tabla vacía sin decir por qué, y una confianza de 150 solo la frenaba el
+  // globo del navegador, en su idioma y al pulsar Filtrar. El formulario va
+  // con noValidate: los avisos son estos, no los nativos.
+  const fechasAlReves = dateFrom !== "" && dateTo !== "" && Date.parse(dateFrom) > Date.parse(dateTo);
+  // Un campo numérico con texto que no es un número ("-", "1e") da value ""
+  // y validity.badInput: sin esto se enviaría como si estuviera vacío.
+  const [confianzaIlegible, setConfianzaIlegible] = useState(false);
   const confianzaNum = Number(minConfidence);
-  const confianzaMal = minConfidence !== "" && (!Number.isFinite(confianzaNum) || confianzaNum < 0 || confianzaNum > 100);
+  const confianzaMal =
+    confianzaIlegible || (minConfidence !== "" && (!Number.isFinite(confianzaNum) || confianzaNum < 0 || confianzaNum > 100));
   const errores = [
     fechasAlReves && t("«Desde» es posterior a «Hasta».", "«From» is later than «To»."),
-    confianzaMal && t("La confianza mínima va de 0 a 100.", "Minimum confidence goes from 0 to 100."),
+    confianzaMal && t("Escribe una confianza mínima de 0 a 100.", "Enter a minimum confidence from 0 to 100."),
   ].filter(Boolean) as string[];
   const refDesde = useRef<HTMLInputElement>(null);
   const refConfianza = useRef<HTMLInputElement>(null);
@@ -83,7 +90,8 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
     if (signal) params.set("signal", signal);
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
-    if (minConfidence) params.set("minConfidence", minConfidence);
+    // Normalizado: "1e2" o "-0" llegaban tal cual a la URL y al chip.
+    if (minConfidence) params.set("minConfidence", String(confianzaNum));
     startTransition(() => router.push(`/senales?${params.toString()}`));
   }
 
@@ -94,11 +102,12 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
     setDateFrom("");
     setDateTo("");
     setMinConfidence("");
+    setConfianzaIlegible(false);
     startTransition(() => router.push("/senales"));
   }
 
   return (
-    <form onSubmit={apply} className="mb-5 flex flex-wrap items-end gap-3 border border-border-subtle bg-surface-raised p-3 text-sm">
+    <form noValidate onSubmit={apply} className="mb-5 flex flex-wrap items-end gap-3 border border-border-subtle bg-surface-raised p-3 text-sm">
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.ticker} className={LABEL}>
           Ticker
@@ -181,12 +190,16 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
           ref={refConfianza}
           id={ids.minConfidence}
           type="number"
-          inputMode="numeric"
+          inputMode="decimal"
           min={0}
           max={100}
+          step="any"
           className={`${INPUT} num w-20`}
           value={minConfidence}
           onChange={(e) => setMinConfidence(e.target.value)}
+          // onInput y no onChange: al escribir "-" el valor sigue siendo "" y
+          // React no emite onChange, pero el campo ya es ilegible.
+          onInput={(e) => setConfianzaIlegible(e.currentTarget.validity.badInput)}
           aria-invalid={confianzaMal || undefined}
           aria-describedby={confianzaMal ? ids.errores : undefined}
         />
@@ -200,7 +213,9 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         </Button>
       </div>
       {errores.length > 0 && (
-        <p id={ids.errores} className="w-full text-xs text-rose-700 dark:text-rose-400">
+        // aria-hidden: lo anuncia la región de abajo y lo leen los campos por
+        // aria-describedby; sin esto, en modo lectura se oía dos veces.
+        <p id={ids.errores} aria-hidden="true" className="w-full text-xs text-rose-700 dark:text-rose-400">
           {errores.join(" ")}
         </p>
       )}
