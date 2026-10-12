@@ -124,6 +124,13 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
     - Decisiones tomadas con la opción recomendada (delegadas por el usuario):
       - Las decisiones de la IA ya guardadas no se recalculan: son el registro de lo que el sistema decidió en su momento. Hoy no hay ninguna, porque la IA aún no ha analizado eventos reales.
     - **SOSPECHA (impacto pequeño):** la capitalización que fija el margen se guarda al calcular la regla; si después llega el historial de splits o un 10-K tardío, el backtest recalcula su deslizamiento cada noche y los dos pueden quedar a lados distintos de 10.000 M$. Casi siempre va hacia el lado conservador (sin dato, 90 pb).
+  - Tanda 10 «Supervivencia: medir y no favorecer» (2026-10-12; decisiones delegadas, opción recomendada). H-05 no se puede corregir sin una fuente de precios con deslistados (de pago); se quita lo que la empeoraba y se mide:
+    - **Información del futuro en la regla de supervivencia:** el aviso de posible deslistado solo cuenta huecos reales (filas sin precio) en los 5 días hasta D0. La marca que una descarga posterior pone sobre una vela con precio (el ticker dejó de devolver datos DESPUÉS) descartaba justo las operaciones en empresas que luego desaparecieron, y eso favorecía al backtest.
+    - **H-14:** la cola del histórico (antes del corte) elige los eventos por la capitalización EN D0 (acciones del último 10-K × precio de D0, sin el tope de hoy), no por la lista invertible de hoy, que solo tiene supervivientes. La cola de la IA, con eventos recientes, sigue con la de hoy.
+    - **Medición:** el informe ya no publica un 0 % de deslistadas (nada rellenaba `is_delisted_flag`): dice «no medido». Publica, por clase de evento, cuántos eventos se pierden sin CAR por falta de precios y marca como no fiable la que pierde más del 20 % (auditoría T4). La app y el informe de validación dicen que el sesgo no está corregido.
+    - **Sensibilidad (hipótesis, no dato):** escenario en el que las operaciones cerradas por falta de datos (DATA_GAP) pierden un 30 % más al salir (Shumway, 1997).
+    - La regla sin IA pasa a `analogos_signo_v5`; los descartes previos a la IA anteriores al corte recalculan sus condiciones objetivas en el relleno en vez de copiar el motivo guardado.
+    - **Sin corregir:** las empresas que ya habían desaparecido antes de la carga del histórico no están (ni sus eventos ni sus precios), ni hay rendimiento de deslistado en el backtest.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 
@@ -382,7 +389,7 @@ Cada PR lleva su test en rojo primero y la suite al 100 %.
 10. **PR-10 · Rendimiento (H-27, H-28, H-29, H-30).**
 11. **PR-11 · Higiene (H-33, H-34, H-35, H-36, H-22, H-18, H-17).**
 12. **Fuera de PR (decisión):**
-    - **H-05 supervivencia:** requiere una fuente de datos con deslistados.
+    - **H-05 supervivencia:** requiere una fuente de datos con deslistados (Tanda 10: medido, no corregido).
     - **H-06 memoria del LLM:** decidir si la validación del Judge pasa a ser solo forward.
 
 ### PREGUNTAS abiertas (no se asume nada)

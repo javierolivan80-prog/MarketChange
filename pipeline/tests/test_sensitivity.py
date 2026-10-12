@@ -41,6 +41,29 @@ def test_apply_extra_cost_bps_cobra_las_dos_patas_si_la_operacion_esta_cubierta(
     assert adjusted[0]["pnl_pct"] == pytest.approx(1.8)  # +0,1 % en la acción y +0,1 % en SPY
 
 
+def test_deslistado_menos_30_solo_toca_los_data_gap():
+    """Tanda 10 (hipótesis): la acción de una operación cerrada por falta de
+    datos cae un 30 % más al salir; las demás no cambian. Con cobertura, la
+    pata de SPY y los costes son los del original."""
+    from pipeline.backtest.sensitivity import apply_delisting_haircut
+
+    normal = {**_trade(pnl_pct=1.0), "exit_reason": "TAKE_PROFIT"}
+    largo = {
+        **_trade(pnl_pct=-0.9), "exit_reason": "DATA_GAP", "direction": "LONG", "entry_price": 100.0,
+        "exit_price": 100.0, "actual_move_pct": 0.0, "spy_move_pct": 0.0,
+    }
+    corto = {
+        **_trade(pnl_pct=-0.9, event_id=2), "exit_reason": "DATA_GAP", "direction": "SHORT", "entry_price": 100.0,
+        "exit_price": 100.0, "actual_move_pct": 0.0, "spy_move_pct": 0.0,
+    }
+    ajustadas, n = apply_delisting_haircut([normal, largo, corto])
+    assert n == 2
+    assert ajustadas[0] == normal
+    assert ajustadas[1]["pnl_pct"] == pytest.approx(-30.0 - 0.9)  # el largo pierde el 30 %
+    assert ajustadas[2]["pnl_pct"] == pytest.approx(30.0 - 0.9)  # el corto lo gana
+    assert ajustadas[1]["pnl_abs"] == pytest.approx(10_000.0 * (-30.9) / 100)
+
+
 def test_apply_extra_cost_bps_can_flip_winner_to_loser():
     trades = [_trade(pnl_pct=0.15, size=5_000.0)]
     adjusted = apply_extra_cost_bps(trades, extra_bps=20.0)  # +0.2% (spread)

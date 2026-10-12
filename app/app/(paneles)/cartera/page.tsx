@@ -11,7 +11,7 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { NoDataYet, NotConfigured, StateBox, StatePage } from "@/components/ui/PageState";
 import Link from "next/link";
 import { formatDate, formatShare } from "@/lib/format";
-import { VERSION_ORDER, versionLabel } from "@/lib/labels";
+import { VERSION_ORDER, eventClassLabel, versionLabel } from "@/lib/labels";
 import { getT } from "@/lib/locale";
 
 export const dynamic = "force-dynamic";
@@ -98,9 +98,14 @@ export default async function CarteraPage() {
             </p>
             <p className="num">
               {t(
-                `${bias_report.n_delisted} de ${bias_report.n_total_tickers} empresas del histórico dejaron de cotizar (${formatShare(bias_report.survivorship_bias_pct, 1)}) y el ${formatShare(bias_report.data_gap_pct, 1)} de los precios tiene huecos; ambas cosas pueden desviar ligeramente los resultados.`,
-                `${bias_report.n_delisted} of ${bias_report.n_total_tickers} companies in the history stopped trading (${formatShare(bias_report.survivorship_bias_pct, 1)}) and ${formatShare(bias_report.data_gap_pct, 1)} of prices have gaps; both can skew the results slightly.`,
+                `Sesgo de supervivencia sin corregir: el histórico solo incluye empresas que siguen cotizando hoy, y eso infla los resultados, sobre todo las compras. El ${formatShare(bias_report.data_gap_pct, 1)} de los precios tiene huecos.`,
+                `Survivorship bias not corrected: the history only includes companies still trading today, which inflates results, above all for buys. ${formatShare(bias_report.data_gap_pct, 1)} of prices have gaps.`,
               )}
+              {(bias_report.clases_no_fiables?.length ?? 0) > 0 &&
+                t(
+                  ` Tipos de evento que pierden más del 20 % de sus casos por falta de precios: ${bias_report.clases_no_fiables!.map((c) => eventClassLabel(c, locale)).join(", ")}.`,
+                  ` Event types that lose more than 20% of their cases for lack of prices: ${bias_report.clases_no_fiables!.map((c) => eventClassLabel(c, locale)).join(", ")}.`,
+                )}
             </p>
             <p>
               <Link href="/funciona" className="text-accent-700 hover:underline dark:text-accent-400">

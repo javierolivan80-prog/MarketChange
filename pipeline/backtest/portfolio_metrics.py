@@ -233,24 +233,71 @@ def compute_metrics_by_event_type(trades_with_event_class: list[dict]) -> dict[s
 # Sesgos
 # ============================================================================
 
+# Clase de evento que pierde más que esto de sus eventos por falta de precios
+# (sin CAR a 20 sesiones) no es fiable (ARCHITECTURE_LEAN.md, auditoría T4).
+PERDIDA_MAXIMA_FIABLE_PCT = 20.0
+# Margen para que la ventana de 20 sesiones de un evento ya haya terminado.
+DIAS_VENTANA_CERRADA = 45
+
+
+def perdida_por_clase(conn) -> list[dict]:
+    """Por clase de evento: cuántos eventos con la ventana ya cerrada no
+    tienen CAR a 20 sesiones (sin precios: deslistados, huecos de Yahoo...).
+    Es lo que el histórico pierde en silencio: esos eventos no entran en los
+    análogos, el prior ni el estudio de eventos."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.event_class, count(*) AS n_eventos, count(*) FILTER (WHERE c.event_id IS NULL) AS n_sin_car
+            FROM events e
+            LEFT JOIN car_results c ON c.event_id = e.event_id AND c.window_days = 20
+            WHERE e.d0_close_date < current_date - %s
+            GROUP BY e.event_class
+            ORDER BY e.event_class
+            """,
+            (DIAS_VENTANA_CERRADA,),
+        )
+        filas = cur.fetchall()
+    resultado = []
+    for f in filas:
+        pct = f["n_sin_car"] / f["n_eventos"] * 100 if f["n_eventos"] else None
+        resultado.append({
+            "event_class": f["event_class"],
+            "n_eventos": f["n_eventos"],
+            "n_sin_car": f["n_sin_car"],
+            "pct_perdido": pct,
+            "fiable": pct is not None and pct <= PERDIDA_MAXIMA_FIABLE_PCT,
+        })
+    return resultado
+
+
 def compute_bias_report(conn) -> dict:
+    """Sesgos de datos del histórico (Tanda 10, BUGS_REPORT.md H-05).
+
+    Las empresas deslistadas NO se miden: el universo sale de la lista de
+    tickers de la SEC de hoy y nada rellena universe.is_delisted_flag, así
+    que contar esa columna daba siempre 0 %, una cifra falsa. Se publica
+    «no medido» (None) y, en su lugar, lo que sí se puede medir: cuántos
+    eventos pierde cada clase por falta de precios."""
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM universe")
         n_total = cur.fetchone()["n"]
-        cur.execute("SELECT count(*) AS n FROM universe WHERE is_delisted_flag")
-        n_delisted = cur.fetchone()["n"]
         cur.execute("SELECT count(*) AS n FROM prices WHERE survivorship_warning")
         n_gaps = cur.fetchone()["n"]
         cur.execute("SELECT count(*) AS n FROM prices")
         n_price_rows = cur.fetchone()["n"]
+    clases = perdida_por_clase(conn)
 
     return {
         "n_total_tickers": n_total,
-        "n_delisted": n_delisted,
-        "survivorship_bias_pct": (n_delisted / n_total * 100) if n_total else None,
+        "deslistados_medidos": False,
+        "n_delisted": None,
+        "survivorship_bias_pct": None,
         "n_price_gaps": n_gaps,
         "n_price_rows": n_price_rows,
         "data_gap_pct": (n_gaps / n_price_rows * 100) if n_price_rows else None,
+        "perdida_por_clase": clases,
+        "clases_no_fiables": [c["event_class"] for c in clases if not c["fiable"]],
     }
 
 

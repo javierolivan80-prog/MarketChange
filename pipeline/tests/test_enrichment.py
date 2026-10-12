@@ -188,10 +188,13 @@ def test_adv_usd_60d_none_when_insufficient_history():
 
 
 def test_survivorship_warning_propagates_when_present_near_d0():
+    """Un hueco real (fila marcada y sin precio) en los 5 días hasta D0."""
     ticker = _panel(320, 100.0, 0.0, seed=17)
     d0_idx = 300
     d0 = ticker.index[d0_idx].date()
-    ticker.loc[pd.Timestamp(d0), "survivorship_warning"] = True
+    hueco = ticker.index[d0_idx - 2]
+    ticker.loc[hueco, "survivorship_warning"] = True
+    ticker.loc[hueco, "close_raw"] = float("nan")
     spy = _panel(320, 400.0, 0.0, seed=18)
     sector = _panel(320, 50.0, 0.0, seed=19)
     vix = _panel(320, 18.0, 0.0, seed=20)
@@ -199,6 +202,19 @@ def test_survivorship_warning_propagates_when_present_near_d0():
 
     result = compute_enrichment(ticker, spy, sector, vix, factors, d0, "XLK")
     assert result.had_survivorship_warning is True
+
+
+def test_la_marca_sobre_una_vela_con_precio_no_cuenta_es_del_futuro():
+    """Tanda 10: una descarga posterior marca la última vela con precio de
+    un ticker que dejó de devolver datos. En D0 eso no se sabía: no cuenta."""
+    ticker = _panel(320, 100.0, 0.0, seed=17)
+    d0 = ticker.index[300].date()
+    ticker.loc[pd.Timestamp(d0), "survivorship_warning"] = True  # vela de D0 con precio
+    spy = _panel(320, 400.0, 0.0, seed=18)
+    sector = _panel(320, 50.0, 0.0, seed=19)
+    vix = _panel(320, 18.0, 0.0, seed=20)
+    result = compute_enrichment(ticker, spy, sector, vix, _factors(320), d0, "XLK")
+    assert result.had_survivorship_warning is False
 
 
 def test_missing_sector_or_spy_data_degrades_sector_mood_to_none_not_crash():

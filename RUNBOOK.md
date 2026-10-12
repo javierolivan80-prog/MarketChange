@@ -342,6 +342,14 @@ regla sin IA de los análisis guardados se recalcula en el paso de backtest; si
 no termina en una noche, sigue en la siguiente y el informe lo dice en
 `cobertura_regla`.
 
+**Supervivencia (Tanda 10).** El histórico solo tiene empresas que cotizan
+hoy (BUGS_REPORT.md H-05, sin corregir: hace falta una fuente de precios con
+deslistados). El informe lo mide en `bias_report.perdida_por_clase` (eventos
+sin CAR por falta de precios, por clase) y `clases_no_fiables` (más del 20 %),
+y la sensibilidad incluye el escenario hipotético `delisting_minus_30pct`. La
+cola del histórico elige eventos por la capitalización en D0, no por la lista
+invertible de hoy.
+
 **Circuit-breaker de drawdown de cartera** (hallazgo de auditoría, prioridad
 máxima — protección de capital): si el drawdown pico-a-valle de la equity de
 UNA versión alcanza el 15%
