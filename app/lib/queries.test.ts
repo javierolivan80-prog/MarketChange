@@ -243,12 +243,52 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
         [tag, traded, pnl === null ? null : "2026-01-08", pnl === null ? null : 11, pnl === null ? null : "TAKE_PROFIT", status, pnl, ago]
       );
     }
+    // Con pata de SPY (Tanda 8): cuenta para el acierto y la media.
+    await pool.query("UPDATE paper_trades SET spy_entry_price = 400 WHERE run_batch_tag = 'w2'");
     const h = await getSignalHistory("BALANCED");
     assert.deepEqual(h.rows.map((r) => r.ticker), ["H1"]);
     assert.equal(h.rows[0].status, "CLOSED_TP");
+    assert.equal(h.rows[0].cubierta, true);
     assert.equal(h.n_closed, 1);
     assert.equal(h.win_rate, 1);
     assert.equal(h.avg_pnl_pct, 3.5);
+    assert.equal(h.n_closed_sin_cubrir, 0);
+  });
+
+  test("historial: una cerrada sin cubrir (anterior a la Tanda 8) no entra en el acierto ni en la media", async () => {
+    const viejo = await seedEvent({ ticker: "OLD", d0: "2026-01-05", decisions: ["NO_TRADE", "LONG", "LONG"] });
+    const nuevo = await seedEvent({ ticker: "NEW", d0: "2026-01-06", decisions: ["NO_TRADE", "LONG", "LONG"] });
+    const pool = getPool();
+    for (const [id, pnl, spy] of [
+      [viejo, 9, null],
+      [nuevo, -1, 400],
+    ] as const) {
+      await pool.query(
+        `INSERT INTO paper_trades (run_batch_tag, week_start, week_end, event_id, version, direction, entry_date, entry_price,
+           exit_date, exit_price, exit_reason, status, pnl_pct, confidence, ev, prediction, spy_entry_price)
+         VALUES ('w1', '2026-01-05', '2026-01-09', $1, 'BALANCED', 'LONG', '2026-01-06', 10, '2026-01-08', 11, 'TAKE_PROFIT',
+           'CLOSED_TP', $2, 70, 0.01, 0.4, $3)`,
+        [id, pnl, spy]
+      );
+    }
+    const h = await getSignalHistory("BALANCED");
+    assert.equal(h.n_closed, 2);
+    assert.equal(h.n_closed_sin_cubrir, 1);
+    assert.equal(h.win_rate, 0);
+    assert.equal(h.avg_pnl_pct, -1);
+    assert.equal(h.rows.find((r) => r.ticker === "OLD")?.cubierta, false);
+  });
+
+  test("las consultas no fallan si la base aún no tiene las columnas de la cobertura", async () => {
+    const a = await seedEvent({ ticker: "AAA", d0: "2026-01-01", decisions: ["NO_TRADE", "LONG", "LONG"] });
+    await seedPortfolioRun("run-1", 1, [a]);
+    const pool = getPool();
+    await pool.query("ALTER TABLE portfolio_trades DROP COLUMN spy_entry_price, DROP COLUMN spy_exit_price, DROP COLUMN spy_move_pct");
+    await pool.query("ALTER TABLE paper_trades DROP COLUMN spy_entry_price, DROP COLUMN spy_exit_price, DROP COLUMN spy_move_pct");
+    const [row] = await getSignalsFeed({ limit: 5 });
+    assert.equal(row.cubierta, false);
+    const h = await getSignalHistory("BALANCED");
+    assert.equal(h.rows.length, 1);
   });
 
   test("Inicio lee solo las rutas JSON que necesita", async () => {

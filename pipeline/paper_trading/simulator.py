@@ -50,6 +50,7 @@ from pipeline.backtest.portfolio_simulator import (
     TICKER_COBERTURA,
     OpenPosition,
     SerieCobertura,
+    cargar_serie_cobertura,
     compute_tp_sl_prices,
     consolidate_trade_record,
     cubrir_cierres_nuevos,
@@ -354,7 +355,7 @@ def simulate_paper_trading_week(conn, version: str, week_start: date, week_end: 
         return []
 
     ticker_cache: dict[str, dict[date, dict]] = {}
-    spy = SerieCobertura(load_ticker_prices(conn, TICKER_COBERTURA))
+    spy = cargar_serie_cobertura(conn)
     results = []
     for ev in events:
         ticker = ev["ticker"]

@@ -35,6 +35,12 @@ def test_apply_extra_cost_bps_subtracts_from_pnl_pct():
     assert adjusted[0]["pnl_abs"] == pytest.approx(10_000.0 * 0.019)
 
 
+def test_apply_extra_cost_bps_cobra_las_dos_patas_si_la_operacion_esta_cubierta():
+    cubierta = {**_trade(pnl_pct=2.0, size=10_000.0), "spy_entry_price": 400.0}
+    adjusted = apply_extra_cost_bps([cubierta], extra_bps=10.0)
+    assert adjusted[0]["pnl_pct"] == pytest.approx(1.8)  # +0,1 % en la acción y +0,1 % en SPY
+
+
 def test_apply_extra_cost_bps_can_flip_winner_to_loser():
     trades = [_trade(pnl_pct=0.15, size=5_000.0)]
     adjusted = apply_extra_cost_bps(trades, extra_bps=20.0)  # +0.2% (spread)
@@ -189,6 +195,30 @@ class TestSensitivityIntegration:
         assert a["actual_move_pct"] == pytest.approx(esperado)
         costes = float(t["actual_move_pct"]) - float(t["pnl_pct"])
         assert a["pnl_pct"] == pytest.approx(esperado - costes)
+
+    def test_latencia_de_un_corto_reprecia_spy_en_su_sentido(self, conn):
+        from pipeline.backtest.portfolio_simulator import gain_pct, simulate_portfolio
+        from pipeline.backtest.sensitivity import _fetch_trades_with_context, apply_latency_sensitivity
+        from pipeline.tests.cobertura import sembrar_spy
+
+        d0 = date(2024, 3, 4)
+        cal = self._business_days(d0, 15)
+        closes = [100.0 - i * 0.3 for i in range(len(cal))]
+        event_id = self._seed(conn, "lat3", "LAT3", d0, cal, closes, decision="SHORT", confidence=80.0, ev=-0.01)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE event_analyses SET net_conviction = -0.6 WHERE event_id = %s", (event_id,))
+            copiar_a_regla_historica(cur, event_id)
+        conn.commit()
+        sembrar_spy(conn, {cal[1]: 400.0, cal[2]: 398.0}, aperturas={cal[1]: 400.0, cal[2]: 399.0})
+
+        simulate_portfolio(conn, "CONSERVATIVE", "sens-test-spy-short", starting_capital=100_000.0)
+        t = _fetch_trades_with_context(conn, "CONSERVATIVE", "sens-test-spy-short")[0]
+        assert t["direction"] == "SHORT"
+        a = apply_latency_sensitivity(conn, [t])[0]
+        esperado = gain_pct("SHORT", float(a["entry_price"]), float(t["exit_price"])) - gain_pct(
+            "SHORT", 399.0, float(t["spy_exit_price"])
+        )
+        assert a["actual_move_pct"] == pytest.approx(esperado)
 
     def test_apply_latency_sensitivity_logs_dropped_trades_without_d2(self, conn, caplog):
         """IMPROVEMENT_PLAN.md R14: antes, un trade sin D+2 disponible se

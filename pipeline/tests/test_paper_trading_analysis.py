@@ -181,6 +181,37 @@ class TestPredictionAccuracyIntegration:
         r = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))[0]
         assert r["actual_move_5d"] is None and r["was_correct"] is None
 
+    def test_actual_move_5d_de_un_corto_frente_a_spy(self, conn):
+        from pipeline.paper_trading.analysis import compute_prediction_accuracy
+        from pipeline.tests.cobertura import sembrar_spy
+
+        d0 = date(2026, 3, 2)
+        cal = [d0 + timedelta(days=i) for i in range(10) if (d0 + timedelta(days=i)).weekday() < 5]
+        closes = [100.0 - i * 2.0 for i in range(len(cal))]  # entra a 98, 5ª sesión: 88
+        self._seed_price_series(conn, "SHRT1", cal, closes)
+        self._seed_event(conn, "a11", "SHRT1", d0, decision="SHORT", net_conviction=-0.6, confidence=77.0, ev=-0.01)
+        sembrar_spy(conn, {cal[1]: 400.0, cal[6]: 352.0}, aperturas={cal[1]: 400.0})  # SPY −12 %
+
+        r = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))[0]
+        assert r["predicted_direction"] == "SHORT"
+        # El corto gana un 10,2 % con la acción, pero el mercado cayó más (+12 % en su sentido).
+        assert r["actual_move_5d"] == pytest.approx((98.0 - 88.0) / 98.0 * 100 - 12.0)
+        assert r["was_correct"] is False
+
+    def test_actual_move_5d_none_si_spy_no_tiene_vela_el_quinto_dia(self, conn):
+        from pipeline.paper_trading.analysis import compute_prediction_accuracy
+
+        d0 = date(2026, 3, 2)
+        cal = [d0 + timedelta(days=i) for i in range(10) if (d0 + timedelta(days=i)).weekday() < 5]
+        self._seed_price_series(conn, "GAP5", cal, [100.0 + i for i in range(len(cal))])
+        self._seed_event(conn, "a12", "GAP5", d0, decision="LONG", net_conviction=0.6, confidence=77.0, ev=0.01)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM prices WHERE ticker = 'SPY' AND trade_date = %s", (cal[6],))
+        conn.commit()
+
+        r = compute_prediction_accuracy(conn, "CONSERVATIVE", date(2026, 3, 2), date(2026, 3, 6))[0]
+        assert r["actual_move_5d"] is None  # nunca la acción a 5 días contra SPY a 4
+
     def test_includes_no_trade_events_with_was_traded_false(self, conn):
         from pipeline.paper_trading.analysis import compute_prediction_accuracy
 

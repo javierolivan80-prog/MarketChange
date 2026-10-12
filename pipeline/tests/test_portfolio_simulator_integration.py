@@ -1075,3 +1075,75 @@ class TestCoberturaConSpy:
             cur.execute("SELECT pnl_abs FROM portfolio_trades WHERE run_batch_tag='cob-4'")
             pnl_abs = float(cur.fetchone()["pnl_abs"])
         assert result["final_cash"] == pytest.approx(100_000.0 + pnl_abs)
+
+
+class TestCoberturaConSpyCasosLimite:
+    def test_un_corto_compra_spy_y_la_curva_lo_valora_en_ese_sentido(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.tests.cobertura import sembrar_spy
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        _seed_event_with_analysis(
+            conn, "1", "SHORTCO", cal[0],
+            trade_decision_conservative="SHORT", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=-0.8, confidence=90.0, ev_conservative=-0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, "SHORTCO", cal, [100.0] * len(cal))
+        # SPY abre a 400 en la entrada y se queda en 404 (+1 %) hasta la salida.
+        sembrar_spy(conn, {d: 404.0 for d in cal[1:]}, aperturas={cal[1]: 400.0})
+
+        simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-short", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM portfolio_trades WHERE run_batch_tag='cob-short'")
+            t = cur.fetchone()
+            cur.execute("SELECT balance FROM portfolio_equity_curve WHERE run_batch_tag='cob-short' AND trade_date=%s", (cal[1],))
+            balance = float(cur.fetchone()["balance"])
+        assert t["direction"] == "SHORT"
+        # La pata de SPY de un corto es comprada: gana si SPY sube.
+        assert balance == pytest.approx(100_000.0 + 0.01 * float(t["position_size_dollars"]))
+        # Frente al mercado: acción plana con SPY subiendo es bueno para el corto.
+        assert float(t["spy_move_pct"]) < 0 and float(t["actual_move_pct"]) > 0
+
+    def test_si_las_dos_patas_no_caben_en_la_caja_cada_una_se_queda_en_la_mitad(self, conn, monkeypatch):
+        from pipeline.backtest import portfolio_simulator
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        # Tamaño pedido del 80 %: las dos patas (160 %) no caben en la caja.
+        monkeypatch.setattr(portfolio_simulator, "compute_position_size_pct", lambda confidence, config: 80.0)
+        cal = _business_days(date(2024, 1, 2), 15)
+        _seed_event_with_analysis(
+            conn, "1", "BIGCO", cal[0],
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, "BIGCO", cal, [100.0] * len(cal))
+        with conn.cursor() as cur:
+            cur.execute("UPDATE prices SET volume = 1e9 WHERE ticker = 'BIGCO'")  # sin tope por liquidez
+        conn.commit()
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-caja", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT position_size_dollars, pnl_abs FROM portfolio_trades WHERE run_batch_tag='cob-caja'")
+            t = cur.fetchone()
+            cur.execute("SELECT min(balance) AS minimo FROM portfolio_equity_curve WHERE run_batch_tag='cob-caja'")
+            minimo = float(cur.fetchone()["minimo"])
+        assert float(t["position_size_dollars"]) == pytest.approx(50_000.0)
+        assert result["final_cash"] == pytest.approx(100_000.0 + float(t["pnl_abs"]))
+        assert minimo > 0
+
+    def test_una_vela_de_spy_marcada_por_calidad_cuenta_como_dia_sin_vela(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        _seed_event_with_analysis(
+            conn, "1", "TESTCO", cal[0],
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, "TESTCO", cal, [100.0] * len(cal))
+        with conn.cursor() as cur:
+            cur.execute("UPDATE prices SET calidad_motivo = 'pico' WHERE ticker = 'SPY' AND trade_date = %s", (cal[1],))
+        conn.commit()
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-calidad", starting_capital=100_000.0)
+        assert result["n_sin_cobertura"] == 1 and result["n_trades"] == 0

@@ -74,6 +74,14 @@ export default async function HistorialPage() {
           </p>
         </div>
       </section>
+      {history.n_closed_sin_cubrir > 0 && (
+        <p className="mb-2 text-xs text-text-tertiary">
+          {t(
+            `${history.n_closed_sin_cubrir} señal(es) cerrada(s) de antes de la cobertura con SPY quedan fuera del acierto y del resultado medio (su resultado no es frente al mercado).`,
+            `${history.n_closed_sin_cubrir} closed signal(s) from before the SPY hedge are left out of the win rate and average result (their result is not relative to the market).`,
+          )}
+        </p>
+      )}
       {history.n_closed < 20 && (
         <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
           {t(
@@ -121,6 +129,9 @@ export default async function HistorialPage() {
                     <span className="inline-block w-16 text-right">
                       <SignedPct value={r.pnl_pct} />
                     </span>
+                    {r.cubierta === false && r.pnl_pct !== null && (
+                      <span className="text-xs text-text-tertiary">{t("sin cubrir", "unhedged")}</span>
+                    )}
                   </span>
                 </td>
               </tr>

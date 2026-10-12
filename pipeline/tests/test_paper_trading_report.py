@@ -259,3 +259,21 @@ def test_posicion_abierta_no_realizado_frente_a_spy(conn):
     pos = report["versions"]["BALANCED"]["open_positions"][0]
     # La acción +0,49 % (102 -> 102,5) y SPY +1 %: va por detrás del mercado.
     assert pos["unrealized_pnl_pct"] == pytest.approx((102.5 - 102.0) / 102.0 * 100 - 1.0)
+
+
+def test_posicion_abierta_corta_no_realizado_frente_a_spy(conn):
+    from pipeline.paper_trading.report import run_paper_trading_report
+    from pipeline.tests.cobertura import sembrar_spy
+
+    d0 = date(2026, 3, 2)
+    cal = [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4)]
+    _seed_price_series(conn, "OPENSHRT", cal, [100.0, 102.0, 101.5])
+    _seed_event(conn, "openshrt", "OPENSHRT", d0, decision="SHORT", net_conviction=-0.6, confidence=80.0, ev=-0.01)
+    sembrar_spy(conn, {cal[1]: 400.0, cal[2]: 396.0}, aperturas={cal[1]: 400.0})
+    conn.commit()
+
+    report = run_paper_trading_report(conn, run_batch_tag="paper-test-spy-short", as_of=date(2026, 3, 9))
+    pos = report["versions"]["BALANCED"]["open_positions"][0]
+    assert pos["direction"] == "SHORT"
+    # El corto gana un 0,49 % con la acción, pero SPY cayó un 1 % (+1 % en su sentido).
+    assert pos["unrealized_pnl_pct"] == pytest.approx((102.0 - 101.5) / 102.0 * 100 - 1.0)

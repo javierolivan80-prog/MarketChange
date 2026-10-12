@@ -6,7 +6,8 @@ aproximación deliberada, documentada aquí en vez de en cada función:
 
 - Comisión +0.1% / spread +0.2%: ambos son un coste de transacción
   adicional al de la vuelta completa (COMMISSION_BPS_ROUND_TRIP en
-  portfolio_simulator.py) — se restan directamente de pnl_pct. Exacto, no
+  portfolio_simulator.py) — se restan directamente de pnl_pct, una vez por
+  cada posición (dos con la cobertura con SPY). Exacto, no
   una aproximación (el coste de transacción no depende de qué día se
   disparó el TP/SL, solo de que hubo una entrada y una salida).
 
@@ -79,10 +80,14 @@ def apply_extra_cost_bps(trades: list[dict], extra_bps: float) -> list[dict]:
     mismo mecanismo con el que COMMISSION_BPS_ROUND_TRIP ya se aplica en
     consolidate_trade_record. pnl_abs se recalcula proporcionalmente para
     que la curva de equity reconstruida en compute_equity_impact sea
-    consistente."""
+    consistente.
+
+    El coste extra es POR POSICIÓN: una operación cubierta con SPY (Tanda 8)
+    lo paga en las dos patas, así que resta el doble del nocional de una."""
     adjusted = []
     for t in trades:
-        new_pnl_pct = float(t["pnl_pct"]) - extra_bps / 100
+        patas = 2 if t.get("spy_entry_price") is not None else 1
+        new_pnl_pct = float(t["pnl_pct"]) - patas * extra_bps / 100
         size = float(t["position_size_dollars"])
         adjusted.append({**t, "pnl_pct": new_pnl_pct, "pnl_abs": size * (new_pnl_pct / 100)})
     return adjusted
@@ -132,13 +137,18 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
             # apertura de esa misma sesión; sin ella no se puede recalcular.
             if spy_aperturas is None:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT trade_date, open_raw FROM prices WHERE ticker = %s AND open_raw IS NOT NULL", (TICKER_COBERTURA,))
+                    # Sin las velas marcadas por calidad_precios.py, como en el simulador.
+                    cur.execute(
+                        "SELECT trade_date, open_raw FROM prices WHERE ticker = %s AND open_raw IS NOT NULL AND calidad_motivo IS NULL",
+                        (TICKER_COBERTURA,),
+                    )
                     spy_aperturas = {r["trade_date"]: float(r["open_raw"]) for r in cur.fetchall()}
             spy_d2 = spy_aperturas.get(future_dates[1])
             if spy_d2 is None:
                 continue
-            actual_move_pct -= gain_pct(t["direction"], spy_d2, float(t["spy_exit_price"]))
-            extra = {"spy_entry_price": spy_d2}
+            spy_move_pct = gain_pct(t["direction"], spy_d2, float(t["spy_exit_price"]))
+            actual_move_pct -= spy_move_pct
+            extra = {"spy_entry_price": spy_d2, "spy_move_pct": spy_move_pct}
         # Mismos costes que el baseline (comisión y deslizamiento de cada
         # pata, H-32), que no se guardan aparte y se recuperan como
         # movimiento bruto - P&L neto.

@@ -72,7 +72,7 @@ se opera es lo que se predice. Detalles:
 from __future__ import annotations
 
 import logging
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -279,20 +279,39 @@ class SerieCobertura:
         bar = self.prices.get(d)
         return float(bar["open_raw"]) if bar and bar.get("open_raw") is not None else None
 
-    def cierre_hasta(self, d: date, desde: date) -> float | None:
-        """Último cierre conocido en [desde, d]. Nunca uno anterior a
-        `desde` (la entrada): sería un precio de antes de abrir la pata."""
-        i = bisect_right(self._fechas_con_cierre, d)
+    def cierre_del_dia(self, d: date) -> float | None:
+        bar = self.prices.get(d)
+        return float(bar["close_raw"]) if bar and bar.get("close_raw") is not None else None
+
+    def cierre_hasta(self, d: date, desde: date, incluido: bool = True) -> float | None:
+        """Último cierre conocido en [desde, d] ([desde, d) con
+        incluido=False). Nunca uno anterior a `desde` (la entrada): sería un
+        precio de antes de abrir la pata."""
+        i = (bisect_right if incluido else bisect_left)(self._fechas_con_cierre, d)
         if i == 0 or self._fechas_con_cierre[i - 1] < desde:
             return None
         return float(self.prices[self._fechas_con_cierre[i - 1]]["close_raw"])
 
     def precio_de_salida(self, d: date, desde: date, a_la_apertura: bool) -> float | None:
+        """A la apertura: la de `d`; sin ella, el último cierre ANTERIOR a
+        `d` (el de `d` aún no se conoce a la apertura). Al cierre: el de `d`
+        o, sin vela ese día, el último conocido desde la entrada."""
         if a_la_apertura:
             apertura = self.apertura(d)
-            if apertura is not None:
-                return apertura
+            return apertura if apertura is not None else self.cierre_hasta(d, desde, incluido=False)
         return self.cierre_hasta(d, desde)
+
+
+def cargar_serie_cobertura(conn) -> SerieCobertura:
+    """Velas de SPY sin las marcadas por calidad_precios.py (decisión del
+    usuario: marcar y excluir): una vela dudosa cuenta como día sin vela."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT trade_date, open_raw, close_raw FROM prices "
+            "WHERE ticker = %s AND calidad_motivo IS NULL ORDER BY trade_date",
+            (TICKER_COBERTURA,),
+        )
+        return SerieCobertura({r["trade_date"]: r for r in cur.fetchall()})
 
 
 def cubrir_cierres_nuevos(
@@ -1055,7 +1074,7 @@ def simulate_portfolio(
 
     # Pata de cobertura (docstring del módulo): SPY se carga aparte, no entra
     # en ticker_cache ni en el calendario maestro.
-    spy = SerieCobertura(_load_ticker_prices(conn, TICKER_COBERTURA))
+    spy = cargar_serie_cobertura(conn)
     n_sin_cobertura = 0
 
     # Memoria de tesis: calendario de TODOS los eventos nuevos por ticker (no

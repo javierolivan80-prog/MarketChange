@@ -780,3 +780,18 @@ def test_valor_a_mercado_incluye_la_pata_de_spy():
     assert compute_position_mtm_dollars(pos, 100.0, 404.0) == pytest.approx(6000.0 - 30.0)
     # Sin precio de SPY hoy, su pata se valora a la entrada.
     assert compute_position_mtm_dollars(pos, 102.0, None) == pytest.approx(6000.0 + 60.0)
+
+
+def test_a_la_apertura_sin_apertura_de_spy_usa_el_cierre_anterior_nunca_el_del_mismo_dia():
+    d1, d2 = D0 + timedelta(days=1), D0 + timedelta(days=2)
+    spy = SerieCobertura({
+        D0: {"open_raw": 400.0, "close_raw": 401.0},
+        d1: {"open_raw": 402.0, "close_raw": 403.0},
+        d2: {"open_raw": None, "close_raw": 450.0},  # su cierre aún no se conoce a la apertura
+    })
+    assert spy.precio_de_salida(d2, D0, a_la_apertura=True) == pytest.approx(403.0)
+    assert spy.precio_de_salida(d2, D0, a_la_apertura=False) == pytest.approx(450.0)
+    # Sin apertura y sin cierre anterior desde la entrada: None (el llamador
+    # deja la pata plana), nunca el cierre del mismo día.
+    sin_apertura = SerieCobertura({D0: {"open_raw": None, "close_raw": 401.0}})
+    assert sin_apertura.precio_de_salida(D0, D0, a_la_apertura=True) is None

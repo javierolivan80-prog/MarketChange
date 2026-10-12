@@ -71,7 +71,14 @@ const buildColumns = (t: T, locale: Locale) => [
   columnHelper.accessor("ev_balanced", { header: t("Valor esperado", "Expected value"), cell: (c) => <span className="num">{formatFracAsPct(c.getValue())}</span> }),
   columnHelper.accessor("pnl_pct", {
     header: t("Resultado frente al S&P 500 (si se operó)", "Result vs S&P 500 (if traded)"),
-    cell: (c) => <SignedPct value={c.getValue()} />,
+    cell: (c) => (
+      <span className="inline-flex items-center gap-2">
+        <SignedPct value={c.getValue()} />
+        {c.row.original.cubierta === false && c.getValue() !== null && (
+          <span className="text-xs text-text-tertiary">{t("sin cubrir", "unhedged")}</span>
+        )}
+      </span>
+    ),
   }),
 ];
 

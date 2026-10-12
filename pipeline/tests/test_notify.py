@@ -571,6 +571,32 @@ def test_exits_format_message_incluye_motivo_entrada_y_salida():
     assert "https://example.com/filing" in text
 
 
+def test_exits_format_message_con_cobertura_pide_cerrar_spy_y_dice_frente_al_mercado():
+    from pipeline.notify.exits_notifier import _format_message
+
+    row = {
+        "ticker": "ACME", "version": "BALANCED", "direction": "LONG",
+        "entry_date": date(2024, 3, 15), "entry_price": 100.0,
+        "exit_date": date(2024, 3, 18), "exit_price": 102.0,
+        "exit_reason": "TAKE_PROFIT", "pnl_pct": -0.4, "source_url": None,
+        "spy_entry_price": 400.0, "spy_exit_price": 406.0,
+    }
+    text = _format_message(row)
+    assert "Cierra también la cobertura en SPY (400.00 → 406.00)" in text
+    assert "frente al S&P 500" in text and "-0.40%" in text
+
+
+def test_signal_con_cobertura_dice_que_lado_de_spy_abrir():
+    from pipeline.notify.signals_notifier import _format_message
+
+    largo = _format_message(_signal_row(trade_decision_balanced="LONG", ev_balanced=0.004))
+    assert "Cobertura: vende SPY" in largo
+    corto = _format_message(_signal_row(trade_decision_aggressive="NO_TRADE"))
+    assert "Cobertura: compra SPY" in corto
+    nada = _format_message(_signal_row(trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE"))
+    assert "Cobertura" not in nada
+
+
 def test_exits_format_message_sin_pnl_muestra_guion():
     from pipeline.notify.exits_notifier import _format_message
 

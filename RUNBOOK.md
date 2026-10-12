@@ -329,7 +329,10 @@ frente al mercado y descuenta los costes de las dos patas; las dos se pagan
 con efectivo (2× nocional). Necesita los precios de SPY con apertura (los baja
 el paso de precios como índice de referencia): sin apertura de SPY en D+1 la
 señal no se opera, y el informe lo cuenta en `cobertura.senales_sin_cobertura`.
-Detalles en el docstring de `pipeline/backtest/portfolio_simulator.py`.
+Detalles en el docstring de `pipeline/backtest/portfolio_simulator.py`. La
+app tolera que las columnas `spy_*` aún no existan (se crean en la siguiente
+pasada nocturna), así que el orden de despliegue no importa. Los avisos de
+Telegram dicen qué hacer con la pata de SPY al entrar y al salir.
 
 **Circuit-breaker de drawdown de cartera** (hallazgo de auditoría, prioridad
 máxima — protección de capital): si el drawdown pico-a-valle de la equity de
