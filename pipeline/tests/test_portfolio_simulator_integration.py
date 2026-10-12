@@ -3,6 +3,7 @@ a extremo contra Postgres real, con precios sintéticos diseñados para
 disparar cada mecanismo de salida al menos una vez (TP, SL, max_holding,
 trailing_stop) y verificar la reconciliación de caja/equity.
 """
+import json
 import os
 from datetime import date, timedelta
 
@@ -788,6 +789,7 @@ def test_el_backtest_decide_con_la_regla_historica_no_con_la_ia(conn):
     """H-06: el backtest lee la decisión de la regla sin IA, no la de la IA.
     Si la IA dice LONG y la regla NO_TRADE, no se opera; al revés, sí, y con
     la dirección, el EV y la confianza de la regla."""
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
     from pipeline.backtest.portfolio_simulator import fetch_events_for_version
 
     d0 = date(2024, 3, 4)
@@ -800,13 +802,14 @@ def test_el_backtest_decide_con_la_regla_historica_no_con_la_ia(conn):
                WHERE event_id = %s""",
             (solo_ia,),
         )
-        cur.execute(
-            """UPDATE event_analyses SET decision_sin_ia = '{"regla_historica": {"net_conviction": -1.0,
-                   "confidence_in_conviction": 100.0, "ev_conservative": -0.02, "ev_balanced": -0.03,
-                   "ev_aggressive": -0.05, "decisiones": {"BALANCED": {"trade_decision": "SHORT"}}}}'
-               WHERE event_id = %s""",
-            (solo_regla,),
-        )
+        regla = {
+            "metodo": METODO_SIN_IA,
+            "regla_historica": {
+                "net_conviction": -1.0, "confidence_in_conviction": 100.0, "ev_conservative": -0.02,
+                "ev_balanced": -0.03, "ev_aggressive": -0.05, "decisiones": {"BALANCED": {"trade_decision": "SHORT"}},
+            },
+        }
+        cur.execute("UPDATE event_analyses SET decision_sin_ia = %s WHERE event_id = %s", (json.dumps(regla), solo_regla))
         # Pendiente del relleno: sin regla histórica, no entra.
         cur.execute("UPDATE event_analyses SET decision_sin_ia = NULL WHERE event_id = %s", (sin_regla,))
     conn.commit()
@@ -815,6 +818,23 @@ def test_el_backtest_decide_con_la_regla_historica_no_con_la_ia(conn):
     fila = filas[0]
     assert fila["trade_decision"] == "SHORT" and fila["prediction"] == -1.0
     assert fila["confidence"] == 100.0 and fila["ev_balanced"] == pytest.approx(-0.03)
+
+
+def test_una_regla_de_un_metodo_anterior_no_entra_en_el_backtest(conn):
+    """Tanda 9: mientras el relleno recalcula la regla con el método nuevo,
+    las filas con el anterior no se mezclan con las nuevas: no entran."""
+    from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+
+    d0 = date(2024, 3, 4)
+    vigente = _seed_event_with_analysis(conn, "1", "AAA", d0, "LONG", "LONG", "LONG", 0.9, 90, 0.04, 0.04, 0.04)
+    antigua = _seed_event_with_analysis(conn, "2", "BBB", d0, "LONG", "LONG", "LONG", 0.9, 90, 0.04, 0.04, 0.04)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE event_analyses SET decision_sin_ia = jsonb_set(decision_sin_ia, '{metodo}', '\"analogos_signo_v3\"') WHERE event_id = %s",
+            (antigua,),
+        )
+    conn.commit()
+    assert [f["event_id"] for f in fetch_events_for_version(conn, "BALANCED")] == [vigente]
 
 
 def test_deslizamiento_usa_la_capitalizacion_en_d0_sin_look_ahead(conn):

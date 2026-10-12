@@ -472,7 +472,8 @@ def process_chunk(conn, client, event_rows: list[dict], batches_enviados: list |
             )
         )
         is_fda_crl_without_8k = check_fda_crl_without_8k(conn, ev["cik"], ev["event_class"], ev["d0_close_date"])
-        precomputed_by_id[ev["event_id"]] = (enrichment, novelty, is_fda_crl_without_8k)
+        capitalizacion = capitalizacion_en_d0(conn, ev["event_id"])
+        precomputed_by_id[ev["event_id"]] = (enrichment, novelty, is_fda_crl_without_8k, capitalizacion)
         skip_reason = objective_no_trade_reason(
             novelty_score=novelty.score,
             had_survivorship_warning=enrichment.had_survivorship_warning,
@@ -484,7 +485,7 @@ def process_chunk(conn, client, event_rows: list[dict], batches_enviados: list |
             # Techo de EV (BUGS_REPORT.md H-13): la Etapa 6 no cuesta nada y
             # basta para saber si el evento podría operar en el mejor caso.
             impact = estimate_impact_for_event(conn, ev["event_class"], ev["d0_close_date"], ev["event_id"], window_days=20)
-            skip_reason = ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence)
+            skip_reason = ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence, capitalizacion)
         if ev["event_id"] in antes_del_corte:
             skip_regla_antes_del_corte[ev["event_id"]] = skip_reason
         elif skip_reason is not None:
@@ -633,8 +634,9 @@ def _process_single_event(
     # (no lo necesitan, no van a llamar al LLM), así que para ellos se
     # calculan aquí igual que siempre.
     if precomputed is not None:
-        enrichment, novelty, is_fda_crl_without_8k = precomputed
+        enrichment, novelty, is_fda_crl_without_8k, capitalizacion = precomputed
     else:
+        capitalizacion = capitalizacion_en_d0(conn, event_id)
         enrichment = fetch_and_compute_enrichment(conn, ev, series_comunes)
         # Fase 3: has_prior_guidance/rumor_flag ya no son siempre None — se
         # calculan sobre filing_text de eventos previos del mismo ticker (ver
@@ -711,6 +713,7 @@ def _process_single_event(
         beta_available=enrichment.beta_vs_spy is not None,
         adv_usd_60d=enrichment.adv_usd_60d,
         is_fda_crl_without_8k=is_fda_crl_without_8k,
+        market_cap_d0_usd=capitalizacion,
     )
     ev_result, decisions = evaluar_decision(abstention_inputs, impact, skip_reason)
     control = decision_sin_ia(abstention_inputs, impact, skip_reason_regla)
@@ -725,6 +728,19 @@ def _process_single_event(
     )
 
 
+def capitalizacion_en_d0(conn, event_id: int) -> float | None:
+    """Capitalización en D0 del evento, la MISMA que usa el backtest para el
+    deslizamiento (portfolio_simulator.MARKET_CAP_D0_SQL: acciones del último
+    10-K publicado antes de D0 × precio negociado en D0; sin dato, None).
+    Decide el margen de costes del umbral de EV (ev_engine.margen_ev)."""
+    from pipeline.backtest.portfolio_simulator import MARKET_CAP_D0_SQL
+
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {MARKET_CAP_D0_SQL} AS capitalizacion FROM events e WHERE e.event_id = %s", (event_id,))
+        fila = cur.fetchone()
+    return float(fila["capitalizacion"]) if fila and fila["capitalizacion"] is not None else None
+
+
 def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None):
     """Etapas 7-8: EV y abstención de las 3 estrategias a partir de
     `entradas` (net_conviction, confidence_in_conviction y el resto de
@@ -732,7 +748,8 @@ def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None
     de control, para que ninguna fórmula, umbral o regla pueda divergir entre
     las dos. Devuelve (EVResult, {estrategia: AbstentionDecision})."""
     ev_result = compute_ev(
-        entradas.net_conviction, entradas.confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence
+        entradas.net_conviction, entradas.confidence_in_conviction, impact.expected_magnitude_pct, impact.confidence,
+        market_cap_usd=entradas.market_cap_d0_usd,
     )
     entradas = replace(
         entradas,
@@ -758,7 +775,11 @@ def evaluar_decision(entradas: AbstentionInputs, impact, skip_reason: str | None
 # adversarial_analyzer.MODELO_ANTES_DEL_CORTE).
 MOTIVO_ANTES_DEL_CORTE = "anterior a la fecha de corte de los modelos: la IA no se usa (solo la regla sin IA)"
 
-METODO_SIN_IA = "analogos_signo_v3"
+# v4 (Tanda 9): el margen del umbral de EV es el coste de una operación
+# cubierta según la capitalización en D0, no un fijo de 50 pb. Al cambiar el
+# método, backfill_decision_sin_ia recalcula la regla de los análisis
+# guardados (sin la IA, solo Postgres).
+METODO_SIN_IA = "analogos_signo_v4"
 # Confianza de la regla histórica (ver regla_historica): fija, sin la IA.
 CONFIANZA_REGLA_HISTORICA = 100.0
 
@@ -866,6 +887,7 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
                 continue
             impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
             fda_sin_8k = check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"])
+            capitalizacion = capitalizacion_en_d0(conn, f["event_id"])
             if f["model_version_bull_bear"] == MODELO_ANTES_DEL_CORTE:
                 # La decisión guardada es «antes del corte»; la regla se decide
                 # con las condiciones objetivas, como en process_chunk.
@@ -875,7 +897,7 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
                     beta_available=enrichment.beta_vs_spy is not None,
                     adv_usd_60d=enrichment.adv_usd_60d,
                     is_fda_crl_without_8k=fda_sin_8k,
-                ) or ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence)
+                ) or ev_ceiling_no_trade_reason(impact.expected_magnitude_pct, impact.confidence, capitalizacion)
             con_ia = AbstentionInputs(
                 novelty_score=float(f["novelty_score"]),
                 confidence_in_conviction=float(f["confidence_in_conviction"]),
@@ -885,6 +907,7 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
                 beta_available=enrichment.beta_vs_spy is not None,
                 adv_usd_60d=enrichment.adv_usd_60d,
                 is_fda_crl_without_8k=fda_sin_8k,
+                market_cap_d0_usd=capitalizacion,
             )
             control = decision_sin_ia(con_ia, impact, skip_reason)
             control["recalculado"] = True

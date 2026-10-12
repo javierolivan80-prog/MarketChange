@@ -113,7 +113,17 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
       - A la apertura sin apertura de SPY se usa su último cierre ANTERIOR, nunca el del mismo día.
       - Las velas de SPY marcadas por `calidad_precios` no se usan (cuentan como día sin vela).
       - Tests nuevos para los huecos que encontró la revisión: tope de caja con dos patas, cierres por tesis, cortos en la valoración diaria, el acierto, el no realizado y la latencia. Cada mutación que antes pasaba ahora hace fallar algún test.
-    - **Abierto (PREGUNTA):** el margen del EV para operar (`EV_ABSTENTION_BUFFER`, 50 pb «después de comisiones») se fijó cuando una operación tenía una sola pata. Ahora una operación cubierta cuesta unos 60 pb (gran capitalización) o 90 pb (pequeña) de ida y vuelta, más que ese margen. No se ha tocado: es una decisión de método.
+    - La PREGUNTA del margen del EV (50 pb fijos, por debajo del coste de una operación cubierta) se resolvió en la Tanda 9.
+  - Tanda 9 «Margen del EV con la cobertura» (2026-10-12; el usuario delegó las decisiones recomendadas):
+    - El margen sobre el umbral de EV ya no es un fijo de 50 pb. Es el coste de ida y vuelta de una operación cubierta según la capitalización en D0 (`config.coste_ida_y_vuelta_cubierta_bps`, `ev_engine.margen_ev`): 60 pb en empresas grandes y 90 pb en pequeñas o sin dato. Sale de las mismas constantes de comisión y deslizamiento que resta el backtest; un test comprueba que cuadran.
+    - Lo aplican igual la decisión de la IA, la regla sin IA y su techo de EV, y el texto del umbral que enseña la app. La capitalización en D0 es la misma consulta que usa el backtest (`MARKET_CAP_D0_SQL`).
+    - La regla sin IA pasa a `analogos_signo_v4`: el paso de backtest la recalcula para los análisis guardados, sin la IA y solo con Postgres. Mientras tanto, el informe dice cuántos faltan (`cobertura_regla`).
+    - Revisión adversarial: el cambio es correcto en todos los caminos (la decisión de la IA, la regla sin IA, el techo de EV, la caché y el relleno). Corregido:
+      - Durante el relleno, el backtest solo usa la regla del método vigente; antes habría mezclado reglas de 50 pb con las nuevas.
+      - Tests para que la capitalización llegue al techo y a la regla por el camino normal, el relleno y sin datos precalculados: las cuatro mutaciones que antes pasaban ahora fallan.
+    - Decisiones tomadas con la opción recomendada (delegadas por el usuario):
+      - Las decisiones de la IA ya guardadas no se recalculan: son el registro de lo que el sistema decidió en su momento. Hoy no hay ninguna, porque la IA aún no ha analizado eventos reales.
+    - **SOSPECHA (impacto pequeño):** la capitalización que fija el margen se guarda al calcular la regla; si después llega el historial de splits o un 10-K tardío, el backtest recalcula su deslizamiento cada noche y los dos pueden quedar a lados distintos de 10.000 M$. Casi siempre va hacia el lado conservador (sin dato, 90 pb).
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

@@ -77,7 +77,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from pipeline import config
-from pipeline.config import SLIPPAGE_BPS_PER_SIDE_LARGE, SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
+from pipeline.config import SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
 from pipeline.analyze.historical_analogues import estimate_impact_for_event, get_historical_analogues
 from pipeline.backtest import thesis_engine
 from pipeline.backtest.portfolio_strategies import (
@@ -93,7 +93,7 @@ from pipeline.ingest.splits import PRECIO_NEGOCIADO_SQL
 
 logger = logging.getLogger(__name__)
 
-COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
+COMMISSION_BPS_ROUND_TRIP = config.COMMISSION_BPS_ROUND_TRIP  # 0.10% por posición, ver docstring del módulo
 
 # Capitalización en D0 para el deslizamiento (H-32): acciones del último 10-K
 # PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × precio
@@ -257,7 +257,7 @@ def gain_pct(direction: str, entry_price: float, price: float) -> float:
 
 # Cobertura con SPY (ver "COBERTURA CON SPY" en el docstring del módulo).
 TICKER_COBERTURA = "SPY"
-SLIPPAGE_BPS_COBERTURA_POR_LADO = SLIPPAGE_BPS_PER_SIDE_LARGE
+SLIPPAGE_BPS_COBERTURA_POR_LADO = config.SLIPPAGE_BPS_COBERTURA_POR_LADO
 # Cierres de nivel que pueden ejecutarse a la apertura por un hueco
 # (fill_con_gap); MAX_HOLDING/EXPIRED/DATA_GAP son siempre al cierre.
 MOTIVOS_CON_HUECO = frozenset({"STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP"})
@@ -717,6 +717,8 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
     trading). Un análisis sin regla histórica todavía (pendiente del relleno
     de backfill_decision_sin_ia) no entra."""
     assert version in VERSIONS, f"versión desconocida: {version}"
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
+
     estrategia = _TRADE_DECISION_SOURCE_VERSION.get(version, version)
     ev_col = f"ev_{estrategia.lower()}"
     start, end = date_bounds(sample)
@@ -742,6 +744,10 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                     FROM (SELECT ea.decision_sin_ia->'regla_historica' AS r) x
                 ) rh
                 WHERE rh.decision != 'NO_TRADE'
+                  -- Solo la regla del método vigente: mientras el relleno
+                  -- recalcula la de un método anterior, esa fila no entra
+                  -- (el informe lo dice en cobertura_regla), no se mezcla.
+                  AND ea.decision_sin_ia->>'metodo' = %(metodo)s
                   AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
                   AND {PRECIO_D0_MINIMO_SQL}
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
@@ -750,7 +756,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
             ) unicos
             ORDER BY d0_close_date, abs({ev_col}) DESC, event_id
             """,
-            {"start": start, "end": end, "estrategia": estrategia},
+            {"start": start, "end": end, "estrategia": estrategia, "metodo": METODO_SIN_IA},
         )
         return cur.fetchall()
 
@@ -775,6 +781,8 @@ def _load_ticker_new_events(conn, ticker: str, prices: dict[date, dict]) -> dict
     umbral de EV/confianza de ESTA estrategia). Solo se llama cuando la
     memoria está activada — coste de una query extra por ticker, cero cuando
     está desactivada (comportamiento y coste de siempre)."""
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
+
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -786,9 +794,10 @@ def _load_ticker_new_events(conn, ticker: str, prices: dict[date, dict]) -> dict
             WHERE e.ticker = %s
               -- La misma regla sin IA que decide las entradas (H-06).
               AND ea.decision_sin_ia->'regla_historica' IS NOT NULL
+              AND ea.decision_sin_ia->>'metodo' = %s
             ORDER BY e.d0_close_date
             """,
-            (ticker,),
+            (ticker, METODO_SIN_IA),
         )
         rows = cur.fetchall()
     by_entry_date: dict[date, list[dict]] = {}

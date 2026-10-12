@@ -50,7 +50,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pipeline import config
-from pipeline.analyze.ev_engine import EV_ABSTENTION_BUFFER, EV_THRESHOLDS, compute_ev
+from pipeline.analyze.ev_engine import EV_THRESHOLDS, compute_ev, margen_ev
 
 NOVELTY_FLOOR = 20
 CONFIDENCE_FLOOR = 40
@@ -76,6 +76,10 @@ class AbstentionInputs:
     beta_available: bool                  # False si el modelo de factores no pudo ajustarse (proxy de contradicción, componente a)
     adv_usd_60d: float | None             # ADV en $ de los 60 días ANTERIORES al evento; None si no hay datos suficientes
     is_fda_crl_without_8k: bool           # calculado por el orquestador (cruce EDGAR/FDA)
+    # Capitalización en D0 (portfolio_simulator.MARKET_CAP_D0_SQL): decide el
+    # margen de costes del umbral de EV (ev_engine.margen_ev). None = el de
+    # empresa pequeña, el conservador.
+    market_cap_d0_usd: float | None = None
 
 
 @dataclass
@@ -151,12 +155,14 @@ def objective_no_trade_reason(
     return _illiquid_reason(adv_usd_60d)
 
 
-def ev_ceiling_no_trade_reason(expected_magnitude_pct: float, impact_confidence: float) -> str | None:
+def ev_ceiling_no_trade_reason(
+    expected_magnitude_pct: float, impact_confidence: float, market_cap_d0_usd: float | None = None,
+) -> str | None:
     """Techo de EV alcanzable (BUGS_REPORT.md H-13). La Etapa 6 (análogos)
     no depende de la IA, y el EV es net_conviction × magnitud × confianza del
     Judge × confianza del impacto: con el MEJOR caso posible del Judge
     (|net_conviction| = 1, confidence = 100) se obtiene el |EV| máximo de cada
-    versión. Si ni ese supera su umbral + buffer (regla 3 de
+    versión. Si ni ese supera su umbral + margen de costes (regla 3 de
     decide_for_strategy, misma comparación) en NINGUNA versión, el evento será
     NO_TRADE diga lo que diga la IA: pagarla no cambia la decisión.
 
@@ -167,13 +173,14 @@ def ev_ceiling_no_trade_reason(expected_magnitude_pct: float, impact_confidence:
         "BALANCED": best.ev_balanced,
         "AGGRESSIVE": best.ev_aggressive,
     }
-    if any(abs(best_by_strategy[s]) >= EV_THRESHOLDS[s] + EV_ABSTENTION_BUFFER for s in STRATEGIES):
+    margen = margen_ev(market_cap_d0_usd)
+    if any(abs(best_by_strategy[s]) >= EV_THRESHOLDS[s] + margen for s in STRATEGIES):
         return None
     top = max(STRATEGIES, key=lambda s: abs(best_by_strategy[s]) - EV_THRESHOLDS[s])
     return (
         f"techo de EV: ni con convicción ±1 y confianza 100 se alcanza el umbral "
         f"(|EV| máx {top.lower()} {abs(best_by_strategy[top]) * 100:.2f}% < "
-        f"{(EV_THRESHOLDS[top] + EV_ABSTENTION_BUFFER) * 100:.2f}%; magnitud histórica "
+        f"{(EV_THRESHOLDS[top] + margen) * 100:.2f}%; magnitud histórica "
         f"{abs(expected_magnitude_pct):.2f}%, confianza del impacto {impact_confidence:.0f})"
     )
 
@@ -192,7 +199,8 @@ def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDe
 
     ev = inputs.ev_by_strategy[strategy]
     strategy_threshold = EV_THRESHOLDS[strategy]
-    buffered_threshold = strategy_threshold + EV_ABSTENTION_BUFFER
+    margen = margen_ev(inputs.market_cap_d0_usd)
+    buffered_threshold = strategy_threshold + margen
     # IMPROVEMENT_PLAN.md R16: ev_engine.compute_ev propaga el SIGNO de
     # net_conviction (negativo para una convicción bajista) — es el valor
     # esperado de una posición LARGA, no el de la operación que de verdad se
@@ -206,8 +214,8 @@ def decide_for_strategy(inputs: AbstentionInputs, strategy: str) -> AbstentionDe
     if abs(ev) < buffered_threshold:
         return AbstentionDecision(
             "NO_TRADE",
-            f"|ev|={abs(ev) * 100:.2f}% < umbral {strategy.lower()} ({strategy_threshold * 100:.1f}%) + buffer 50bps "
-            f"= {buffered_threshold * 100:.2f}% (EV insuficiente hasta después de fees)",
+            f"|ev|={abs(ev) * 100:.2f}% < umbral {strategy.lower()} ({strategy_threshold * 100:.1f}%) + costes "
+            f"{margen * 10_000:.0f}pb = {buffered_threshold * 100:.2f}% (EV insuficiente después de costes)",
             inputs.confidence_in_conviction,
         )
 

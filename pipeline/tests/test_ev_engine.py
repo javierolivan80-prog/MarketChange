@@ -37,12 +37,50 @@ def test_low_confidence_in_either_dimension_pulls_ev_toward_zero():
 
 
 def test_threshold_check_strings_match_spec_thresholds():
-    # EV balanced de ~2,4% supera el umbral BALANCED (0,5%) + buffer (0,5%) -> TRADE
-    from pipeline.analyze.ev_engine import EV_ABSTENTION_BUFFER
+    # EV balanced de ~2,4% supera el umbral BALANCED (0,5%) + costes (0,9% sin capitalización) -> TRADE
+    from pipeline.analyze.ev_engine import margen_ev
 
     result = compute_ev(net_conviction=0.9, confidence_in_conviction=95, expected_magnitude_pct=3.0, impact_confidence=95)
     assert "TRADE" in result.threshold_balanced and "NO_TRADE" not in result.threshold_balanced
-    assert f"{(EV_THRESHOLDS['BALANCED'] + EV_ABSTENTION_BUFFER) * 100:.1f}%" in result.threshold_balanced
+    assert f"{(EV_THRESHOLDS['BALANCED'] + margen_ev(None)) * 100:.1f}%" in result.threshold_balanced
+
+
+def test_margen_ev_es_el_coste_de_una_operacion_cubierta_segun_capitalizacion():
+    """Tanda 9: el margen sobre el umbral es lo que cuesta de verdad una
+    operación cubierta con SPY (comisión de las dos patas + deslizamiento de
+    entrada y salida de la acción y de SPY), el mismo que resta el backtest."""
+    from pipeline import config
+    from pipeline.analyze.ev_engine import margen_ev
+
+    assert margen_ev(50e9) == pytest.approx(0.0060)  # grande: 20 + 20 + 20 pb
+    assert margen_ev(config.SLIPPAGE_LARGE_CAP_USD) == pytest.approx(0.0060)
+    assert margen_ev(2e9) == pytest.approx(0.0090)  # pequeña: 20 + 50 + 20 pb
+    assert margen_ev(None) == pytest.approx(0.0090)  # sin dato: el conservador
+    grande = compute_ev(net_conviction=0.9, confidence_in_conviction=95, expected_magnitude_pct=3.0, impact_confidence=95, market_cap_usd=50e9)
+    assert f"{(EV_THRESHOLDS['BALANCED'] + 0.0060) * 100:.1f}%" in grande.threshold_balanced
+
+
+def test_margen_ev_cuadra_con_los_costes_del_backtest():
+    """El margen y lo que resta consolidate_trade_record a una operación
+    cubierta salen de las mismas constantes: si una cambia, cambian los dos."""
+    from datetime import date
+
+    from pipeline.analyze.ev_engine import margen_ev
+    from pipeline.backtest.portfolio_simulator import OpenPosition, consolidate_trade_record
+
+    for capitalizacion, slippage in ((50e9, 10.0), (None, 25.0)):
+        pos = OpenPosition(
+            event_id=1, version="BALANCED", execution_style="CONSERVATIVE", direction="LONG", ticker="T",
+            entry_date=date(2024, 1, 2), entry_price=100.0, position_size_pct=1.0, position_size_dollars=1000.0,
+            target_date=date(2024, 1, 9), take_profit_price=None, stop_loss_price=90.0, trailing_tiers=None,
+            confidence=80.0, ev=0.01, prediction=0.5, had_survivorship_warning=False,
+            slippage_bps_por_lado=slippage, spy_entry_price=400.0,
+        )
+        pos.closes.append((date(2024, 1, 9), 1.0, 100.0, "MAX_HOLDING"))
+        pos.spy_closes.append(400.0)
+        pos.remaining_fraction = 0.0
+        record = consolidate_trade_record(pos)  # movimiento 0: el P&L son solo los costes
+        assert -record["pnl_pct"] / 100 == pytest.approx(margen_ev(capitalizacion))
 
 
 def test_threshold_check_no_trade_below_threshold():

@@ -102,6 +102,8 @@ def test_solo_revisa_lo_nuevo_y_una_correccion_desmarca(conn):
 
 
 def _evento(conn, cik: str, ticker: str, d0: date, regla: str = "LONG") -> int:
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
+
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) VALUES (%s, %s, 'X', %s, %s) "
@@ -128,8 +130,8 @@ def _evento(conn, cik: str, ticker: str, d0: date, regla: str = "LONG") -> int:
                    model_version_bull_bear, model_version_judge, decision_sin_ia)
                VALUES (%s, 80, '{}', '{}', '{}', '{}', 0, 0, '{}', 20, '{}', 0.03, 0.03, 0.03, '{}',
                    'NO_TRADE', 'NO_TRADE', 'NO_TRADE', 'm', 'm', %s)""",
-            (event_id, '{"regla_historica": {"net_conviction": 1, "confidence_in_conviction": 100, "ev_conservative": 0.03, '
-             '"ev_balanced": 0.03, "ev_aggressive": 0.03, "decisiones": {"BALANCED": {"trade_decision": "%s"}}}}' % regla),
+            (event_id, '{"metodo": "%s", "regla_historica": {"net_conviction": 1, "confidence_in_conviction": 100, "ev_conservative": 0.03, '
+             '"ev_balanced": 0.03, "ev_aggressive": 0.03, "decisiones": {"BALANCED": {"trade_decision": "%s"}}}}' % (METODO_SIN_IA, regla)),
         )
     conn.commit()
     return event_id

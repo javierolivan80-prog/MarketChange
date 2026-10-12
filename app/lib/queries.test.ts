@@ -193,7 +193,7 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
 
   test("resumen de abstenciones agrupado por motivo", async () => {
     await seedEvent({ ticker: "E1", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "novelty_score=10 < 20 (evento completamente descontado por el mercado)" });
-    await seedEvent({ ticker: "E2", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "|ev|=0.10% < umbral balanced (1.0%) + buffer 50bps = 1.50% (EV insuficiente hasta después de fees)" });
+    await seedEvent({ ticker: "E2", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "|ev|=0.10% < umbral balanced (0.5%) + costes 90pb = 1.40% (EV insuficiente después de costes)" });
     await seedEvent({ ticker: "E3", d0: "2026-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], reasonBalanced: "|ev|=0.20% < umbral" });
     await seedEvent({ ticker: "E4", d0: "2026-01-01", decisions: ["LONG", "LONG", "LONG"] });
     await seedEvent({ ticker: "OLD", d0: "2025-01-01", decisions: ["NO_TRADE", "NO_TRADE", "NO_TRADE"], analyzedHoursAgo: 24 * 30 });
