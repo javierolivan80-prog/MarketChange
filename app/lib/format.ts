@@ -83,3 +83,14 @@ export function formatDrawdown(value: number | null | undefined, digits = 1): st
   if (value === 0) return `${(0).toFixed(digits)}%`;
   return `−${(Math.abs(value) * 100).toFixed(digits)}%`;
 }
+
+/** Intervalo de confianza al 95 % (Tanda 11): "47.0% a 61.0%". `escala` = 100
+ * si viene en fracción (el acierto); `conSigno` para resultados (+/−). */
+export function formatIntervalo(
+  ic: [number, number] | null | undefined,
+  { escala = 1, digits = 1, conSigno = false }: { escala?: number; digits?: number; conSigno?: boolean } = {},
+): string {
+  if (!ic) return "—";
+  const f = conSigno ? formatPct : formatShare;
+  return `${f(ic[0] * escala, digits)} a ${f(ic[1] * escala, digits)}`;
+}

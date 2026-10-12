@@ -514,3 +514,48 @@ def test_perdida_por_clase_cuenta_los_eventos_sin_car_con_la_ventana_cerrada():
     assert clases["8K_5.02_EXEC_CHANGE"]["fiable"] is True
     assert report["clases_no_fiables"] == ["8K_1.03_BANKRUPTCY"]
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Incertidumbre (Tanda 11)
+# ---------------------------------------------------------------------------
+
+
+def test_intervalo_wilson_valores_de_referencia():
+    from pipeline.backtest.portfolio_metrics import intervalo_wilson
+
+    # Referencia: 50 aciertos de 100 -> [0,4038; 0,5962]; 0 de 10 -> [0; 0,2775].
+    lo, hi = intervalo_wilson(50, 100)
+    assert lo == pytest.approx(0.4038, abs=1e-4) and hi == pytest.approx(0.5962, abs=1e-4)
+    lo, hi = intervalo_wilson(0, 10)
+    assert lo == 0.0 and hi == pytest.approx(0.2775, abs=1e-4)
+    assert intervalo_wilson(0, 0) is None
+
+
+def test_intervalo_bootstrap_es_reproducible_y_contiene_la_media():
+    from pipeline.backtest.portfolio_metrics import intervalo_bootstrap_media
+
+    valores = [1.0, -0.5, 2.0, 0.3, -1.2, 0.8, 1.5, -0.2, 0.0, 0.9]
+    a = intervalo_bootstrap_media(valores)
+    assert a == intervalo_bootstrap_media(valores)  # semilla fija
+    media = sum(valores) / len(valores)
+    assert a[0] < media < a[1]
+    assert intervalo_bootstrap_media([1.0]) is None
+
+
+def test_metricas_de_trade_con_incertidumbre():
+    """Un resultado medio cuyo intervalo incluye el 0 no se distingue de cero;
+    uno claramente positivo, sí."""
+    def _t(p, i):
+        return {"pnl_pct": p, "exit_date": date(2024, 1, 1 + i)}
+
+    ruido = compute_trade_metrics([_t(p, i) for i, p in enumerate([1.0, -1.0, 0.5, -0.5, 2.0, -2.0])])
+    assert ruido["avg_pnl_pct"] == pytest.approx(0.0)
+    assert ruido["avg_pnl_distinguible_de_cero"] is False
+    assert ruido["win_rate_ic95"][0] < ruido["win_rate"] < ruido["win_rate_ic95"][1]
+
+    bueno = compute_trade_metrics([_t(1.0 + 0.01 * i, i) for i in range(20)])
+    assert bueno["avg_pnl_distinguible_de_cero"] is True and bueno["avg_pnl_ic95"][0] > 0
+
+    vacio = compute_trade_metrics([])
+    assert vacio["win_rate_ic95"] is None and vacio["avg_pnl_ic95"] is None
