@@ -18,7 +18,7 @@ export function DirectionBadge({ value, className = "" }: { value: string; class
   const LABELS: Record<string, string> = { LONG: "Long", SHORT: "Short", NO_TRADE: t("Sin operar", "No trade") };
   const label = LABELS[value] ?? value;
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style} ${className}`}>
+    <span className={`inline-flex items-center whitespace-nowrap px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style} ${className}`}>
       {label}
     </span>
   );

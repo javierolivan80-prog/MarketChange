@@ -21,7 +21,7 @@ import { Meter } from "@/components/viz/Meter";
 const columnHelper = createColumnHelper<SignalFeedRow>();
 
 const buildColumns = (t: T, locale: Locale) => [
-  columnHelper.accessor("d0_close_date", { header: t("Fecha", "Date"), cell: (c) => <span className="num">{formatDate(c.getValue(), locale)}</span> }),
+  columnHelper.accessor("d0_close_date", { header: t("Fecha", "Date"), cell: (c) => <span className="num whitespace-nowrap">{formatDate(c.getValue(), locale)}</span> }),
   columnHelper.accessor("ticker", {
     header: "Ticker",
     cell: (c) => (
@@ -94,6 +94,9 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
     columns,
     state: { sorting },
     onSortingChange: setSorting,
+    // Clave estable por evento, no por posición: al filtrar, la fila que
+    // hereda una posición no hereda el detalle (ni el análisis) de otra.
+    getRowId: (r) => String(r.event_id),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -129,7 +132,9 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
           <thead>
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b border-border-strong bg-surface-raised">
-                <th className="w-8 py-2 pl-3"></th>
+                <th className="w-8 py-2 pl-3">
+                  <span className="sr-only">{t("Detalle", "Detail")}</span>
+                </th>
                 {hg.headers.map((h) => {
                   const sortState = h.column.getIsSorted();
                   return (
@@ -137,10 +142,13 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       <button
                         type="button"
                         onClick={h.column.getToggleSortingHandler()}
-                        className="inline-flex select-none items-center gap-1 hover:text-foreground"
+                        className="-my-1 inline-flex select-none items-center gap-1 py-1 hover:text-foreground active:text-foreground"
                       >
                         {flexRender(h.column.columnDef.header, h.getContext())}
-                        {sortState && <span aria-hidden="true">{sortState === "asc" ? "▲" : "▼"}</span>}
+                        {/* Sin ordenar, una flecha tenue: se ve que se puede ordenar. */}
+                        <span aria-hidden="true" className={sortState ? "" : "text-text-tertiary"}>
+                          {sortState === "asc" ? "▲" : sortState === "desc" ? "▼" : "↕"}
+                        </span>
                       </button>
                     </th>
                   );
@@ -153,13 +161,24 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
               const isExpanded = expanded.has(row.original.event_id);
               return (
                 <Fragment key={row.id}>
-                  <tr className="border-b border-border-subtle hover:bg-surface-raised">
+                  {/* Toda la fila despliega el análisis (salvo sus enlaces y
+                      botones): el realce al pasar por encima ya prometía que
+                      era pulsable. Con teclado, el botón ▸. */}
+                  <tr
+                    className="cursor-pointer border-b border-border-subtle [-webkit-tap-highlight-color:transparent] hover:bg-surface-raised active:bg-surface-pressed"
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest("a, button")) return;
+                      // Seleccionar texto (arrastrar, doble clic) no despliega.
+                      if (window.getSelection()?.toString()) return;
+                      toggle(row.original.event_id);
+                    }}
+                  >
                     <td className="py-2 pl-3">
                       <button
                         onClick={() => toggle(row.original.event_id)}
                         aria-expanded={isExpanded}
                         aria-label={`${isExpanded ? t("Ocultar razonamiento de", "Hide reasoning for") : t("Ver razonamiento de", "Show reasoning for")} ${row.original.ticker}, ${formatDate(row.original.d0_close_date, locale)}`}
-                        className="-m-2 p-2 text-text-tertiary hover:text-foreground"
+                        className="-m-2 p-2 text-text-tertiary hover:text-foreground pointer-coarse:-m-3 pointer-coarse:p-3"
                       >
                         {/* Un solo glifo que gira: se lee como el mismo control cambiando de estado, no como dos iconos. */}
                         <span
@@ -176,7 +195,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       </td>
                     ))}
                   </tr>
-                  {isExpanded && <SignalRowDetail eventId={row.original.event_id} colSpan={columns.length + 1} />}
+                  {isExpanded && <SignalRowDetail key={row.original.event_id} eventId={row.original.event_id} colSpan={columns.length + 1} />}
                 </Fragment>
               );
             })}
@@ -185,13 +204,13 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
       </div>
 
       <div className="mt-3 flex items-center gap-2 text-sm">
-        <Button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()} className="min-h-11 sm:min-h-9">
+        <Button onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
           ← {t("Anterior", "Previous")}
         </Button>
         <span className="num text-text-secondary">
           {t("Página", "Page")} {table.getState().pagination.pageIndex + 1} {t("de", "of")} {table.getPageCount() || 1}
         </span>
-        <Button onClick={() => table.nextPage()} disabled={!table.getCanNextPage()} className="min-h-11 sm:min-h-9">
+        <Button onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
           {t("Siguiente", "Next")} →
         </Button>
       </div>
@@ -204,16 +223,25 @@ type DetailState =
   | { status: "error" }
   | { status: "ok"; detail: SignalDetailData; recommended: StrategyVersion };
 
+// Análisis ya cargados en esta visita: al volver a desplegar una fila se
+// pinta al instante, sin esqueleto ni otra petición (Tanda 12).
+const analisisCargados = new Map<number, Extract<DetailState, { status: "ok" }>>();
+
 function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: number }) {
-  const [state, setState] = useState<DetailState>({ status: "loading" });
+  const [state, setState] = useState<DetailState>(() => analisisCargados.get(eventId) ?? { status: "loading" });
   const t = useT();
   const locale = useLocale();
 
   useEffect(() => {
+    if (analisisCargados.has(eventId)) return;
     let cancelled = false;
     fetch(`/api/senales/${eventId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((body) => !cancelled && setState({ status: "ok", detail: body.detail, recommended: body.recommended }))
+      .then((body) => {
+        const ok = { status: "ok" as const, detail: body.detail, recommended: body.recommended };
+        analisisCargados.set(eventId, ok);
+        if (!cancelled) setState(ok);
+      })
       .catch(() => !cancelled && setState({ status: "error" }));
     return () => {
       cancelled = true;
@@ -234,7 +262,7 @@ function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: numbe
         )}
         {state.status === "ok" && (
           <div className="m-fade">
-            <SignalAnalysis detail={state.detail} recommended={state.recommended} locale={locale} />
+            <SignalAnalysis detail={state.detail} recommended={state.recommended} locale={locale} anclas={false} />
           </div>
         )}
       </td>

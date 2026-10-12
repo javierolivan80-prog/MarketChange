@@ -18,7 +18,7 @@ export function Meter({
 }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (
-    <span className={`relative inline-block h-1.5 ${width} rounded-full bg-border-subtle align-middle`} role="meter" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max} aria-label={label}>
+    <span className={`viz-color relative inline-block h-1.5 ${width} rounded-full bg-border-subtle align-middle`} role="meter" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max} aria-label={label}>
       <span className={`absolute inset-y-0 left-0 rounded-full ${strong ? "bg-accent-600 dark:bg-accent-400" : "bg-accent-300 dark:bg-accent-700"}`} style={{ width: `${pct}%` }} />
     </span>
   );
@@ -31,7 +31,7 @@ export function Meter({
 export function ScoreSegments({ parts, label }: { parts: { name: string; max: number; value: number }[]; label: string }) {
   const total = parts.reduce((s, p) => s + p.max, 0) || 1;
   return (
-    <span className="flex h-2 w-full gap-0.5" role="img" aria-label={label}>
+    <span className="viz-color flex h-2 w-full gap-0.5" role="img" aria-label={label}>
       {parts.map((p, i) => (
         <span
           key={p.name}

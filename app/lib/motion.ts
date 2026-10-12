@@ -16,8 +16,25 @@ export const chartSeriesMotion = {
 } as const;
 
 /** Tooltip de Recharts: por defecto se desliza 400 ms y va por detrás del
- * cursor. */
+ * cursor. Y es blanco con el texto heredado: en modo oscuro el título salía
+ * blanco sobre blanco. Se pinta con los colores del tema (Tanda 12). */
 export const chartTooltipMotion = {
   animationDuration: motion.duration.micro,
   animationEasing: "ease-out",
+  contentStyle: {
+    background: "var(--surface-raised)",
+    border: "1px solid var(--border-strong)",
+    borderRadius: 0,
+    color: "var(--foreground)",
+    fontSize: "0.75rem",
+  },
+  labelStyle: { color: "var(--foreground)", fontWeight: 600 },
+  itemStyle: { color: "var(--text-secondary)" },
+  cursor: { fill: "var(--surface-raised)" },
 } as const;
+
+/** Marcas de los ejes de Recharts: 12 px (con 10 px no se leían en el móvil)
+ * y el gris terciario del tema (el #666 por defecto apenas contrastaba en
+ * modo oscuro). No es movimiento, pero vive aquí con el resto del estilo
+ * común de los gráficos. */
+export const chartAxisTick = { fontSize: 12, fill: "var(--text-tertiary)" } as const;

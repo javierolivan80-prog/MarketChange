@@ -2,7 +2,6 @@ import { isDatabaseConfigured } from "@/lib/db";
 import { getEventClasses, getRecommendedVersion, getSignalsFeed } from "@/lib/data";
 import { versionLabel } from "@/lib/labels";
 import { getT } from "@/lib/locale";
-import { Nav } from "@/components/Nav";
 import { SignalsFilterForm } from "@/components/SignalsFilterForm";
 import { SignalsTable } from "@/components/SignalsTable";
 import { NotConfigured } from "@/components/ui/PageState";
@@ -20,7 +19,7 @@ const isDate = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? 
 
 export default async function SenalesPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const { locale, t } = await getT();
-  if (!isDatabaseConfigured()) return <NotConfigured active="/senales" title={t("Señales", "Signals")} />;
+  if (!isDatabaseConfigured()) return <NotConfigured title={t("Señales", "Signals")} />;
 
   const params = await searchParams;
   const version = await getRecommendedVersion();
@@ -40,8 +39,7 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
   ]);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
-      <Nav active="/senales" />
+    <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Señales", "Signals")}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">

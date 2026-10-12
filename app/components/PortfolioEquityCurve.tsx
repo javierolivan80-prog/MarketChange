@@ -90,7 +90,7 @@ export function PortfolioEquityCurve({
           {label}
         </text>
       </svg>
-      <figcaption className="num mt-0.5 flex justify-between text-[10px] text-text-tertiary">
+      <figcaption className="num mt-0.5 flex justify-between text-xs text-text-tertiary">
         <span>{points[0].trade_date.slice(0, 10)}</span>
         <span>{points[points.length - 1].trade_date.slice(0, 10)}</span>
       </figcaption>

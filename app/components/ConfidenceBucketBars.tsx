@@ -4,7 +4,7 @@
 // (barras de fondo de la curva de calibración). Reutilizado en ambos tabs:
 // mismo dato (ConfidenceBucket[]), dos contextos.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartTooltipMotion } from "@/lib/motion";
+import { chartAxisTick, chartTooltipMotion } from "@/lib/motion";
 import { useChartMotion } from "@/components/viz/useChartMotion";
 import type { ConfidenceBucket } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -23,17 +23,19 @@ export function ConfidenceBucketBars({ buckets, label }: { buckets: ConfidenceBu
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
-          <YAxis tick={{ fontSize: 10 }} unit="%" width={40} domain={[0, 100]} />
+          <XAxis dataKey="bucket" tick={chartAxisTick} />
+          <YAxis tick={chartAxisTick} unit="%" width={48} domain={[0, 100]} />
           <Tooltip {...chartTooltipMotion}
             formatter={(value, name, item) => [
               name === "hit_rate_pct" ? `${Number(value).toFixed(1)}% (n=${item.payload.n})` : value,
               seriesLabel,
             ]}
           />
-          <Bar {...seriesMotion} dataKey="hit_rate_pct" fill="var(--color-accent-600)">
+          <Bar {...seriesMotion} dataKey="hit_rate_pct" fill="var(--chart-series)">
             {data.map((d, i) => (
-              <Cell key={i} fill={d.n < 5 ? "var(--color-accent-300)" : "var(--color-accent-600)"} />
+              // Muestra pequeña (n<5): relleno tenue con el contorno de la serie,
+              // para que la barra se vea en los dos temas sin pesar como las demás.
+              <Cell key={i} fill={d.n < 5 ? "var(--chart-series-weak)" : "var(--chart-series)"} stroke={d.n < 5 ? "var(--chart-series)" : undefined} />
             ))}
           </Bar>
         </BarChart>

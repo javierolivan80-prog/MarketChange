@@ -53,9 +53,30 @@ function decisionOf(detail: SignalDetailData, version: StrategyVersion): string 
   return column ?? detail.abstention_decision?.[version]?.trade_decision ?? "NO_TRADE";
 }
 
-export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail: SignalDetailData; recommended: StrategyVersion; locale?: Locale }) {
+export function SignalAnalysis({
+  detail,
+  recommended,
+  locale = "es",
+  anclas = true,
+}: {
+  detail: SignalDetailData;
+  recommended: StrategyVersion;
+  locale?: Locale;
+  /** Ids de ancla (#plan, #analisis, #versiones) para el índice de la ficha.
+   * En la tabla de señales van varias abiertas a la vez: sin ids, o se
+   * repetirían (Tanda 12). */
+  anclas?: boolean;
+}) {
   const t = makeT(locale);
   const { bull_output: bull, bear_output: bear, judge_output: judge, novelty_reasoning: novelty, impact_estimation: impact, ev_calculation: ev, abstention_decision: abstention } = detail;
+  // Una fila con el JSON incompleto se muestra como sin datos: antes un
+  // .toFixed sobre un campo ausente tiraba la página entera con un 500.
+  const impactoCompleto =
+    impact != null &&
+    typeof impact.expected_magnitude === "string" &&
+    [impact.confidence, impact.probability_5pct_move, impact.probability_10pct_move, impact.probability_20pct_move].every(
+      (v) => typeof v === "number" && Number.isFinite(v),
+    );
   const rec = abstention?.[recommended];
   const sinIa = detail.decision_sin_ia;
   // Evento anterior a la fecha de corte: no pasó por la IA y el control (que
@@ -91,7 +112,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
       </div>
 
       {detail.technical && (
-        <div id="plan" className="scroll-mt-4">
+        <div id={anclas ? "plan" : undefined} className="scroll-mt-4">
           <TechnicalPlanCard plan={detail.technical} locale={locale} />
         </div>
       )}
@@ -99,7 +120,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
       {/* m-stagger: Bull, luego Bear, luego Judge (y el resto con él) — el
           orden de aparición repite el del razonamiento. La decisión de arriba
           no se anima: es la respuesta y tiene que estar ya ahí. */}
-      <div id="analisis" className="m-stagger grid scroll-mt-4 grid-cols-1 gap-3 lg:grid-cols-2">
+      <div id={anclas ? "analisis" : undefined} className="m-stagger grid scroll-mt-4 grid-cols-1 gap-3 lg:grid-cols-2">
         {detail.ai_skipped_reason !== null ? (
           // Sin debate: una regla objetiva ya garantizaba no operar y el
           // pipeline no llamó a la IA. Se dice así, con su motivo, en vez de
@@ -190,7 +211,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
         <Section title={t("¿Era una sorpresa?", "Was it a surprise?")}>
           {novelty ? (
             <>
-              <p className="num">{t("Novedad", "Novelty")}: {novelty.score}/100</p>
+              <p className="num">{t("Novedad", "Novelty")}: {typeof novelty.score === "number" ? novelty.score : "—"}/100</p>
               {novelty.components_used?.length > 0 && <p className="text-text-tertiary">{t("Calculada con", "Computed with")}: {novelty.components_used.join(", ")}</p>}
               {novelty.components_unavailable?.length > 0 && (
                 <p className="text-amber-700 dark:text-amber-400">
@@ -205,7 +226,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
         </Section>
 
         <Section title={t("Casos parecidos en el pasado", "Similar past cases")}>
-          {impact ? (
+          {impact && impactoCompleto ? (
             <>
               <p className="num font-medium text-foreground">
                 {detail.n_historical_analogues ?? "?"} {t("casos · confianza", "cases · confidence")} {impact.confidence.toFixed(0)}/100
@@ -249,7 +270,7 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
         </Section>
       </div>
 
-      <div id="versiones" className="mt-4 scroll-mt-4 border-t border-border-subtle pt-3">
+      <div id={anclas ? "versiones" : undefined} className="mt-4 scroll-mt-4 border-t border-border-subtle pt-3">
         <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">{t("Las tres estrategias", "The three strategies")}</h3>
         {sinIa && (
           <p className="mb-2 text-xs text-text-tertiary">

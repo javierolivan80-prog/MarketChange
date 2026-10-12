@@ -4,7 +4,9 @@ export function HBars({
   rows,
   max,
   format,
-  labelWidth = "minmax(0,14rem)",
+  // Hasta 14rem, pero nunca más del 40 %: en el móvil la columna de 14rem
+  // dejaba ~120 px a la barra y la cifra se partía en dos líneas.
+  labelWidth = "minmax(0,min(14rem,40%))",
   animate = false,
 }: {
   rows: { label: string; value: number; key?: string }[];
@@ -25,8 +27,8 @@ export function HBars({
             {r.label}
           </span>
           <span className="flex max-w-md items-center gap-2">
-            <span className={`h-2 rounded-r-sm bg-accent-500 dark:bg-accent-400 ${animate ? "m-fill-right" : ""}`} style={{ width: `${Math.max(2, (r.value / top) * 100)}%`, maxWidth: "calc(100% - 3.5rem)" }} />
-            <span className="num text-xs text-text-secondary">{format(r.value)}</span>
+            <span className={`viz-color h-2 rounded-r-sm bg-accent-500 dark:bg-accent-400 ${animate ? "m-fill-right" : ""}`} style={{ width: `${Math.max(2, (r.value / top) * 100)}%`, maxWidth: "calc(100% - 5rem)" }} />
+            <span className="num shrink-0 whitespace-nowrap text-xs text-text-secondary">{format(r.value)}</span>
           </span>
         </li>
       ))}
@@ -41,7 +43,7 @@ export function PnlBar({ value, maxAbs }: { value: number | null; maxAbs: number
   if (value === null || Number.isNaN(value) || maxAbs <= 0) return <span className="inline-block w-20" />;
   const half = Math.min(50, (Math.abs(value) / maxAbs) * 50);
   return (
-    <span className="relative inline-block h-2.5 w-20 align-middle" aria-hidden="true">
+    <span className="viz-color relative inline-block h-2.5 w-20 align-middle" aria-hidden="true">
       <span className="absolute inset-y-0 left-1/2 w-px bg-border-strong" />
       <span
         className={`absolute top-1/2 h-1.5 -translate-y-1/2 ${value >= 0 ? "rounded-r-sm bg-gain" : "rounded-l-sm bg-loss"}`}

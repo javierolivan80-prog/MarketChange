@@ -7,7 +7,7 @@
 // diagram" (Guo et al. 2017, la misma referencia que ya cita el docstring
 // de compute_calibration_diagnostics para ECE).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
-import { chartTooltipMotion, motion } from "@/lib/motion";
+import { chartAxisTick, chartTooltipMotion, motion } from "@/lib/motion";
 import { useChartMotion } from "@/components/viz/useChartMotion";
 import type { ConfidenceBucket } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -30,14 +30,14 @@ export function CalibrationCurve({ buckets }: { buckets: ConfidenceBucket[] }) {
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="confidence" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} name={t("Confianza declarada", "Stated confidence")} />
-          <YAxis dataKey="hit_rate" type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} width={44} name={t("Acierto real", "Actual win rate")} />
+          <XAxis dataKey="confidence" type="number" domain={[0, 100]} unit="%" tick={chartAxisTick} name={t("Confianza declarada", "Stated confidence")} />
+          <YAxis dataKey="hit_rate" type="number" domain={[0, 100]} unit="%" tick={chartAxisTick} width={48} name={t("Acierto real", "Actual win rate")} />
           <ZAxis dataKey="n" range={[30, 300]} name="n" />
           <Tooltip {...chartTooltipMotion}
             formatter={(value, name) => [name === "n" ? value : `${Number(value).toFixed(1)}%`, name === "hit_rate" ? t("Acierto real", "Actual win rate") : name === "confidence" ? t("Confianza media", "Average confidence") : "n"]}
           />
           <Line isAnimationActive={false} data={diagonal} dataKey="hit_rate" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" />
-          <Scatter {...seriesMotion} data={points} fill="var(--color-accent-600)" fillOpacity={0.7} line={{ stroke: "var(--color-accent-600)", strokeWidth: 1.5 }} lineType="joint" />
+          <Scatter {...seriesMotion} data={points} fill="var(--chart-series)" fillOpacity={0.7} line={{ stroke: "var(--chart-series)", strokeWidth: 1.5 }} lineType="joint" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
