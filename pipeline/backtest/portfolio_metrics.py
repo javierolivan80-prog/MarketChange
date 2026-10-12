@@ -40,16 +40,15 @@ MIN_DAYS_FOR_ANNUALIZATION = 30
 
 # Incertidumbre de las cifras (Tanda 11): intervalos de confianza al 95 %.
 # Acierto: Wilson (mejor que la aproximación normal con pocas operaciones o
-# aciertos cerca de 0 o 1). Resultado medio por operación: bootstrap de
-# percentiles con semilla fija, para que el mismo histórico dé siempre el
-# mismo intervalo. Los dos tratan las operaciones como independientes: con
-# operaciones que se solapan en el tiempo (el mismo mercado las mueve a la
-# vez) el intervalo real es algo más ancho. Es una cota optimista de la
-# incertidumbre, no una sobreestimación.
+# aciertos cerca de 0 o 1). Resultado medio por operación: t de Student, y
+# solo desde INSUFFICIENT_SAMPLE_THRESHOLD operaciones. Con menos, ningún
+# método da un intervalo fiable: el bootstrap de percentiles que se probó
+# primero decía «se distingue de cero» en falso el 51 % de las veces con 2
+# operaciones y el 10 % con 10 (revisión adversarial). Con 20 o más, la t
+# acierta el 5 % nominal con colas pesadas simétricas; con resultados muy
+# asimétricos sube al 9-13 %. Los dos intervalos tratan las operaciones como
+# independientes: con operaciones solapadas en el tiempo el real es más ancho.
 Z_95 = 1.959963984540054
-BOOTSTRAP_REMUESTREOS = 10_000
-BOOTSTRAP_SEMILLA = 20261012
-_BOOTSTRAP_BLOQUE = 1_000
 
 
 def intervalo_wilson(aciertos: int, n: int, z: float = Z_95) -> tuple[float, float] | None:
@@ -60,24 +59,25 @@ def intervalo_wilson(aciertos: int, n: int, z: float = Z_95) -> tuple[float, flo
     denominador = 1 + z * z / n
     centro = (p + z * z / (2 * n)) / denominador
     margen = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / denominador
-    return max(0.0, centro - margen), min(1.0, centro + margen)
+    # Exactos en los extremos (la cuenta deja 5e-17 o 0,9999999999999999).
+    lo = 0.0 if aciertos == 0 else max(0.0, centro - margen)
+    hi = 1.0 if aciertos == n else min(1.0, centro + margen)
+    return lo, hi
 
 
-def intervalo_bootstrap_media(
-    valores: list[float], remuestreos: int = BOOTSTRAP_REMUESTREOS, semilla: int = BOOTSTRAP_SEMILLA,
-) -> tuple[float, float] | None:
-    """Intervalo al 95 % de la media por bootstrap de percentiles. Con menos
-    de 2 valores no hay variabilidad que medir: None."""
-    if len(valores) < 2:
+def intervalo_t_media(valores: list[float]) -> tuple[float, float] | None:
+    """Intervalo al 95 % de la media (t de Student); None con menos de
+    INSUFFICIENT_SAMPLE_THRESHOLD valores (ver arriba)."""
+    n = len(valores)
+    if n < INSUFFICIENT_SAMPLE_THRESHOLD:
         return None
+    from scipy import stats
+
     datos = np.asarray(valores, dtype=float)
-    rng = np.random.default_rng(semilla)
-    medias = []
-    for inicio in range(0, remuestreos, _BOOTSTRAP_BLOQUE):  # por bloques: memoria acotada
-        bloque = min(_BOOTSTRAP_BLOQUE, remuestreos - inicio)
-        medias.append(rng.choice(datos, size=(bloque, len(datos)), replace=True).mean(axis=1))
-    todas = np.concatenate(medias)
-    return float(np.percentile(todas, 2.5)), float(np.percentile(todas, 97.5))
+    media = float(datos.mean())
+    margen = float(stats.t.ppf(0.975, n - 1) * datos.std(ddof=1) / np.sqrt(n))
+    return media - margen, media + margen
+
 
 def compute_trade_metrics(trades: list[dict]) -> dict:
     """trades: dicts con al menos 'pnl_pct' y 'exit_date' (para el orden
@@ -88,8 +88,7 @@ def compute_trade_metrics(trades: list[dict]) -> dict:
             "profit_factor": None, "avg_winner": None, "avg_loser": None, "expectancy": None,
             "largest_win": None, "largest_loss": None,
             "consecutive_wins": 0, "consecutive_losses": 0,
-            "win_rate_ic95": None, "avg_pnl_pct": None, "avg_pnl_ic95": None,
-            "avg_pnl_distinguible_de_cero": None,
+            "win_rate_ic95": None, "avg_pnl_ic95": None, "avg_pnl_distinguible_de_cero": None,
         }
 
     pnls = [float(t["pnl_pct"]) for t in trades]
@@ -132,13 +131,13 @@ def compute_trade_metrics(trades: list[dict]) -> dict:
 
 def _incertidumbre(pnls: list[float], aciertos: int) -> dict:
     """Intervalos al 95 % del acierto y del resultado medio por operación
-    (Tanda 11). `avg_pnl_distinguible_de_cero`: el intervalo del resultado
-    medio no incluye el 0 (None si no hay intervalo)."""
+    (Tanda 11; el resultado medio es `expectancy`).
+    `avg_pnl_distinguible_de_cero`: el intervalo del resultado medio no
+    incluye el 0 (None si no hay intervalo: menos de 20 operaciones)."""
     ic_acierto = intervalo_wilson(aciertos, len(pnls))
-    ic_media = intervalo_bootstrap_media(pnls)
+    ic_media = intervalo_t_media(pnls)
     return {
         "win_rate_ic95": list(ic_acierto) if ic_acierto else None,
-        "avg_pnl_pct": sum(pnls) / len(pnls),
         "avg_pnl_ic95": list(ic_media) if ic_media else None,
         "avg_pnl_distinguible_de_cero": (ic_media[0] > 0 or ic_media[1] < 0) if ic_media else None,
     }

@@ -14,6 +14,7 @@ import { DrawdownChart } from "./DrawdownChart";
 import { Callout } from "@/components/ui/Callout";
 import { SignedPct } from "@/components/ui/DirectionBadge";
 import { formatFracAsPct, formatIntervalo, formatPct, formatShare, formatNum, formatDrawdown } from "@/lib/format";
+import { MIN_OPERACIONES } from "@/lib/incertidumbre";
 import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 import { makeT, type Locale } from "@/lib/i18n";
 
@@ -73,17 +74,28 @@ export function PortfolioVersionCard({
           <>
             {" · "}
             {t("acierto, con un 95 % de confianza, entre", "win rate, with 95% confidence, between")}{" "}
-            {formatIntervalo(tm.win_rate_ic95, { escala: 100, digits: 0 })}
+            {formatIntervalo(tm.win_rate_ic95, locale, { escala: 100, digits: 0 })}
           </>
         )}
-        {tm.avg_pnl_ic95 && (
+        {tm.avg_pnl_ic95 ? (
           <>
             {" · "}
-            {t("resultado medio por operación", "average result per trade")} {formatPct(tm.avg_pnl_pct, 2)} (
-            {formatIntervalo(tm.avg_pnl_ic95, { digits: 2, conSigno: true })})
+            {t("resultado medio por operación entre", "average result per trade between")}{" "}
+            {formatIntervalo(tm.avg_pnl_ic95, locale, { digits: 2, conSigno: true })}
             {tm.avg_pnl_distinguible_de_cero === false &&
               t(": no se distingue de cero", ": not distinguishable from zero")}
           </>
+        ) : (
+          tm.win_rate_ic95 &&
+          tm.total_trades < MIN_OPERACIONES && (
+            <>
+              {" · "}
+              {t(
+                `con menos de ${MIN_OPERACIONES} operaciones no se puede saber si el resultado medio es distinto de cero`,
+                `with fewer than ${MIN_OPERACIONES} trades it cannot be told whether the average result differs from zero`,
+              )}
+            </>
+          )
         )}
       </p>
 

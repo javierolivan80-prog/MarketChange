@@ -80,13 +80,13 @@ export default async function HistorialPage() {
           {/* Tanda 11: cuánto podrían variar las dos cifras solo por azar. */}
           {history.win_rate_ic95 &&
             t(
-              `Acierto, con un 95 % de confianza, entre ${formatIntervalo(history.win_rate_ic95, { escala: 100, digits: 0 })}. `,
-              `Win rate, with 95% confidence, between ${formatIntervalo(history.win_rate_ic95, { escala: 100, digits: 0 })}. `,
+              `Acierto, con un 95 % de confianza, entre ${formatIntervalo(history.win_rate_ic95, locale, { escala: 100, digits: 0 })}. `,
+              `Win rate, with 95% confidence, between ${formatIntervalo(history.win_rate_ic95, locale, { escala: 100, digits: 0 })}. `,
             )}
           {history.avg_pnl_ic95 &&
             t(
-              `Resultado medio entre ${formatIntervalo(history.avg_pnl_ic95, { digits: 2, conSigno: true })}${distingueDeCero(history.avg_pnl_ic95) === false ? ": no se distingue de cero." : "."}`,
-              `Average result between ${formatIntervalo(history.avg_pnl_ic95, { digits: 2, conSigno: true })}${distingueDeCero(history.avg_pnl_ic95) === false ? ": not distinguishable from zero." : "."}`,
+              `Resultado medio entre ${formatIntervalo(history.avg_pnl_ic95, locale, { digits: 2, conSigno: true })}${distingueDeCero(history.avg_pnl_ic95) === false ? ": no se distingue de cero." : "."}`,
+              `Average result between ${formatIntervalo(history.avg_pnl_ic95, locale, { digits: 2, conSigno: true })}${distingueDeCero(history.avg_pnl_ic95) === false ? ": not distinguishable from zero." : "."}`,
             )}
         </p>
       )}
@@ -98,7 +98,8 @@ export default async function HistorialPage() {
           )}
         </p>
       )}
-      {history.n_closed < 20 && (
+      {/* Las que cuentan para el acierto y la media son las cubiertas (Tanda 11). */}
+      {history.n_closed_cubiertas < 20 && (
         <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
           {t(
             "Con menos de 20 señales cerradas, el acierto y el resultado medio todavía dependen mucho del azar.",

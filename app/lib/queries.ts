@@ -9,7 +9,7 @@
 // paper_trading/report.py (Sharpe/Sortino/Calmar, calibración, submétricas
 // por tipo de evento, etc.) — reimplementar esas fórmulas aquí sería
 // mantener dos fuentes de verdad para el mismo número.
-import { intervaloBootstrapMedia, intervaloWilson } from "./incertidumbre";
+import { intervaloTMedia, intervaloWilson } from "./incertidumbre";
 import { getPool } from "./db";
 import { splitAiOutputs } from "./aiOutputs";
 
@@ -38,10 +38,10 @@ export interface PortfolioTradeMetrics {
   largest_loss: number | null;
   consecutive_wins: number;
   consecutive_losses: number;
-  /** Tanda 11: intervalos al 95 % (fracción para el acierto, % para el
-   * resultado medio). Los informes antiguos no los traen. */
+  /** Tanda 11: intervalos al 95 % (fracción para el acierto; % para el
+   * resultado medio, que es `expectancy`; null con menos de 20 operaciones).
+   * Los informes antiguos no los traen. */
   win_rate_ic95?: [number, number] | null;
-  avg_pnl_pct?: number | null;
   avg_pnl_ic95?: [number, number] | null;
   avg_pnl_distinguible_de_cero?: boolean | null;
 }
@@ -1083,6 +1083,8 @@ export interface SignalHistory {
   /** Intervalos al 95 % de las dos cifras de arriba (Tanda 11). */
   win_rate_ic95: [number, number] | null;
   avg_pnl_ic95: [number, number] | null;
+  /** Cerradas cubiertas: las que cuentan para el acierto y la media. */
+  n_closed_cubiertas: number;
   /** Cerradas de antes de la cobertura, fuera del acierto y la media. */
   n_closed_sin_cubrir: number;
 }
@@ -1139,7 +1141,8 @@ export async function getSignalHistory(version: StrategyVersion, limit = 200): P
     win_rate: medibles.length > 0 ? medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length / medibles.length : null,
     avg_pnl_pct: medibles.length > 0 ? medibles.reduce((s, r) => s + (r.pnl_pct ?? 0), 0) / medibles.length : null,
     win_rate_ic95: intervaloWilson(medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length, medibles.length),
-    avg_pnl_ic95: intervaloBootstrapMedia(medibles.map((r) => r.pnl_pct ?? 0)),
+    avg_pnl_ic95: intervaloTMedia(medibles.map((r) => r.pnl_pct ?? 0)),
+    n_closed_cubiertas: medibles.length,
     n_closed_sin_cubrir: closed.length - medibles.length,
   };
 }

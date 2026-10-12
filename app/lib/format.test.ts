@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatDate, formatDrawdown, formatFracAsPct, formatNum, formatPct, formatShare } from "./format";
+import { formatDate, formatDrawdown, formatFracAsPct, formatIntervalo, formatNum, formatPct, formatShare } from "./format";
 
 test("un dato ausente se muestra como —, nunca como 0", () => {
   for (const fn of [formatPct, formatFracAsPct, formatNum, formatDrawdown]) {
@@ -35,4 +35,11 @@ test("formatDate no depende de la zona horaria", () => {
 test("formatShare no pone signo a una proporción", () => {
   assert.equal(formatShare(4), "4.0%");
   assert.equal(formatShare(null), "—");
+});
+
+test("formatIntervalo: «entre X y Y» en español y «between X and Y» en inglés (Tanda 11)", () => {
+  assert.equal(formatIntervalo([0.4, 0.6], "es", { escala: 100, digits: 0 }), "40% y 60%");
+  assert.equal(formatIntervalo([0.4, 0.6], "en", { escala: 100, digits: 0 }), "40% and 60%");
+  assert.equal(formatIntervalo([-1, 3], "es", { digits: 2, conSigno: true }), "-1.00% y +3.00%");
+  assert.equal(formatIntervalo(null, "es"), "—");
 });
