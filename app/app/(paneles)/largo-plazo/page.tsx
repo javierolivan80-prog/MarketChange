@@ -54,7 +54,7 @@ export default async function LargoPlazoPage() {
   return (
     <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="num mt-1 text-sm text-text-secondary">
           {t(
             `Empresas ordenadas por calidad de negocio y precio, según sus cuentas anuales auditadas. Horizonte de años, no de días. Datos a ${formatDate(asOfDate, locale)} · ${scores.length} empresas analizadas.`,

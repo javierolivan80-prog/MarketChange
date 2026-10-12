@@ -44,7 +44,7 @@ export default async function HistorialPage() {
   return (
     <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
       <header className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           {t(
             `Cada señal emitida por la estrategia ${versionLabel(version, locale).toLowerCase()}, con la hora a la que se publicó y lo que hizo después la acción frente al S&P 500 (cada operación se cubre con una posición contraria en SPY), medido con precios reales de mercado. Son resultados posteriores a cada señal, no una reconstrucción del pasado.`,
@@ -56,19 +56,19 @@ export default async function HistorialPage() {
       <section className="mb-6 flex flex-wrap gap-x-8 gap-y-3">
         <div>
           <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Señales", "Signals")}</p>
-          <p className="num text-2xl font-semibold text-foreground">{history.rows.length}</p>
+          <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{history.rows.length}</p>
         </div>
         <div>
           <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Cerradas", "Closed")}</p>
-          <p className="num text-2xl font-semibold text-foreground">{history.n_closed}</p>
+          <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{history.n_closed}</p>
         </div>
         <div>
           <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Acierto", "Win rate")}</p>
-          <p className="num text-2xl font-semibold text-foreground">{history.win_rate !== null ? `${(history.win_rate * 100).toFixed(0)}%` : "—"}</p>
+          <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{history.win_rate !== null ? `${(history.win_rate * 100).toFixed(0)}%` : "—"}</p>
         </div>
         <div>
           <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Resultado medio", "Average result")}</p>
-          <p className="text-2xl font-semibold">
+          <p className="text-2xl leading-tight font-semibold tracking-tight">
             <SignedPct value={history.avg_pnl_pct} />
           </p>
         </div>

@@ -35,7 +35,7 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
   return (
     <div>
       <p className="text-xs text-text-secondary">{label}</p>
-      <p className="num text-lg font-semibold text-foreground">{value}</p>
+      <p className="num text-lg leading-snug font-semibold tracking-tight text-foreground">{value}</p>
       {hint && <p className="text-xs text-text-tertiary">{hint}</p>}
     </div>
   );
@@ -55,9 +55,9 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
   return (
     <section className="mb-4 border border-border-strong bg-surface p-3" aria-labelledby={tituloId}>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 id={tituloId} className="text-xs font-semibold uppercase tracking-wide text-foreground">
+        <h2 id={tituloId} className="text-xs font-semibold uppercase tracking-wide text-foreground">
           {t("Plan técnico", "Technical plan")}
-        </h3>
+        </h2>
         <p className={`text-sm font-medium ${plan.passes_filters ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
           {plan.passes_filters ? t("Pasa los filtros de riesgo", "Passes the risk filters") : t("No pasa los filtros de riesgo", "Does not pass the risk filters")} ·{" "}
           {t("confianza", "confidence")} {plan.confidence}/100

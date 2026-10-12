@@ -55,9 +55,15 @@ export default async function RootLayout({
       <body className="antialiased font-sans">
         <LocaleProvider locale={locale}>
           {/* Cabecera común, mismo ancho en todas las páginas (ver Nav.tsx);
-              las páginas solo ponen su <main>. */}
-          <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
-            <Nav />
+              las páginas solo ponen su <main>. Fija al desplazarse, pero solo
+              la tira de pestañas: el top negativo deja salir por arriba el
+              margen, la fila del logo y el hueco hasta las pestañas (1 + 2,25
+              + 0,5 rem; con el dedo los botones de esa fila miden 2,75 rem).
+              Translúcida, con el contenido pasando por debajo (.barra-material). */}
+          <div className="barra-material sticky top-[-3.75rem] z-30 pointer-coarse:top-[-4.25rem]">
+            <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
+              <Nav />
+            </div>
           </div>
           {children}
           <Disclaimer />

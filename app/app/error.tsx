@@ -16,7 +16,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
 
   return (
     <main className="mx-auto max-w-3xl px-4 pb-4 sm:px-6">
-      <h1 className="mb-4 text-2xl font-semibold tracking-tight text-foreground">{t("No se pudieron cargar los datos", "The data could not be loaded")}</h1>
+      <h1 className="mb-4 text-2xl leading-tight font-semibold tracking-tight text-foreground">{t("No se pudieron cargar los datos", "The data could not be loaded")}</h1>
       <div className="border border-border-subtle bg-surface p-4 text-sm text-text-secondary">
         <p className="mb-3">
           {t(

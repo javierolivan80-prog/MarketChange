@@ -59,12 +59,14 @@ export function TradeLevels({
   };
 
   const bar = (
-    <span className={`relative block ${compact ? "h-3 w-24" : "h-4 w-full"}`} role="img" aria-label={summary} title={summary}>
+    <span className={`viz-color relative block ${compact ? "h-3 w-24" : "h-4 w-full"}`} role="img" aria-label={summary} title={summary}>
       <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border-subtle" />
       {segment(entry, stop, "bg-loss")}
       {segment(entry, target, "bg-gain")}
       {target2 !== null && segment(target, target2, "bg-gain opacity-40")}
-      <span className="absolute top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground" style={{ left: `${pos(entry)}%` }} />
+      {/* Con colores forzados la marca conserva el color del tema (viz-color):
+          se pinta con el del texto del sistema para que no quede invisible. */}
+      <span className="absolute top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-foreground forced-colors:bg-[CanvasText]" style={{ left: `${pos(entry)}%` }} />
     </span>
   );
 
@@ -75,20 +77,20 @@ export function TradeLevels({
       {bar}
       <figcaption className="num mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className="h-2 w-3 rounded-sm bg-loss" />
+          <span aria-hidden="true" className="viz-color h-2 w-3 rounded-sm bg-loss" />
           {labels.risk} −{risk.toFixed(1)}% ({labels.stop} {stop.toFixed(2)})
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className="h-3 w-0.5 bg-foreground" />
+          <span aria-hidden="true" className="viz-color h-3 w-0.5 bg-foreground forced-colors:bg-[CanvasText]" />
           {labels.entry} {entry.toFixed(2)}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className="h-2 w-3 rounded-sm bg-gain" />
+          <span aria-hidden="true" className="viz-color h-2 w-3 rounded-sm bg-gain" />
           {labels.reward} +{reward.toFixed(1)}% ({labels.target} {target.toFixed(2)})
         </span>
         {target2 !== null && (
           <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden="true" className="h-2 w-3 rounded-sm bg-gain opacity-40" />
+            <span aria-hidden="true" className="viz-color h-2 w-3 rounded-sm bg-gain opacity-40" />
             {labels.target2} {target2.toFixed(2)} (+{reward2!.toFixed(1)}%)
           </span>
         )}

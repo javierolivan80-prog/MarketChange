@@ -27,7 +27,7 @@ function Section({ title, accent, children }: { title: string; accent?: "long" |
   const accentClass = accent === "long" ? "text-emerald-700 dark:text-emerald-400" : accent === "short" ? "text-rose-700 dark:text-rose-400" : "text-foreground";
   return (
     <div className="border border-border-subtle bg-surface p-3">
-      <h3 className={`mb-1.5 text-xs font-semibold uppercase tracking-wide ${accentClass}`}>{title}</h3>
+      <h2 className={`mb-1.5 text-xs font-semibold uppercase tracking-wide ${accentClass}`}>{title}</h2>
       <div className="space-y-1 text-text-secondary">{children}</div>
     </div>
   );
@@ -271,7 +271,7 @@ export function SignalAnalysis({
       </div>
 
       <div id={anclas ? "versiones" : undefined} className="mt-4 scroll-mt-4 border-t border-border-subtle pt-3">
-        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">{t("Las tres estrategias", "The three strategies")}</h3>
+        <h2 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">{t("Las tres estrategias", "The three strategies")}</h2>
         {sinIa && (
           <p className="mb-2 text-xs text-text-tertiary">
             {t(
@@ -290,7 +290,10 @@ export function SignalAnalysis({
                 <p className="mb-1 flex items-center justify-between font-medium text-foreground">
                   <span>
                     {versionLabel(strategy, locale)}
-                    {isRec && <span className="ml-1.5 text-xs font-normal text-accent-700 dark:text-accent-400">{t("recomendada", "recommended")}</span>}
+                    {/* Con espacio de texto, no solo margen: el lector de pantalla leía
+                        "Equilibradorecomendada". Concuerda con la etiqueta (Conservador,
+                        Equilibrado, Agresivo): antes decía "recomendada". */}
+                    {isRec && <> <span className="ml-0.5 text-xs font-normal text-accent-700 dark:text-accent-400">{t("recomendado", "recommended")}</span></>}
                   </span>
                   <DirectionBadge value={decision} />
                 </p>

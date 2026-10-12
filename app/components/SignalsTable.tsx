@@ -5,7 +5,7 @@
 // son ligeras; el razonamiento completo de cada una se pide a
 // /api/senales/[id] solo al desplegarla (SignalRowDetail).
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createColumnHelper, flexRender, getCoreRowModel, getPaginationRowModel, getSortedRowModel, useReactTable, type SortingState } from "@tanstack/react-table";
 import type { SignalDetailData, SignalFeedRow, StrategyVersion } from "@/lib/queries";
 import { SignalAnalysis } from "@/components/SignalAnalysis";
@@ -17,6 +17,7 @@ import { eventClassLabel, sourceLabel } from "@/lib/labels";
 import type { Locale, T } from "@/lib/i18n";
 import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 import { Meter } from "@/components/viz/Meter";
+import { motion } from "@/lib/motion";
 
 const columnHelper = createColumnHelper<SignalFeedRow>();
 
@@ -36,7 +37,7 @@ const buildColumns = (t: T, locale: Locale) => [
     header: t("Sorpresa", "Surprise"),
     cell: (c) => (
       <div className="flex w-20 items-center gap-1.5">
-        <div className="h-1.5 flex-1 rounded-full bg-surface-sunken">
+        <div className="viz-color h-1.5 flex-1 rounded-full bg-surface-sunken">
           <div className="h-1.5 rounded-full bg-accent-500" style={{ width: `${c.getValue()}%` }} />
         </div>
         <span className="num w-7 text-right text-xs text-text-secondary">{c.getValue()}</span>
@@ -103,13 +104,51 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
     initialState: { pagination: { pageSize: 25 } },
   });
 
+  // Plegar con la misma animación que desplegar (Tanda 12b, guía de Apple:
+  // lo que aparece de una forma se va por el mismo camino). El detalle se
+  // queda montado mientras se desvanece; volver a pulsar a mitad lo trae de
+  // vuelta desde la opacidad que tenga (transición CSS, interrumpible). Con
+  // movimiento reducido se quita en el acto.
+  const [cerrando, setCerrando] = useState<Set<number>>(new Set());
+  const temporizadores = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const pendientes = temporizadores.current;
+    return () => pendientes.forEach(clearTimeout);
+  }, []);
+
+  function conSin(set: Set<number>, id: number, poner: boolean): Set<number> {
+    const next = new Set(set);
+    if (poner) next.add(id);
+    else next.delete(id);
+    return next;
+  }
+
   function toggle(eventId: number) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(eventId)) next.delete(eventId);
-      else next.add(eventId);
-      return next;
-    });
+    const pendiente = temporizadores.current.get(eventId);
+    if (pendiente !== undefined) {
+      // Se estaba plegando: se cancela y vuelve a abrirse.
+      clearTimeout(pendiente);
+      temporizadores.current.delete(eventId);
+      setCerrando((prev) => conSin(prev, eventId, false));
+      return;
+    }
+    if (!expanded.has(eventId)) {
+      setExpanded((prev) => conSin(prev, eventId, true));
+      return;
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setExpanded((prev) => conSin(prev, eventId, false));
+      return;
+    }
+    setCerrando((prev) => conSin(prev, eventId, true));
+    temporizadores.current.set(
+      eventId,
+      setTimeout(() => {
+        temporizadores.current.delete(eventId);
+        setExpanded((prev) => conSin(prev, eventId, false));
+        setCerrando((prev) => conSin(prev, eventId, false));
+      }, motion.duration.fast),
+    );
   }
 
   return (
@@ -158,7 +197,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => {
-              const isExpanded = expanded.has(row.original.event_id);
+              const isExpanded = expanded.has(row.original.event_id) && !cerrando.has(row.original.event_id);
               return (
                 <Fragment key={row.id}>
                   {/* Toda la fila despliega el análisis (salvo sus enlaces y
@@ -195,7 +234,9 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       </td>
                     ))}
                   </tr>
-                  {isExpanded && <SignalRowDetail key={row.original.event_id} eventId={row.original.event_id} colSpan={columns.length + 1} />}
+                  {expanded.has(row.original.event_id) && (
+                    <SignalRowDetail key={row.original.event_id} eventId={row.original.event_id} colSpan={columns.length + 1} cerrando={cerrando.has(row.original.event_id)} />
+                  )}
                 </Fragment>
               );
             })}
@@ -227,7 +268,7 @@ type DetailState =
 // pinta al instante, sin esqueleto ni otra petición (Tanda 12).
 const analisisCargados = new Map<number, Extract<DetailState, { status: "ok" }>>();
 
-function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: number }) {
+function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colSpan: number; cerrando: boolean }) {
   const [state, setState] = useState<DetailState>(() => analisisCargados.get(eventId) ?? { status: "loading" });
   const t = useT();
   const locale = useLocale();
@@ -249,7 +290,13 @@ function SignalRowDetail({ eventId, colSpan }: { eventId: number; colSpan: numbe
   }, [eventId]);
 
   return (
-    <tr className="border-b border-border-subtle bg-surface-raised">
+    // Entra desde opacidad 0 (@starting-style) y sale hacia 0 con la misma
+    // duración y curva.
+    <tr
+      className={`border-b border-border-subtle bg-surface-raised transition-opacity duration-(--motion-duration-fast) ease-(--motion-ease-out) starting:opacity-0 motion-reduce:transition-none ${
+        cerrando ? "opacity-0" : "opacity-100"
+      }`}
+    >
       <td colSpan={colSpan} className="px-4 py-4">
         {state.status === "loading" && <AnalysisSkeleton label={t("Cargando análisis…", "Loading analysis…")} />}
         {state.status === "error" && (

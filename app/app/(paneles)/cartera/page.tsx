@@ -54,7 +54,7 @@ export default async function CarteraPage() {
     <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
           <ExportPdfButton report={report} />
         </div>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">

@@ -15,11 +15,16 @@ export async function generateMetadata() {
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-4">
-      <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent-600 text-sm font-bold text-white dark:bg-accent-500">
+      <div aria-hidden="true" className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent-600 text-sm font-bold text-white dark:bg-accent-500">
         {n}
       </div>
       <div className="-ml-4 mt-1 border-l border-border-subtle pb-6 pl-4">
-        <p className="mb-1 font-semibold text-foreground">{title}</p>
+        {/* Títulos de verdad (h2): con lector de pantalla se puede saltar de
+            paso en paso; el número va dentro del título, el círculo es decorado. */}
+        <h2 className="mb-1 font-semibold text-foreground">
+          <span className="sr-only">{n}. </span>
+          {title}
+        </h2>
         <div className="space-y-2 text-sm text-text-secondary">{children}</div>
       </div>
     </div>
@@ -40,7 +45,7 @@ export default async function ComoFuncionaPage() {
   return (
     <main className="mx-auto max-w-3xl px-4 pb-4 sm:px-6">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Cómo funciona", "How it works")}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{t("Cómo funciona", "How it works")}</h1>
         <p className="mt-1 text-sm text-text-secondary">
           {t("Qué hace el sistema, paso a paso, sin dar nada por sabido.", "What the system does, step by step, assuming no prior knowledge.")}
         </p>
@@ -157,7 +162,7 @@ export default async function ComoFuncionaPage() {
       </section>
 
       <section className="mt-8 border-t border-border-subtle pt-6">
-        <p className="mb-2 font-semibold text-foreground">{t("Aparte: el análisis de largo plazo", "Separately: the long-term analysis")}</p>
+        <h2 className="mb-2 font-semibold text-foreground">{t("Aparte: el análisis de largo plazo", "Separately: the long-term analysis")}</h2>
         <p className="mb-2 text-sm text-text-secondary">
           {t("Todo lo de arriba va de ", "Everything above is about ")}
           {strong(t("eventos", "events"), "text-foreground")}
@@ -178,7 +183,7 @@ export default async function ComoFuncionaPage() {
       </section>
 
       <section className="mt-8 border-t border-border-subtle pt-6">
-        <p className="mb-2 font-semibold text-foreground">{t("Reglas que el sistema nunca rompe", "Rules the system never breaks")}</p>
+        <h2 className="mb-2 font-semibold text-foreground">{t("Reglas que el sistema nunca rompe", "Rules the system never breaks")}</h2>
         <ul className="list-inside list-disc space-y-1 text-sm text-text-secondary">
           <li>
             {t(

@@ -38,7 +38,7 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
       />
       <header className="mb-5">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{detail.ticker}</h1>
+          <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{detail.ticker}</h1>
           <DirectionBadge value={detail.signal} />
         </div>
         <p className="mt-1 text-sm text-text-secondary">

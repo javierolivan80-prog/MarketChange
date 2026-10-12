@@ -41,7 +41,7 @@ export default async function SenalesPage({ searchParams }: { searchParams: Prom
   return (
     <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Señales", "Signals")}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{t("Señales", "Signals")}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           {t(
             `Cada evento analizado, el más reciente primero. Despliega una fila para ver el debate a favor y en contra, los casos parecidos del pasado y por qué cada estrategia opera o no. La columna Señal es la decisión de la estrategia recomendada (${versionLabel(version, locale).toLowerCase()}). Hasta 500 eventos.`,

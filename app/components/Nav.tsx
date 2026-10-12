@@ -85,11 +85,13 @@ export function Nav() {
 
   return (
     <header className="mb-5 border-b border-border-subtle">
-      <div className="flex items-center justify-between gap-4">
-        <Link href="/" className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground">
+      {/* Por debajo de 360px (móviles de 320) el logo y los huecos se
+          reducen: la fila no cabía (311px en 288) y daba scroll horizontal. */}
+      <div className="flex items-center justify-between gap-4 max-[359px]:gap-2">
+        <Link href="/" className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground max-[359px]:text-xs max-[359px]:tracking-wide">
           MarketChange
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 max-[359px]:gap-1">
           <LanguageToggle />
           <ThemeToggle />
         </div>
