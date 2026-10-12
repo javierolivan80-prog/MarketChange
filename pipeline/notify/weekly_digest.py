@@ -136,7 +136,7 @@ def format_digest(data: dict) -> str:
     if closed:
         wins = sum(1 for _, pnl in closed if pnl > 0)
         avg = sum(pnl for _, pnl in closed) / len(closed)
-        lines.append(f"\n<b>Cerradas esta semana</b>: {len(closed)} · {wins} con ganancia · media {avg:+.2f}%")
+        lines.append(f"\n<b>Cerradas esta semana</b>: {len(closed)} · {wins} con ganancia · media {avg:+.2f}% (frente al S&P 500)")
         for ticker, pnl in sorted(closed, key=lambda t: -t[1])[:5]:
             lines.append(f"{e(str(ticker))} {pnl:+.2f}%")
     else:

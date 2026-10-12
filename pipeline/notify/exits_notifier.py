@@ -47,6 +47,7 @@ def fetch_pending_exits(conn) -> list[dict]:
             """
             SELECT pt.trade_id, pt.version, pt.direction, pt.entry_date, pt.entry_price,
                    pt.exit_date, pt.exit_price, pt.exit_reason, pt.pnl_pct,
+                   pt.spy_entry_price, pt.spy_exit_price,
                    e.ticker, e.source_url
             FROM paper_trades pt
             JOIN events e ON e.event_id = pt.event_id
@@ -69,9 +70,18 @@ def _format_message(row: dict) -> str:
         f"<b>CERRAR {html.escape(str(row['ticker']))}</b> · estrategia {_VERSION_LABEL.get(row['version'], row['version'])} · {row['direction'].capitalize()}",
         label,
         f"Entrada: {row['entry_date']} a {float(row['entry_price']):.2f}",
-        f"Salida sugerida: {row['exit_date']} a {float(row['exit_price']):.2f} · "
-        f"P&L de referencia: {pnl_text}",
     ]
+    if row.get("spy_entry_price") is not None:
+        # Cobertura (Tanda 8): el resultado es frente a SPY, así que el aviso
+        # dice cerrar también esa pata, y con qué precios se calculó.
+        spy_salida = f" → {float(row['spy_exit_price']):.2f}" if row.get("spy_exit_price") is not None else ""
+        lines += [
+            f"Salida sugerida: {row['exit_date']} a {float(row['exit_price']):.2f}",
+            f"Cierra también la cobertura en SPY ({float(row['spy_entry_price']):.2f}{spy_salida})",
+            f"P&L de referencia frente al S&P 500, con los costes de las dos posiciones: {pnl_text}",
+        ]
+    else:
+        lines.append(f"Salida sugerida: {row['exit_date']} a {float(row['exit_price']):.2f} · P&L de referencia: {pnl_text}")
     if row.get("source_url"):
         lines.append(f'<a href="{row["source_url"]}">Filing original</a>')
     lines.append("Calculado sobre precio de cierre/máx/mín reales — al operar a mano, tu precio de ejecución puede variar.")

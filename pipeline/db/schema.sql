@@ -360,9 +360,9 @@ CREATE TABLE IF NOT EXISTS portfolio_trades (
     confidence              NUMERIC NOT NULL,       -- confidence_in_conviction del Judge, en la decisión
     ev                      NUMERIC NOT NULL,        -- ev_{version} usado para el umbral de entrada
     prediction              NUMERIC NOT NULL,        -- net_conviction del Judge (dirección + fuerza)
-    actual_move_pct         NUMERIC NOT NULL,        -- retorno real del SUBYACENTE entry->exit (puede
-                                                      -- diferir de pnl_pct: pnl_pct ya lleva comisiones
-                                                      -- y el efecto de cierres parciales por trailing stop)
+    actual_move_pct         NUMERIC NOT NULL,        -- retorno real del SUBYACENTE entry->exit, frente a
+                                                      -- SPY desde la Tanda 8 (cobertura, ver el final);
+                                                      -- pnl_pct además lleva comisiones y deslizamiento
     had_survivorship_warning BOOLEAN NOT NULL DEFAULT FALSE,
     run_batch_tag            TEXT NOT NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -975,3 +975,15 @@ ALTER TABLE event_enrichment ADD COLUMN IF NOT EXISTS abnormal_ret_d0_pct NUMERI
 -- Versión del prompt de la IA con la que se hizo cada análisis (Tanda 7):
 -- la caché nunca reutiliza un análisis de otra versión.
 ALTER TABLE event_analyses ADD COLUMN IF NOT EXISTS prompt_version TEXT;
+
+-- Cobertura con SPY (Tanda 8): cada operación lleva una pata contraria en SPY
+-- con el mismo nocional (ver portfolio_simulator.py, «COBERTURA CON SPY»).
+-- Con cobertura, actual_move_pct y pnl_pct son el movimiento de la acción
+-- FRENTE a SPY; spy_move_pct es el de SPY en el sentido de la operación.
+-- NULL = fila de antes de la cobertura (operación sin cubrir).
+ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS spy_entry_price NUMERIC;
+ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS spy_exit_price NUMERIC;
+ALTER TABLE portfolio_trades ADD COLUMN IF NOT EXISTS spy_move_pct NUMERIC;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS spy_entry_price NUMERIC;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS spy_exit_price NUMERIC;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS spy_move_pct NUMERIC;

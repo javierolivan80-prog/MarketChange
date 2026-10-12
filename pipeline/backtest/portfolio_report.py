@@ -25,7 +25,12 @@ from pipeline.backtest.portfolio_metrics import (
     compute_trade_metrics,
     top_n_trades,
 )
-from pipeline.backtest.portfolio_simulator import VELA_MARCADA_EN_LA_OPERACION_SQL, VERSIONS, simulate_portfolio
+from pipeline.backtest.portfolio_simulator import (
+    TICKER_COBERTURA,
+    VELA_MARCADA_EN_LA_OPERACION_SQL,
+    VERSIONS,
+    simulate_portfolio,
+)
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
 from pipeline.analyze.event_analysis_pipeline import (
     analizar_antes_del_corte,
@@ -184,6 +189,9 @@ def _serialize_trade(t: dict) -> dict:
         "exit_date": t["exit_date"].isoformat(),
         "exit_reason": t["exit_reason"],
         "pnl_pct": float(t["pnl_pct"]),
+        # Movimiento de SPY en el sentido de la operación (cobertura, Tanda
+        # 8); None en filas de antes de la cobertura.
+        "spy_move_pct": float(t["spy_move_pct"]) if t.get("spy_move_pct") is not None else None,
         "confidence": float(t["confidence"]),
         "ev": float(t["ev"]),
         "had_adv_cap_applied": bool(t.get("had_adv_cap_applied", False)),
@@ -201,9 +209,11 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
     visible — para que un reporte OOS nunca se confunda con uno in-sample
     ni en el JSON que persiste ni en lo que renderiza el dashboard."""
     version_reports = {}
+    sin_cobertura = {}
     for version in VERSIONS:
         logger.info("Simulando cartera %s (tag=%s, sample=%s)", version, run_batch_tag, sample)
-        simulate_portfolio(conn, version, run_batch_tag, starting_capital, sample=sample)
+        resultado = simulate_portfolio(conn, version, run_batch_tag, starting_capital, sample=sample)
+        sin_cobertura[version] = resultado.get("n_sin_cobertura", 0)
         version_reports[version] = build_version_report(conn, version, run_batch_tag, starting_capital)
 
     bias_report = compute_bias_report(conn)
@@ -221,6 +231,9 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
         # Eventos que la regla operaría pero que se excluyen porque su ventana
         # toca una vela marcada por calidad_precios.py.
         "excluidos_por_calidad": excluidos_por_calidad(conn, sample),
+        # Cobertura con SPY (Tanda 8): resultados frente al mercado, y cuántas
+        # señales no se operaron por no haber apertura de SPY para cubrirlas.
+        "cobertura": {"ticker": TICKER_COBERTURA, "senales_sin_cobertura": sin_cobertura},
         "versions": version_reports,
         "bias_report": bias_report,
         "recommendation": recommendation,

@@ -160,3 +160,29 @@ def test_paper_trade_stop_en_la_sesion_de_entrada():
     result = simulate_single_paper_trade(prices, CONS_PLAN, entry_date, 100.0, date(2024, 1, 12))
     assert result["status"] == "CLOSED_SL" and result["exit_reason"] == "STOP_LOSS"
     assert result["exit_date"] == entry_date
+
+
+# ---------------------------------------------------------------------------
+# Cobertura con SPY (Tanda 8)
+# ---------------------------------------------------------------------------
+
+
+def test_paper_trade_con_cobertura_mide_frente_a_spy_con_los_costes_de_las_dos_patas():
+    from pipeline.backtest.portfolio_simulator import SerieCobertura
+
+    entry_date = date(2024, 1, 2)
+    prices = {
+        entry_date: _bar(o=100.0, h=100.5, l=99.5, c=100.2),
+        date(2024, 1, 3): _bar(o=100.4, h=102.5, l=100.1, c=102.0),  # cruza el objetivo (102) sin hueco
+    }
+    spy = SerieCobertura({
+        entry_date: {"open_raw": 400.0, "close_raw": 401.0},
+        date(2024, 1, 3): {"open_raw": 401.0, "close_raw": 402.0},
+    })
+    result = simulate_single_paper_trade(prices, CONS_PLAN, entry_date, 100.0, date(2024, 1, 12), spy=spy)
+    assert result["status"] == "CLOSED_TP"
+    assert result["spy_entry_price"] == pytest.approx(400.0)
+    assert result["spy_exit_price"] == pytest.approx(402.0)  # sin hueco: al cierre de SPY
+    assert result["spy_move_pct"] == pytest.approx(0.5)
+    # (2 % − 0,5 %) − comisión de cada pata − deslizamiento 2 × 25 pb (acción) − 2 × 10 pb (SPY)
+    assert result["pnl_pct"] == pytest.approx(1.5 - 0.20 - 0.50 - 0.20, abs=1e-9)

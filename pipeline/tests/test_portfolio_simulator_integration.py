@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import pytest
 
 from pipeline.tests.regla_historica import copiar_a_regla_historica
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -26,6 +27,7 @@ def conn():
             "RESTART IDENTITY CASCADE"
         )
     c.commit()
+    sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
     yield c
     c.close()
 
@@ -404,7 +406,11 @@ class TestForcedCloseWithDataGap:
         """Caso extremo: ni un solo día con precio válido tras la entrada —
         cierra en la última fecha disponible (el propio centinela) al precio
         de entrada, retorno plano (menos comisión), nunca inventado."""
-        from pipeline.backtest.portfolio_simulator import COMMISSION_BPS_ROUND_TRIP, simulate_portfolio
+        from pipeline.backtest.portfolio_simulator import (
+            COMMISSION_BPS_ROUND_TRIP,
+            SLIPPAGE_BPS_COBERTURA_POR_LADO,
+            simulate_portfolio,
+        )
 
         cal = _business_days(date(2024, 1, 2), 3)
         d0 = cal[0]
@@ -425,8 +431,12 @@ class TestForcedCloseWithDataGap:
             trade = cur.fetchone()
         assert trade["exit_reason"] == "DATA_GAP"
         assert float(trade["exit_price"]) == float(trade["entry_price"])  # retorno plano
-        # Solo los costes: comisión + deslizamiento conservador (sin capitalización en D0, H-32).
-        assert float(trade["pnl_pct"]) == pytest.approx(-COMMISSION_BPS_ROUND_TRIP / 100 - 2 * 25.0 / 100)
+        # Solo los costes de las dos patas (SPY plano): comisión de cada una,
+        # deslizamiento conservador de la acción (sin capitalización en D0,
+        # H-32) y el de gran capitalización de SPY (Tanda 8).
+        assert float(trade["pnl_pct"]) == pytest.approx(
+            -2 * COMMISSION_BPS_ROUND_TRIP / 100 - 2 * 25.0 / 100 - 2 * SLIPPAGE_BPS_COBERTURA_POR_LADO / 100
+        )
 
 
 class TestDrawdownCircuitBreaker:
@@ -978,3 +988,162 @@ def test_si_yahoo_no_devuelve_historia_el_ticker_no_queda_revisado(conn, monkeyp
     _seed_event_with_analysis(conn, "1", "DEL", d0, "LONG", "LONG", "LONG", 0.8, 80, 0.03, 0.03, 0.03)
     assert actualizar_splits(conn) == {"revisados": 0, "fallidos": 1}
     assert tickers_por_revisar(conn, 10) == ["DEL"]
+
+
+class TestCoberturaConSpy:
+    """Tanda 8: cada operación lleva una pata contraria en SPY (mismo
+    nocional), el resultado es frente a SPY y las dos patas se pagan con
+    efectivo."""
+
+    def _evento_long(self, conn, d0):
+        _seed_event_with_analysis(
+            conn, "1", "TESTCO", d0,
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+
+    def test_resultado_frente_a_spy_y_spy_sale_a_la_apertura_si_la_accion_salio_por_hueco(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.tests.cobertura import sembrar_spy
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        self._evento_long(conn, cal[0])
+        closes = [100.0, 100.0] + [105.0] * (len(cal) - 2)  # abre a 105 en cal[2]: objetivo (102) por hueco
+        _seed_price_series(conn, "TESTCO", cal, closes, opens=closes)
+        sembrar_spy(conn, {cal[1]: 400.0, cal[2]: 410.0}, aperturas={cal[1]: 400.0, cal[2]: 404.0})
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-1", starting_capital=100_000.0)
+        assert result["n_trades"] == 1 and result["n_sin_cobertura"] == 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM portfolio_trades WHERE run_batch_tag='cob-1'")
+            t = cur.fetchone()
+        assert t["exit_reason"] == "TAKE_PROFIT"
+        assert float(t["spy_entry_price"]) == pytest.approx(400.0)
+        assert float(t["spy_exit_price"]) == pytest.approx(404.0)  # apertura, no el cierre (410)
+        assert float(t["spy_move_pct"]) == pytest.approx(1.0)
+        assert float(t["actual_move_pct"]) == pytest.approx(5.0 - 1.0)
+        # Caja: el efectivo de las dos patas vuelve entero más el resultado.
+        assert result["final_cash"] == pytest.approx(100_000.0 + float(t["pnl_abs"]))
+        with conn.cursor() as cur:
+            cur.execute("SELECT balance FROM portfolio_equity_curve WHERE run_batch_tag='cob-1' ORDER BY trade_date DESC LIMIT 1")
+            assert float(cur.fetchone()["balance"]) == pytest.approx(100_000.0 + float(t["pnl_abs"]))
+
+    def test_la_curva_de_capital_valora_la_pata_de_spy(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.tests.cobertura import sembrar_spy
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        self._evento_long(conn, cal[0])
+        _seed_price_series(conn, "TESTCO", cal, [100.0] * len(cal))  # acción plana
+        sembrar_spy(conn, {cal[1]: 404.0}, aperturas={cal[1]: 400.0})  # SPY +1 % en la sesión de entrada
+
+        simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-2", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT position_size_dollars FROM portfolio_trades WHERE run_batch_tag='cob-2'")
+            nocional = float(cur.fetchone()["position_size_dollars"])
+            cur.execute("SELECT balance FROM portfolio_equity_curve WHERE run_batch_tag='cob-2' AND trade_date=%s", (cal[1],))
+            balance = float(cur.fetchone()["balance"])
+        # El corto de SPY pierde un 1 % del nocional; la acción, nada.
+        assert nocional > 0
+        assert balance == pytest.approx(100_000.0 - 0.01 * nocional)
+
+    def test_sin_apertura_de_spy_no_se_opera(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        self._evento_long(conn, cal[0])
+        _seed_price_series(conn, "TESTCO", cal, [100.0] * len(cal))
+        with conn.cursor() as cur:
+            cur.execute("UPDATE prices SET open_raw = NULL WHERE ticker = 'SPY' AND trade_date = %s", (cal[1],))
+        conn.commit()
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-3", starting_capital=100_000.0)
+        assert result["n_sin_cobertura"] == 1
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM portfolio_trades WHERE run_batch_tag='cob-3'")
+            assert cur.fetchone()["n"] == 0
+
+    def test_el_cierre_forzado_devuelve_el_efectivo_a_la_caja(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 3)  # menos sesiones que el plazo: cierre forzado
+        self._evento_long(conn, cal[0])
+        _seed_price_series(conn, "TESTCO", cal, [100.0, 100.0, 100.5])
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-4", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT pnl_abs FROM portfolio_trades WHERE run_batch_tag='cob-4'")
+            pnl_abs = float(cur.fetchone()["pnl_abs"])
+        assert result["final_cash"] == pytest.approx(100_000.0 + pnl_abs)
+
+
+class TestCoberturaConSpyCasosLimite:
+    def test_un_corto_compra_spy_y_la_curva_lo_valora_en_ese_sentido(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.tests.cobertura import sembrar_spy
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        _seed_event_with_analysis(
+            conn, "1", "SHORTCO", cal[0],
+            trade_decision_conservative="SHORT", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=-0.8, confidence=90.0, ev_conservative=-0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, "SHORTCO", cal, [100.0] * len(cal))
+        # SPY abre a 400 en la entrada y se queda en 404 (+1 %) hasta la salida.
+        sembrar_spy(conn, {d: 404.0 for d in cal[1:]}, aperturas={cal[1]: 400.0})
+
+        simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-short", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM portfolio_trades WHERE run_batch_tag='cob-short'")
+            t = cur.fetchone()
+            cur.execute("SELECT balance FROM portfolio_equity_curve WHERE run_batch_tag='cob-short' AND trade_date=%s", (cal[1],))
+            balance = float(cur.fetchone()["balance"])
+        assert t["direction"] == "SHORT"
+        # La pata de SPY de un corto es comprada: gana si SPY sube.
+        assert balance == pytest.approx(100_000.0 + 0.01 * float(t["position_size_dollars"]))
+        # Frente al mercado: acción plana con SPY subiendo es bueno para el corto.
+        assert float(t["spy_move_pct"]) < 0 and float(t["actual_move_pct"]) > 0
+
+    def test_si_las_dos_patas_no_caben_en_la_caja_cada_una_se_queda_en_la_mitad(self, conn, monkeypatch):
+        from pipeline.backtest import portfolio_simulator
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        # Tamaño pedido del 80 %: las dos patas (160 %) no caben en la caja.
+        monkeypatch.setattr(portfolio_simulator, "compute_position_size_pct", lambda confidence, config: 80.0)
+        cal = _business_days(date(2024, 1, 2), 15)
+        _seed_event_with_analysis(
+            conn, "1", "BIGCO", cal[0],
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, "BIGCO", cal, [100.0] * len(cal))
+        with conn.cursor() as cur:
+            cur.execute("UPDATE prices SET volume = 1e9 WHERE ticker = 'BIGCO'")  # sin tope por liquidez
+        conn.commit()
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-caja", starting_capital=100_000.0)
+        with conn.cursor() as cur:
+            cur.execute("SELECT position_size_dollars, pnl_abs FROM portfolio_trades WHERE run_batch_tag='cob-caja'")
+            t = cur.fetchone()
+            cur.execute("SELECT min(balance) AS minimo FROM portfolio_equity_curve WHERE run_batch_tag='cob-caja'")
+            minimo = float(cur.fetchone()["minimo"])
+        assert float(t["position_size_dollars"]) == pytest.approx(50_000.0)
+        assert result["final_cash"] == pytest.approx(100_000.0 + float(t["pnl_abs"]))
+        assert minimo > 0
+
+    def test_una_vela_de_spy_marcada_por_calidad_cuenta_como_dia_sin_vela(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+
+        cal = _business_days(date(2024, 1, 2), 15)
+        _seed_event_with_analysis(
+            conn, "1", "TESTCO", cal[0],
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.0, ev_balanced=0.0,
+        )
+        _seed_price_series(conn, "TESTCO", cal, [100.0] * len(cal))
+        with conn.cursor() as cur:
+            cur.execute("UPDATE prices SET calidad_motivo = 'pico' WHERE ticker = 'SPY' AND trade_date = %s", (cal[1],))
+        conn.commit()
+
+        result = simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="cob-calidad", starting_capital=100_000.0)
+        assert result["n_sin_cobertura"] == 1 and result["n_trades"] == 0

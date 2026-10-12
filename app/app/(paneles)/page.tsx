@@ -283,8 +283,8 @@ export default async function InicioPage() {
             <div className="border-t border-border-subtle bg-surface p-4">
               <p className="mb-3 text-xs text-text-tertiary">
                 {t(
-                  `Rentabilidad histórica de la estrategia ${versionLabel(shownVersion, locale).toLowerCase()}, aplicada a todos los eventos pasados.`,
-                  `Historical performance of the ${versionLabel(shownVersion, locale).toLowerCase()} strategy, applied to all past events.`,
+                  `Rentabilidad histórica de la estrategia ${versionLabel(shownVersion, locale).toLowerCase()}, aplicada a todos los eventos pasados, con cada operación cubierta con una posición contraria en el S&P 500.`,
+                  `Historical performance of the ${versionLabel(shownVersion, locale).toLowerCase()} strategy, applied to all past events, with every trade hedged by an opposite S&P 500 position.`,
                 )}
               </p>
               <div className="flex flex-wrap gap-y-4">

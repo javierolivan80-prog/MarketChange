@@ -22,12 +22,17 @@ dirección" que portfolio_trades.actual_move_pct (positivo = la operación
 habría ganado, sin importar LONG/SHORT) — no el retorno crudo del
 subyacente. Mismo razonamiento: consistencia con el resto del proyecto por
 encima de una lectura literal del ejemplo del spec.
+
+Desde la Tanda 8 (cobertura con SPY) actual_move_5d es el movimiento de la
+acción FRENTE a SPY en la misma ventana (apertura de D+1 -> cierre del 5º
+día), que es lo que se predice y lo que se opera. Sin apertura de SPY en la
+entrada o sin su cierre del 5º día no se puede medir: None.
 """
 from __future__ import annotations
 
 from datetime import date
 
-from pipeline.backtest.portfolio_simulator import gain_pct
+from pipeline.backtest.portfolio_simulator import cargar_serie_cobertura, gain_pct
 from pipeline.paper_trading.simulator import load_ticker_prices, fetch_all_events_for_week
 
 ACTUAL_MOVE_HORIZON_TRADING_DAYS = 5
@@ -58,6 +63,7 @@ def compute_prediction_accuracy(conn, version: str, week_start: date, week_end: 
     events = fetch_all_events_for_week(conn, week_start, week_end)
 
     ticker_cache: dict[str, dict[date, dict]] = {}
+    spy = cargar_serie_cobertura(conn)
     results = []
     for ev in events:
         ticker = ev["ticker"]
@@ -82,8 +88,15 @@ def compute_prediction_accuracy(conn, version: str, week_start: date, week_end: 
         if len(future_after_entry) >= ACTUAL_MOVE_HORIZON_TRADING_DAYS:
             exit_date_5d = future_after_entry[ACTUAL_MOVE_HORIZON_TRADING_DAYS - 1]
             close_5d = prices[exit_date_5d]["close_raw"]
-            if close_5d is not None:
-                actual_move_5d = gain_pct(predicted_direction, entry_price, float(close_5d))
+            # SPY en la MISMA ventana: su apertura de la entrada y su cierre
+            # del 5º día exacto (sin vela ese día no se mide; un cierre de
+            # otro día compararía ventanas distintas).
+            spy_entrada = spy.apertura(entry_date)
+            spy_salida = spy.cierre_del_dia(exit_date_5d)
+            if close_5d is not None and spy_entrada is not None and spy_salida is not None:
+                actual_move_5d = gain_pct(predicted_direction, entry_price, float(close_5d)) - gain_pct(
+                    predicted_direction, spy_entrada, spy_salida
+                )
 
         was_correct = None if actual_move_5d is None else actual_move_5d > 0
         error = None if actual_move_5d is None else abs(predicted_magnitude - actual_move_5d)

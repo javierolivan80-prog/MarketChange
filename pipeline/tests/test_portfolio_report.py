@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from pipeline.tests.regla_historica import copiar_a_regla_historica
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -26,6 +27,7 @@ def conn():
             "RESTART IDENTITY CASCADE"
         )
     c.commit()
+    sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
     yield c
     c.close()
 

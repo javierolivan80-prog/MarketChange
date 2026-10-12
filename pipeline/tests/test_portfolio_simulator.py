@@ -12,7 +12,9 @@ from pipeline.backtest.portfolio_simulator import (
     COMMISSION_BPS_ROUND_TRIP,
     DRAWDOWN_CIRCUIT_BREAKER_PCT,
     MAX_POSITION_PCT_OF_ADV,
+    SLIPPAGE_BPS_COBERTURA_POR_LADO,
     OpenPosition,
+    SerieCobertura,
     _build_entry_plan,
     _resolve_forced_close,
     cap_position_dollars_by_adv,
@@ -21,6 +23,7 @@ from pipeline.backtest.portfolio_simulator import (
     compute_tp_sl_prices,
     compute_trailing_adv_usd,
     consolidate_trade_record,
+    cubrir_cierres_nuevos,
     gain_pct,
     is_circuit_breaker_active,
     open_position,
@@ -660,3 +663,135 @@ def test_deslizamiento_segun_capitalizacion_en_d0():
         record = consolidate_trade_record(pos)
         assert record["actual_move_pct"] == pytest.approx(2.0)  # el movimiento no cambia; solo el P&L
         assert record["pnl_pct"] == pytest.approx(esperado)
+
+
+# ---------------------------------------------------------------------------
+# Cobertura con SPY (Tanda 8)
+# ---------------------------------------------------------------------------
+
+COSTES_DOS_PATAS = 2 * COMMISSION_BPS_ROUND_TRIP / 100 + 2 * 25.0 / 100 + 2 * SLIPPAGE_BPS_COBERTURA_POR_LADO / 100
+
+
+def _spy(velas: dict) -> SerieCobertura:
+    """velas: fecha -> (apertura, cierre)."""
+    return SerieCobertura({d: {"open_raw": o, "close_raw": c} for d, (o, c) in velas.items()})
+
+
+def test_cobertura_long_resta_el_movimiento_de_spy_y_cobra_las_dos_patas():
+    pos = _make_long_position(entry_price=100.0)
+    pos.spy_entry_price = 400.0
+    d1 = D0 + timedelta(days=1)
+    step_position_forward(pos, high=103.0, low=99.0, close=101.0, trade_date=d1, open_=100.5)  # TP a 102, sin hueco
+    cubrir_cierres_nuevos(pos, 0, _spy({d1: (401.0, 404.0)}), open_accion=100.5)
+    record = consolidate_trade_record(pos)
+    assert record["spy_exit_price"] == pytest.approx(404.0)  # sin hueco: SPY sale a su cierre
+    assert record["spy_move_pct"] == pytest.approx(1.0)
+    assert record["actual_move_pct"] == pytest.approx(2.0 - 1.0)
+    assert record["pnl_pct"] == pytest.approx(1.0 - COSTES_DOS_PATAS)
+    assert record["pnl_abs"] == pytest.approx(3000.0 * (1.0 - COSTES_DOS_PATAS) / 100)
+
+
+def test_cobertura_short_compra_spy_y_gana_si_la_accion_cae_mas_que_el_mercado():
+    pos = _make_short_position(entry_price=100.0)
+    pos.spy_entry_price = 400.0
+    d1 = D0 + timedelta(days=1)
+    step_position_forward(pos, high=100.5, low=97.0, close=97.5, trade_date=d1, open_=99.9)  # TP a 98
+    cubrir_cierres_nuevos(pos, 0, _spy({d1: (399.0, 396.0)}), open_accion=99.9)
+    record = consolidate_trade_record(pos)
+    # La acción cae un 2 % (+2 para el corto) y SPY un 1 % (+1 en el sentido del corto).
+    assert record["spy_move_pct"] == pytest.approx(1.0)
+    assert record["actual_move_pct"] == pytest.approx(1.0)
+
+
+def test_cobertura_neutraliza_un_movimiento_que_es_solo_de_mercado():
+    pos = _make_long_position(entry_price=100.0, take_profit_pct=50.0, stop_loss_pct=40.0, target_days=1)
+    pos.spy_entry_price = 400.0
+    d1 = D0 + timedelta(days=1)
+    step_position_forward(pos, high=103.5, low=100.0, close=103.0, trade_date=d1, open_=100.0)  # fin de plazo
+    cubrir_cierres_nuevos(pos, 0, _spy({d1: (400.0, 412.0)}), open_accion=100.0)
+    record = consolidate_trade_record(pos)
+    assert record["actual_move_pct"] == pytest.approx(0.0)  # +3 % la acción, +3 % el mercado
+    assert record["pnl_pct"] == pytest.approx(-COSTES_DOS_PATAS)
+
+
+def test_cobertura_stop_por_hueco_cierra_spy_a_su_apertura():
+    pos = _make_long_position(entry_price=100.0)
+    pos.spy_entry_price = 400.0
+    d1 = D0 + timedelta(days=1)
+    step_position_forward(pos, high=95.0, low=93.0, close=94.5, trade_date=d1, open_=94.0)  # abre bajo el stop
+    cubrir_cierres_nuevos(pos, 0, _spy({d1: (390.0, 380.0)}), open_accion=94.0)
+    assert pos.spy_closes == [pytest.approx(390.0)]
+
+
+def test_cobertura_cierre_por_tesis_cierra_spy_a_su_apertura():
+    pos = _make_long_position(entry_price=100.0)
+    pos.spy_entry_price = 400.0
+    d1 = D0 + timedelta(days=1)
+    pos.closes.append((d1, 1.0, 101.0, "INVALIDATED"))
+    pos.remaining_fraction = 0.0
+    cubrir_cierres_nuevos(pos, 0, _spy({d1: (402.0, 410.0)}), a_la_apertura=True)
+    assert pos.spy_closes == [pytest.approx(402.0)]
+
+
+def test_cobertura_sin_vela_de_spy_usa_su_ultimo_cierre_desde_la_entrada_nunca_uno_anterior():
+    d1, d2 = D0 + timedelta(days=1), D0 + timedelta(days=2)
+    spy = _spy({D0 - timedelta(days=1): (380.0, 380.0), D0: (400.0, 401.0), d1: (402.0, 403.0)})
+    assert spy.cierre_hasta(d2, desde=D0) == pytest.approx(403.0)  # d2 sin vela: el de d1
+    assert spy.cierre_hasta(D0 - timedelta(days=1), desde=D0) is None  # anterior a la entrada: nunca
+
+    pos = _make_long_position(entry_price=100.0)
+    pos.spy_entry_price = 400.0
+    pos.closes.append((d2, 1.0, 101.0, "MAX_HOLDING"))
+    cubrir_cierres_nuevos(pos, 0, spy)
+    assert pos.spy_closes == [pytest.approx(403.0)]
+
+    # Ningún cierre de SPY desde la entrada: la pata queda plana (no se inventa).
+    pos2 = _make_long_position(entry_price=100.0)
+    pos2.spy_entry_price = 400.0
+    pos2.closes.append((d2, 1.0, 101.0, "MAX_HOLDING"))
+    cubrir_cierres_nuevos(pos2, 0, _spy({D0 - timedelta(days=3): (380.0, 380.0)}))
+    assert pos2.spy_closes == [pytest.approx(400.0)]
+
+
+def test_cobertura_tramos_parciales_ponderan_tambien_la_salida_de_spy():
+    tiers = generate_trailing_stop_tiers()
+    pos = _make_long_position(entry_price=100.0, take_profit_pct=None, stop_loss_pct=5.0, trailing_tiers=tiers, target_days=20)
+    pos.spy_entry_price = 400.0
+    d2, d4 = D0 + timedelta(days=2), D0 + timedelta(days=4)
+    spy = _spy({d2: (404.0, 404.0), d4: (408.0, 408.0)})
+    n = len(pos.closes)
+    step_position_forward(pos, high=121.0, low=119.0, close=120.0, trade_date=d2, open_=119.5)
+    cubrir_cierres_nuevos(pos, n, spy, open_accion=119.5)
+    n = len(pos.closes)
+    step_position_forward(pos, high=200.0, low=195.0, close=198.0, trade_date=d4, open_=196.0)
+    cubrir_cierres_nuevos(pos, n, spy, open_accion=196.0)
+    assert len(pos.spy_closes) == len(pos.closes)
+    record = consolidate_trade_record(pos)
+    esperado = sum(f * p for (_, f, _, _), p in zip(pos.closes, pos.spy_closes))
+    assert record["spy_exit_price"] == pytest.approx(esperado)
+
+
+def test_valor_a_mercado_incluye_la_pata_de_spy():
+    pos = _make_long_position(entry_price=100.0)
+    pos.spy_entry_price = 400.0
+    # Al entrar, las dos patas valen el nocional: 2 × 3000.
+    assert compute_position_mtm_dollars(pos, 100.0, 400.0) == pytest.approx(6000.0)
+    # Acción plana y SPY +1 %: el corto de SPY pierde un 1 % del nocional.
+    assert compute_position_mtm_dollars(pos, 100.0, 404.0) == pytest.approx(6000.0 - 30.0)
+    # Sin precio de SPY hoy, su pata se valora a la entrada.
+    assert compute_position_mtm_dollars(pos, 102.0, None) == pytest.approx(6000.0 + 60.0)
+
+
+def test_a_la_apertura_sin_apertura_de_spy_usa_el_cierre_anterior_nunca_el_del_mismo_dia():
+    d1, d2 = D0 + timedelta(days=1), D0 + timedelta(days=2)
+    spy = SerieCobertura({
+        D0: {"open_raw": 400.0, "close_raw": 401.0},
+        d1: {"open_raw": 402.0, "close_raw": 403.0},
+        d2: {"open_raw": None, "close_raw": 450.0},  # su cierre aún no se conoce a la apertura
+    })
+    assert spy.precio_de_salida(d2, D0, a_la_apertura=True) == pytest.approx(403.0)
+    assert spy.precio_de_salida(d2, D0, a_la_apertura=False) == pytest.approx(450.0)
+    # Sin apertura y sin cierre anterior desde la entrada: None (el llamador
+    # deja la pata plana), nunca el cierre del mismo día.
+    sin_apertura = SerieCobertura({D0: {"open_raw": None, "close_raw": 401.0}})
+    assert sin_apertura.precio_de_salida(D0, D0, a_la_apertura=True) is None

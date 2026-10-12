@@ -14,6 +14,7 @@ import pytest
 
 from pipeline import config
 from pipeline.tests.regla_historica import copiar_a_regla_historica
+from pipeline.tests.cobertura import sembrar_spy_plano
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
 
@@ -31,6 +32,7 @@ def conn():
             "RESTART IDENTITY CASCADE"
         )
     c.commit()
+    sembrar_spy_plano(c)  # pata de cobertura (Tanda 8), ver tests/cobertura.py
     yield c
     c.close()
 
@@ -418,3 +420,36 @@ class TestReconciliationFullScenario:
         # objetivas disparadas) — sigue habiendo una única posición al final,
         # forzada a cerrar por MAX_HOLDING/fin de datos, nunca 2.
         assert result["n_trades"] == 1
+
+
+class TestTesisConCobertura:
+    """Tanda 8: el cierre por tesis es a la apertura, así que SPY también
+    sale a su apertura; y el movimiento realizado de la tesis es frente a SPY."""
+
+    def test_cierre_por_tesis_cierra_spy_a_su_apertura_y_mide_frente_a_spy(self, conn):
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.tests.cobertura import sembrar_spy
+
+        cal = _business_days(date(2024, 1, 2), 30)
+        _seed_event_with_analysis(
+            conn, "c1", "MEMCO", cal[0], "8K_1.01_MATERIAL_AGMT",
+            trade_decision_conservative="LONG", net_conviction=0.8, confidence=90.0, ev_conservative=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "c1", "MEMCO", cal[2], "8K_1.03_BANKRUPTCY",
+            trade_decision_conservative="NO_TRADE", net_conviction=-0.2, confidence=30.0,
+        )
+        _seed_price_series(conn, "MEMCO", cal, [100.0] * len(cal))
+        # La reconciliación es a la apertura de cal[3] (D+1 del evento nuevo).
+        sembrar_spy(conn, {cal[1]: 400.0, cal[3]: 420.0}, aperturas={cal[1]: 400.0, cal[3]: 404.0})
+
+        simulate_portfolio(conn, "CONSERVATIVE", run_batch_tag="tesis-spy", thesis_memory_enabled=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM portfolio_trades WHERE run_batch_tag='tesis-spy'")
+            trade = cur.fetchone()
+            cur.execute("SELECT metrics_snapshot FROM thesis_updates WHERE run_batch_tag='tesis-spy'")
+            snapshot = cur.fetchone()["metrics_snapshot"]
+        assert trade["exit_reason"] == "INVALIDATED"
+        assert float(trade["spy_exit_price"]) == pytest.approx(404.0)  # apertura, no el cierre (420)
+        # Acción plana y SPY +1 % a la apertura: frente al mercado, −1 %.
+        assert snapshot["realized_move_pct"] == pytest.approx(-1.0)

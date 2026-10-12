@@ -294,7 +294,12 @@ export function SignalAnalysis({ detail, recommended, locale = "es" }: { detail:
           <p className="num mt-2 text-xs text-text-tertiary">
             {t("En el histórico", "In the backtest")}: {detail.entry_date && `${t("entrada", "entry")} ${detail.entry_date}`}
             {detail.exit_date && ` · ${t("salida", "exit")} ${detail.exit_date} (${exitReasonLabel(detail.exit_reason, locale)})`}
-            {detail.pnl_pct !== null && ` · ${t("resultado", "result")} ${detail.pnl_pct.toFixed(2)}%`}
+            {detail.pnl_pct !== null &&
+              ` · ${
+                detail.cubierta === false
+                  ? t("resultado (sin cubrir)", "result (unhedged)")
+                  : t("resultado frente al S&P 500", "result vs the S&P 500")
+              } ${detail.pnl_pct.toFixed(2)}%`}
           </p>
         )}
       </div>

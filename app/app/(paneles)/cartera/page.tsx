@@ -61,8 +61,8 @@ export default async function CarteraPage() {
         </div>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           {t(
-            "Rentabilidad de cada estrategia aplicada a todos los eventos pasados, y el seguimiento de las señales de esta semana con precios de mercado. Rentabilidades pasadas no garantizan resultados futuros.",
-            "Performance of each strategy applied to all past events, and tracking of this week's signals at market prices. Past performance does not guarantee future results.",
+            "Rentabilidad de cada estrategia aplicada a todos los eventos pasados, y el seguimiento de las señales de esta semana con precios de mercado. Cada operación se cubre con una posición contraria en el S&P 500 (SPY), así que el resultado es frente al mercado e incluye los costes de las dos posiciones. Rentabilidades pasadas no garantizan resultados futuros.",
+            "Performance of each strategy applied to all past events, and tracking of this week's signals at market prices. Every trade is hedged with an opposite position in the S&P 500 (SPY), so the result is relative to the market and includes the costs of both positions. Past performance does not guarantee future results.",
           )}
         </p>
       </header>

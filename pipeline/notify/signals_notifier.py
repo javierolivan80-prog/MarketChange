@@ -171,13 +171,25 @@ def _format_message(row: dict) -> str:
         "AGGRESSIVE": row["trade_decision_aggressive"],
         "BALANCED": row["trade_decision_balanced"],
     }
+    operadas = []
     for version in STRATEGIES:
         decision = decision_by_version[version]
         if decision == "NO_TRADE":
             continue
+        operadas.append(decision)
         emoji = _DIRECTION_EMOJI.get(decision, "")
         ev_pct = float(ev_by_version[version]) * 100
         lines.append(f"{emoji} {_VERSION_LABEL[version]}: {decision} · EV {ev_pct:+.2f}%")
+    if operadas:
+        # Cobertura (Tanda 8): lo que se predice y se mide es el movimiento
+        # frente al mercado; operar solo la acción no es lo que se valida.
+        if set(operadas) == {"LONG"}:
+            lado = "vende SPY"
+        elif set(operadas) == {"SHORT"}:
+            lado = "compra SPY"
+        else:
+            lado = "abre SPY en sentido contrario a cada operación"
+        lines.append(f"Cobertura: {lado} por el mismo importe que la acción (el resultado se mide frente al S&P 500)")
     lines.append(f"Confianza: {float(row['confidence_in_conviction']):.0f}%")
 
     net = float(row["net_conviction"])

@@ -564,6 +564,9 @@ export interface SignalFeedRow {
   exit_date: string | null;
   exit_reason: string | null;
   pnl_pct: number | null;
+  /** Operación cubierta con SPY (Tanda 8): pnl_pct es frente al S&P 500.
+   * false = fila de antes de la cobertura; null = no se operó. */
+  cubierta: boolean | null;
   /** Confianza técnica 0-100 y si pasa los filtros de riesgo; null si la señal no tiene plan. */
   tech_confidence: number | null;
   tech_passes: boolean | null;
@@ -671,6 +674,9 @@ function signalSelect(version: StrategyVersion, extraColumns: string): string {
         ea.trade_decision_conservative, ea.trade_decision_aggressive, ea.trade_decision_balanced,
         ${VERSION_COLUMN[version]} AS value,
         pt.entry_date, pt.exit_date, pt.exit_reason, pt.pnl_pct,
+        -- to_jsonb y no pt.spy_entry_price: así la consulta no falla si la app
+        -- se despliega antes de que la pasada nocturna cree la columna (Tanda 8).
+        CASE WHEN pt.event_id IS NULL THEN NULL ELSE (to_jsonb(pt)->>'spy_entry_price') IS NOT NULL END AS cubierta,
         ta.confidence AS tech_confidence, ta.passes_filters AS tech_passes
         ${extraColumns}
       FROM events e
@@ -701,6 +707,7 @@ function mapFeedRow(r: any, version: StrategyVersion): SignalFeedRow {
     exit_date: toDateStr(r.exit_date),
     exit_reason: r.exit_reason,
     pnl_pct: r.pnl_pct !== null && r.pnl_pct !== undefined ? parseFloat(r.pnl_pct) : null,
+    cubierta: r.cubierta ?? null,
     tech_confidence: r.tech_confidence ?? null,
     tech_passes: r.tech_passes ?? null,
   };
@@ -1045,6 +1052,9 @@ export interface HistoryRow {
   entry_date: string | null;
   exit_date: string | null;
   pnl_pct: number | null;
+  /** Con pata de SPY (Tanda 8): pnl_pct es frente al S&P 500. false = fila
+   * de antes de la cobertura; null = sin operación en papel todavía. */
+  cubierta: boolean | null;
 }
 
 export interface SignalHistory {
@@ -1052,8 +1062,12 @@ export interface SignalHistory {
   rows: HistoryRow[];
   n_closed: number;
   n_open: number;
+  /** Acierto y resultado medio solo de las cerradas CUBIERTAS: mezclar
+   * resultados frente al mercado con absolutos no mide nada. */
   win_rate: number | null;
   avg_pnl_pct: number | null;
+  /** Cerradas de antes de la cobertura, fuera del acierto y la media. */
+  n_closed_sin_cubrir: number;
 }
 
 /** Historial hacia delante: cada señal que la versión mostrada decidió operar,
@@ -1066,11 +1080,12 @@ export async function getSignalHistory(version: StrategyVersion, limit = 200): P
     `
     SELECT e.event_id, e.ticker, e.event_class, e.d0_close_date, ea.analyzed_at, ea.notified_at,
            ${VERSION_COLUMN[version]} AS direction, ea.confidence_in_conviction AS confidence,
-           pt.status, pt.entry_date, pt.exit_date, pt.pnl_pct
+           pt.status, pt.entry_date, pt.exit_date, pt.pnl_pct, pt.cubierta
     FROM events e
     JOIN event_analyses ea ON ea.event_id = e.event_id
     LEFT JOIN LATERAL (
-      SELECT status, entry_date, exit_date, pnl_pct
+      -- to_jsonb: no falla si la columna aún no existe (ver signalSelect).
+      SELECT status, entry_date, exit_date, pnl_pct, (to_jsonb(p)->>'spy_entry_price') IS NOT NULL AS cubierta
       FROM paper_trades p
       WHERE p.event_id = e.event_id AND p.version = $1
       ORDER BY p.updated_at DESC
@@ -1095,14 +1110,17 @@ export async function getSignalHistory(version: StrategyVersion, limit = 200): P
     entry_date: toDateStr(r.entry_date),
     exit_date: toDateStr(r.exit_date),
     pnl_pct: r.pnl_pct !== null && r.pnl_pct !== undefined ? parseFloat(r.pnl_pct) : null,
+    cubierta: r.cubierta ?? null,
   }));
   const closed = mapped.filter((r) => r.status !== null && r.status !== "OPEN" && r.pnl_pct !== null);
+  const medibles = closed.filter((r) => r.cubierta === true);
   return {
     version,
     rows: mapped,
     n_closed: closed.length,
     n_open: mapped.filter((r) => r.status === "OPEN").length,
-    win_rate: closed.length > 0 ? closed.filter((r) => (r.pnl_pct ?? 0) > 0).length / closed.length : null,
-    avg_pnl_pct: closed.length > 0 ? closed.reduce((s, r) => s + (r.pnl_pct ?? 0), 0) / closed.length : null,
+    win_rate: medibles.length > 0 ? medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length / medibles.length : null,
+    avg_pnl_pct: medibles.length > 0 ? medibles.reduce((s, r) => s + (r.pnl_pct ?? 0), 0) / medibles.length : null,
+    n_closed_sin_cubrir: closed.length - medibles.length,
   };
 }
