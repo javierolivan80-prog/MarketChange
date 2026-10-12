@@ -305,15 +305,15 @@ export default async function FuncionaPage() {
             {NO_APLICA_CONFIANZA(t)}
           </p>
         ) : (
-        <div className="flex flex-col gap-4 md:flex-row">
+        <div className="grid gap-4 lg:grid-cols-3">
           {VERSION_ORDER.filter((ver) => report.versions[ver]).map((ver) => {
             const diag = report.versions[ver].confidence_calibration;
             const { label, adjustment } = interpretCalibration(diag, t);
             return (
-              <div key={ver} className="min-w-[300px] flex-1 border border-border-subtle bg-surface p-4">
+              <div key={ver} className="min-w-0 border border-border-subtle bg-surface p-4">
                 <h3 className="mb-3 text-base font-semibold text-foreground">{versionLabel(ver, locale)}</h3>
                 <CalibrationCurve buckets={diag.buckets} />
-                <p className="mb-3 mt-1 text-[10px] text-text-tertiary">
+                <p className="mb-3 mt-1 text-xs text-text-tertiary">
                   {t("Línea de referencia = calibración perfecta · tamaño del punto = nº de casos", "Reference line = perfect calibration · dot size = number of cases")}
                 </p>
                 <p className="mb-1 text-sm font-medium text-foreground">{label}</p>

@@ -35,7 +35,7 @@ export function LanguageToggle() {
           onClick={() => choose(o.value)}
           aria-pressed={locale === o.value}
           title={o.name}
-          className={`px-2 py-1 font-mono ${
+          className={`min-h-9 px-2 font-mono pointer-coarse:min-h-11 pointer-coarse:px-3 active:bg-surface-raised ${
             locale === o.value ? "font-semibold text-foreground" : "text-text-tertiary hover:text-foreground"
           }`}
         >

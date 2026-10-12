@@ -6,7 +6,7 @@
 // más de los últimos 10, documentado en paper_trading/report.py; con el
 // volumen de una semana de POC, 10 alcanza casi siempre).
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartTooltipMotion } from "@/lib/motion";
+import { chartAxisTick, chartTooltipMotion } from "@/lib/motion";
 import { useChartMotion } from "@/components/viz/useChartMotion";
 import type { PaperClosedTrade } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -29,10 +29,10 @@ export function DailyPnLChart({ trades }: { trades: PaperClosedTrade[] }) {
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+        <BarChart data={data} margin={{ top: 4, right: 44, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-          <YAxis tick={{ fontSize: 10 }} unit="%" width={40} />
+          <XAxis dataKey="date" tick={chartAxisTick} />
+          <YAxis tick={chartAxisTick} unit="%" width={56} />
           <Tooltip {...chartTooltipMotion} formatter={(value) => `${Number(value).toFixed(2)}%`} />
           <Bar {...seriesMotion} dataKey="pnl">
             {data.map((d, i) => (

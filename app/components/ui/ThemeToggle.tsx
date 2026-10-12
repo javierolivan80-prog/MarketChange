@@ -1,43 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useT } from "@/components/i18n/LocaleProvider";
 
-// ThemeToggle.tsx — selector manual claro/oscuro persistente (localStorage),
-// en vez de depender solo de prefers-color-scheme: en un puesto de trabajo,
-// el usuario decide su tema con independencia del SO (mismo patrón que
-// cualquier terminal profesional). El script sin-flash que fija la clase
-// ANTES del primer pintado vive en layout.tsx.
+// ThemeToggle.tsx — selector manual claro/oscuro persistente (localStorage).
+// La app abre en oscuro (decisión del usuario, ver layout.tsx) y pasa a claro
+// solo si se elige aquí. El script sin-flash que fija la clase ANTES del
+// primer pintado vive en layout.tsx.
 //
-// El botón dice la ACCIÓN ("Modo claro"), no el estado actual: antes ponía
-// "Oscuro" estando ya en oscuro, y no quedaba claro si era lo que había o lo
-// que iba a pasar.
+// El botón dice la ACCIÓN ("Modo claro"), no el estado actual. La etiqueta
+// la decide el CSS (dark:) en vez de un estado de React: antes el servidor
+// pintaba "Modo oscuro", y tras hidratar cambiaba a "Modo claro" (un
+// parpadeo en cada carga que además movía la cabecera).
+//
+// El cambio de tema se funde con una transición de vista cuando el
+// navegador la tiene y el usuario no pide menos movimiento, en vez de saltar
+// de golpe de negro a blanco (Tanda 12).
+
+function aplicarTema(oscuro: boolean) {
+  document.documentElement.classList.toggle("dark", oscuro);
+  try {
+    localStorage.setItem("theme", oscuro ? "dark" : "light");
+  } catch {
+    // localStorage puede fallar (modo privado); no es crítico para la función.
+  }
+}
 
 export function ThemeToggle() {
-  const [isDark, setIsDark] = useState(false);
   const t = useT();
 
-  useEffect(() => {
-    setIsDark(document.documentElement.classList.contains("dark"));
-  }, []);
-
   function toggle() {
-    const next = !isDark;
-    setIsDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem("theme", next ? "dark" : "light");
-    } catch {
-      // localStorage puede fallar (modo privado); no es crítico para la función.
+    const oscuro = !document.documentElement.classList.contains("dark");
+    const reducir = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+    if (!reducir && typeof doc.startViewTransition === "function") {
+      doc.startViewTransition(() => aplicarTema(oscuro));
+    } else {
+      aplicarTema(oscuro);
     }
   }
 
   return (
-    <Button variant="ghost" onClick={toggle} aria-label={isDark ? t("Cambiar a modo claro", "Switch to light mode") : t("Cambiar a modo oscuro", "Switch to dark mode")}
-      className="text-xs"
-    >
-      {isDark ? t("Modo claro", "Light mode") : t("Modo oscuro", "Dark mode")}
+    <Button variant="ghost" onClick={toggle} className="whitespace-nowrap text-xs">
+      <span className="dark:hidden">{t("Modo oscuro", "Dark mode")}</span>
+      <span className="hidden dark:inline">{t("Modo claro", "Light mode")}</span>
     </Button>
   );
 }

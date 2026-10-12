@@ -29,8 +29,12 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
   const nDisponibles = row.components.filter((c) => c.score !== null).length;
 
   return (
-    <div className="overflow-hidden border border-border-subtle">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="w-full p-4 text-left hover:bg-surface-raised">
+    <div className="border border-border-subtle">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full p-4 text-left [outline-offset:-2px] hover:bg-surface-raised active:bg-surface-sunken"
+      >
         <div className="flex items-center gap-4">
           <span className="num w-6 text-xs text-text-tertiary">{rank}</span>
           <div className="min-w-0 flex-1">
@@ -39,7 +43,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
           </div>
           <div className="text-right">
             <p className={`num text-2xl font-semibold ${scoreColorClass}`}>{row.total_score !== null ? row.total_score.toFixed(0) : "—"}</p>
-            <p className="num text-[10px] text-text-tertiary">
+            <p className="num text-xs text-text-tertiary">
               {nDisponibles}/5 {t("criterios", "criteria")} · {row.n_years}{" "}
               {row.n_years === 1 ? t("ejercicio", "fiscal year") : t("ejercicios", "fiscal years")}
             </p>
@@ -74,7 +78,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
             </div>
           ))}
           {row.price_used !== null && (
-            <p className="num pt-1 text-[10px] text-text-tertiary">
+            <p className="num pt-1 text-xs text-text-tertiary">
               {t(`Valorada con un precio de ${row.price_used.toFixed(2)} por acción.`, `Valued at a price of ${row.price_used.toFixed(2)} per share.`)}
             </p>
           )}

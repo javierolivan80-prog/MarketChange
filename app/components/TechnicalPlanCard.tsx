@@ -7,6 +7,7 @@
 //
 // Recibe el idioma como prop (lo pinta SignalAnalysis, servidor o cliente);
 // los textos que vienen del pipeline se traducen con lib/planText.ts.
+import { useId } from "react";
 import type { TechnicalPlan } from "@/lib/queries";
 import { makeT, type Locale, type T } from "@/lib/i18n";
 import { planReason, planText } from "@/lib/planText";
@@ -41,6 +42,8 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
 }
 
 export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan; locale?: Locale }) {
+  // Id único por tarjeta: en la tabla puede haber varias abiertas a la vez.
+  const tituloId = useId();
   const t = makeT(locale);
   const CHECK_LABELS = checkLabels(t);
   const COMPONENT_LABELS = componentLabels(t);
@@ -50,9 +53,9 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
   const long = plan.direction === "LONG";
 
   return (
-    <section className="mb-4 border border-border-strong bg-surface p-3" aria-labelledby="plan-tecnico">
+    <section className="mb-4 border border-border-strong bg-surface p-3" aria-labelledby={tituloId}>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 id="plan-tecnico" className="text-xs font-semibold uppercase tracking-wide text-foreground">
+        <h3 id={tituloId} className="text-xs font-semibold uppercase tracking-wide text-foreground">
           {t("Plan técnico", "Technical plan")}
         </h3>
         <p className={`text-sm font-medium ${plan.passes_filters ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>

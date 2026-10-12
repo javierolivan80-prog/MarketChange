@@ -13,7 +13,7 @@
 // jsPDF + autotable pesan ~150 kB: se cargan con import() al pulsar el botón,
 // no en cada visita a /cartera (antes eran el grueso de su JS inicial, para
 // una acción que la mayoría de visitas nunca hace).
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 import type { PortfolioReport, StrategyVersion } from "@/lib/queries";
@@ -23,7 +23,12 @@ import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 const VERSIONS: StrategyVersion[] = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"];
 
 export function ExportPdfButton({ report }: { report: PortfolioReport }) {
-  const [busy, setBusy] = useState(false);
+  // "generando" mientras se construye; "hecho" o "error" unos segundos después
+  // (antes un fallo de jsPDF se tragaba en silencio y el botón volvía a su
+  // texto como si nada).
+  const [estado, setEstado] = useState<"reposo" | "generando" | "hecho" | "error">("reposo");
+  const temporizador = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(temporizador.current), []);
   const t = useT();
   const locale = useLocale();
   const vl = (v: StrategyVersion) => versionLabel(v, locale);
@@ -31,12 +36,19 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
   const erl = (r: string | null | undefined) => exitReasonLabel(r, locale);
 
   async function handleExport() {
-    setBusy(true);
+    // Sin disabled mientras genera: un botón que se deshabilita con el foco
+    // encima lo pierde (el teclado vuelve al principio de la página).
+    if (estado === "generando") return;
+    clearTimeout(temporizador.current);
+    setEstado("generando");
     try {
       await buildPdf();
-    } finally {
-      setBusy(false);
+      setEstado("hecho");
+    } catch (e) {
+      console.error("No se pudo generar el PDF", e);
+      setEstado("error");
     }
+    temporizador.current = setTimeout(() => setEstado("reposo"), 4000);
   }
 
   async function buildPdf() {
@@ -167,12 +179,26 @@ export function ExportPdfButton({ report }: { report: PortfolioReport }) {
     doc.save(`marketchange-${t("resultados", "results")}-${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
+  const etiqueta = {
+    reposo: t("Exportar informe (PDF)", "Export report (PDF)"),
+    generando: t("Generando…", "Generating…"),
+    hecho: t("Informe descargado", "Report downloaded"),
+    error: t("Error al exportar", "Export failed"),
+  }[estado];
+
   return (
-    <Button onClick={handleExport} disabled={busy} aria-live="polite">
-      <span key={String(busy)} className={busy ? "m-fade" : undefined}>
-        {busy ? t("Generando…", "Generating…") : t("Exportar informe (PDF)", "Export report (PDF)")}
+    <>
+      {/* Ancho mínimo fijo: el botón no cambia de tamaño al cambiar el texto. */}
+      <Button onClick={handleExport} aria-busy={estado === "generando"} className="min-w-52 aria-busy:cursor-wait">
+        <span key={estado} className={estado === "reposo" ? undefined : estado === "error" ? "m-fade text-rose-700 dark:text-rose-400" : "m-fade"}>
+          {etiqueta}
+        </span>
+      </Button>
+      {/* Aviso para lectores de pantalla fuera del botón (ver ExportCsvButton). */}
+      <span role="status" className="sr-only">
+        {estado === "reposo" ? "" : etiqueta}
       </span>
-    </Button>
+    </>
   );
 }
 

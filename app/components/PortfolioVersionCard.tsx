@@ -34,8 +34,8 @@ export function PortfolioVersionCard({
   const eventTypeRows = Object.values(report.metrics_by_event_type);
 
   return (
-    <div className="flex-1 min-w-[300px] border border-border-subtle bg-surface p-4">
-      <h2 className="mb-3 text-base font-semibold tracking-tight text-foreground">{versionLabel(report.version, locale)}</h2>
+    <div className="min-w-0 border border-border-subtle bg-surface p-4">
+      <h2 className="mb-3 text-base font-semibold text-foreground">{versionLabel(report.version, locale)}</h2>
 
       {no_lookahead_violations.length > 0 && (
         <Callout kind="critical" className="mb-3">
@@ -218,7 +218,7 @@ export function PortfolioVersionCard({
                     {eventClassLabel(row.event_type, locale)}
                     {row.insufficient_sample && (
                       <span
-                        className="ml-1.5 bg-amber-50 px-1 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                        className="ml-1.5 bg-amber-50 px-1 text-xs font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
                         title={t("n < 20 — muestra insuficiente", "n < 20 — sample too small")}
                       >
                         {t("n bajo", "low n")}

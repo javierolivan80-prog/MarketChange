@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import { getT } from "@/lib/locale";
 
@@ -29,6 +30,13 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 export default async function ComoFuncionaPage() {
   const { t } = await getT();
   const strong = (text: string, className?: string) => <strong className={className}>{text}</strong>;
+  // Las pestañas que se nombran en el texto llevan a ellas: antes había que
+  // buscarlas en la barra de arriba.
+  const pestana = (text: string, href: string, className?: string) => (
+    <Link href={href} className={`font-semibold underline decoration-border-strong underline-offset-2 hover:decoration-current ${className ?? ""}`}>
+      {text}
+    </Link>
+  );
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
@@ -131,9 +139,9 @@ export default async function ComoFuncionaPage() {
               "Cada señal se mide con reglas realistas (comisiones, entrada al día siguiente, stop-loss, objetivo de beneficio) de dos formas: aplicada a todos los eventos pasados (",
               "Each signal is measured with realistic rules (fees, entry the next day, stop-loss, profit target) in two ways: applied to all past events (",
             )}
-            {strong(t("Cartera", "Portfolio"))}
+            {pestana(t("Cartera", "Portfolio"), "/cartera")}
             {t(") y, desde que se publica, con los precios reales de mercado (", ") and, from the moment it is published, at real market prices (")}
-            {strong(t("Historial", "Track record"))}
+            {pestana(t("Historial", "Track record"), "/historial")}
             {t("). Así se ve si lo que funcionó en el pasado se sigue cumpliendo.", "). That shows whether what worked in the past still holds.")}
           </p>
         </Step>
@@ -144,7 +152,7 @@ export default async function ComoFuncionaPage() {
               "Por último, se audita el propio sistema: ¿el tipo de evento mueve el precio de forma estadísticamente real, o podría ser ruido? ¿El sistema sabe cuándo confiar en sí mismo (si dice “80% seguro”, acierta de verdad el 80% de las veces)? ¿El resultado se mantiene si suben las comisiones o cambia el mercado? Todo esto está en la pestaña ",
               "Finally, the system audits itself: does the event type move the price in a statistically real way, or could it be noise? Does the system know when to trust itself (if it says “80% sure”, is it really right 80% of the time)? Does the result hold if fees rise or the market changes? All of this is in the ",
             )}
-            {strong(t("Fiabilidad", "Reliability"))}
+            {pestana(t("Fiabilidad", "Reliability"), "/funciona")}
             {t("", " tab.")}
           </p>
         </Step>
@@ -156,7 +164,7 @@ export default async function ComoFuncionaPage() {
           {t("Todo lo de arriba va de ", "Everything above is about ")}
           {strong(t("eventos", "events"), "text-foreground")}
           {t(" y horizonte de días. La pestaña ", " and a horizon of days. The ")}
-          {strong(t("Largo plazo", "Long term"), "text-foreground")}
+          {pestana(t("Largo plazo", "Long term"), "/largo-plazo", "text-foreground")}
           {t(" responde una pregunta completamente distinta: ", " page answers a completely different question: ")}
           <em>{t("¿es este un buen negocio a un precio razonable?", "is this a good business at a reasonable price?")}</em>
           {t(", con horizonte de años.", ", with a horizon of years.")}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { downloadCsv } from "@/lib/csv";
 import { Button } from "@/components/ui/Button";
 import type { SignalFeedRow } from "@/lib/queries";
@@ -12,12 +12,25 @@ import { useT } from "@/components/i18n/LocaleProvider";
 export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
   // Sin confirmación, el clic no tenía ninguna respuesta visible: el CSV
   // aparecía (o no) en las descargas del navegador, fuera de la página.
-  const [done, setDone] = useState(false);
+  // "Descargado" solo si la descarga se lanzó de verdad; si falla, se dice.
+  const [estado, setEstado] = useState<"reposo" | "hecho" | "error">("reposo");
+  const temporizador = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(temporizador.current), []);
   const t = useT();
 
   function handleExport() {
-    setDone(true);
-    setTimeout(() => setDone(false), 2500);
+    try {
+      generar();
+      setEstado("hecho");
+    } catch (e) {
+      console.error("No se pudo generar el CSV", e);
+      setEstado("error");
+    }
+    clearTimeout(temporizador.current);
+    temporizador.current = setTimeout(() => setEstado("reposo"), 4000);
+  }
+
+  function generar() {
     downloadCsv(
       `marketchange-${t("senales", "signals")}-${new Date().toISOString().slice(0, 10)}.csv`,
       [
@@ -57,13 +70,27 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
     );
   }
 
+  const aviso =
+    estado === "hecho"
+      ? `${t("Descargado", "Downloaded")} (${rows.length})`
+      : estado === "error"
+        ? t("Error al exportar", "Export failed")
+        : "";
+
   return (
-    // aria-live: la confirmación "Descargado" también llega a lectores de pantalla.
-    <Button onClick={handleExport} aria-live="polite">
-      {/* Crossfade solo al confirmar: la etiqueta de reposo no se anima al cargar la página. */}
-      <span key={String(done)} className={done ? "m-fade" : undefined}>
-        {done ? `${t("Descargado", "Downloaded")} (${rows.length})` : t("Exportar (CSV)", "Export (CSV)")}
+    <>
+      {/* Ancho mínimo fijo: el botón no cambia de tamaño al cambiar el texto. */}
+      <Button onClick={handleExport} className="min-w-40">
+        {/* Crossfade solo al confirmar: la etiqueta de reposo no se anima al cargar la página. */}
+        <span key={estado} className={estado === "reposo" ? undefined : estado === "error" ? "m-fade text-rose-700 dark:text-rose-400" : "m-fade"}>
+          {aviso || t("Exportar (CSV)", "Export (CSV)")}
+        </span>
+      </Button>
+      {/* Aviso para lectores de pantalla fuera del botón: un aria-live sobre el
+          propio botón también se leía al enfocarlo y no siempre anunciaba el cambio. */}
+      <span role="status" className="sr-only">
+        {aviso}
       </span>
-    </Button>
+    </>
   );
 }

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { LanguageToggle } from "@/components/ui/LanguageToggle";
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -31,6 +32,35 @@ export function Nav({ active }: { active?: string }) {
   const pathname = usePathname();
   const current = pathname ?? active ?? "";
   const t = useT();
+  // En móvil las pestañas no caben (Tanda 12): la activa se desplaza a la
+  // vista y un degradado en el borde avisa de que hay más mientras quede
+  // contenido por ese lado.
+  const tira = useRef<HTMLDivElement>(null);
+  const [mas, setMas] = useState({ izquierda: false, derecha: false });
+
+  function medir() {
+    const el = tira.current;
+    if (!el) return;
+    setMas({ izquierda: el.scrollLeft > 4, derecha: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+  }
+
+  useEffect(() => {
+    const el = tira.current;
+    const activa = el?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (el && activa && (activa.offsetLeft < el.scrollLeft || activa.offsetLeft + activa.offsetWidth > el.scrollLeft + el.clientWidth)) {
+      el.scrollLeft = activa.offsetLeft - 16;
+    }
+    medir();
+  }, [current]);
+
+  const mascara =
+    mas.izquierda && mas.derecha
+      ? "[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]"
+      : mas.derecha
+        ? "[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]"
+        : mas.izquierda
+          ? "[mask-image:linear-gradient(to_right,transparent,black_2rem)]"
+          : "";
 
   return (
     <header className="mb-5 border-b border-border-subtle">
@@ -43,8 +73,8 @@ export function Nav({ active }: { active?: string }) {
           <ThemeToggle />
         </div>
       </div>
-      <nav aria-label={t("Secciones", "Sections")} className="-mb-px mt-2 overflow-x-auto">
-        <div className="flex gap-1">
+      <nav aria-label={t("Secciones", "Sections")} className="-mb-px mt-2">
+        <div ref={tira} onScroll={medir} className={`flex gap-1 overflow-x-auto [scrollbar-width:none] ${mascara}`}>
           {TABS.map((tab) => {
             const isActive = tab.href === "/" ? current === "/" : current.startsWith(tab.href);
             return (
@@ -52,7 +82,7 @@ export function Nav({ active }: { active?: string }) {
                 key={tab.href}
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
-                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
+                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm pointer-coarse:py-3 active:bg-surface-raised ${
  isActive
                     ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
                     : "border-transparent text-text-secondary hover:text-foreground"

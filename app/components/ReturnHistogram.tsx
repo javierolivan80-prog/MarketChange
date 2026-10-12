@@ -6,7 +6,7 @@
 // trivial sobre datos ya presentes en all_trades, a diferencia de las
 // fórmulas financieras (Sharpe, calibración) que sí viven en Python.
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartTooltipMotion } from "@/lib/motion";
+import { chartAxisTick, chartTooltipMotion } from "@/lib/motion";
 import { useChartMotion } from "@/components/viz/useChartMotion";
 import { useT } from "@/components/i18n/LocaleProvider";
 
@@ -40,7 +40,7 @@ export function ReturnHistogram({ pnlPcts }: { pnlPcts: number[] }) {
         <BarChart data={bins} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
           <XAxis dataKey="label" tick={{ fontSize: 9 }} unit="%" />
-          <YAxis tick={{ fontSize: 10 }} width={30} allowDecimals={false} />
+          <YAxis tick={chartAxisTick} width={30} allowDecimals={false} />
           <Tooltip {...chartTooltipMotion}
             formatter={(value, _name, item) => [
               `${value} ${t("operaciones", "trades")}`,

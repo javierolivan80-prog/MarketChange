@@ -7,7 +7,7 @@
 // es un resumen agregado ya calculado por compute_equity_metrics; esto es
 // la SERIE completa punto a punto, que ese resumen no expone).
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartTooltipMotion } from "@/lib/motion";
+import { chartAxisTick, chartTooltipMotion } from "@/lib/motion";
 import { useChartMotion } from "@/components/viz/useChartMotion";
 import type { PortfolioEquityPoint } from "@/lib/queries";
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -29,10 +29,10 @@ export function DrawdownChart({ equityCurve }: { equityCurve: PortfolioEquityPoi
   return (
     <div className="h-40 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+        <AreaChart data={data} margin={{ top: 4, right: 44, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-          <XAxis dataKey="seq" type="number" domain={["dataMin", "dataMax"]} tick={{ fontSize: 10 }} tickFormatter={(seq: number) => dateBySeq.get(seq) ?? ""} minTickGap={40} />
-          <YAxis tick={{ fontSize: 10 }} unit="%" width={40} />
+          <XAxis dataKey="seq" type="number" domain={["dataMin", "dataMax"]} tick={chartAxisTick} tickFormatter={(seq: number) => dateBySeq.get(seq) ?? ""} minTickGap={40} />
+          <YAxis tick={chartAxisTick} unit="%" width={56} />
           <Tooltip {...chartTooltipMotion} formatter={(value) => `${Number(value).toFixed(2)}%`} labelFormatter={(seq) => `${t("Fecha", "Date")}: ${dateBySeq.get(Number(seq)) ?? seq}`} />
           <Area {...seriesMotion} type="monotone" dataKey="drawdown" stroke="var(--loss)" fill="var(--loss)" fillOpacity={0.2} strokeWidth={1.5} />
         </AreaChart>

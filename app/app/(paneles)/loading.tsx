@@ -7,13 +7,16 @@
 // enviarse (con estado 200) antes de saber si la señal existe — una señal
 // inexistente devolvía 200 en vez de 404.
 import { getT } from "@/lib/locale";
+import { Nav } from "@/components/Nav";
 
 export default async function Loading() {
   const { t } = await getT();
   return (
     <main className="mx-auto max-w-5xl px-4 py-4 sm:px-6" aria-busy="true">
       <p className="sr-only">{t("Cargando…", "Loading…")}</p>
-      <div className="mb-6 h-14 border-b border-border-subtle" />
+      {/* La navegación de verdad, no un hueco (Tanda 12): al pulsar una pestaña
+          se ve marcada en el acto mientras llega la página. */}
+      <Nav />
       {/* Misma forma que una página de datos (título, franja de cifras,
           tabla), para que al llegar el contenido no salte nada de sitio. El
           pulso es .m-skeleton: poca amplitud y nada con movimiento reducido. */}

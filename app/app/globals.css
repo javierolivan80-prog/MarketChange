@@ -32,10 +32,16 @@
   --surface-sunken: var(--color-neutral-100);
   --foreground: var(--color-neutral-900);
   --text-secondary: var(--color-neutral-600);
-  --text-tertiary: var(--color-neutral-400);
+  /* neutral-500 (≈4,7:1 sobre blanco): con neutral-400 (≈2,6:1) las pistas,
+     fechas y el aviso legal no llegaban al mínimo AA (Tanda 12). */
+  --text-tertiary: var(--color-neutral-500);
   --border-subtle: var(--color-neutral-200);
   --border-strong: var(--color-neutral-300);
   --focus-ring: var(--color-accent-600);
+  /* Serie principal de los gráficos y su versión tenue (muestra pequeña):
+     más clara en oscuro para que no se pierda sobre negro (Tanda 12). */
+  --chart-series: var(--color-accent-600);
+  --chart-series-weak: var(--color-accent-300);
   /* Ganancia / pérdida en los gráficos (barras de riesgo-beneficio,
      resultados). Par validado para daltonismo con el validador de la skill de
      visualización (ΔE CVD 10.6 en claro, 8.3 en oscuro); en claro la pérdida
@@ -58,6 +64,11 @@
   --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
   --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --motion-shift: 4px;
+
+  /* Controles nativos (fechas, desplegables, barras de scroll) en el tema
+     de la página: sin esto, en oscuro salían claros y el icono del
+     calendario quedaba invisible sobre negro (Tanda 12). */
+  color-scheme: light;
 }
 
 /* Modo oscuro: negro real (no "gris oscuro" tipo neutral-950) — la app abre
@@ -75,12 +86,32 @@
   --surface-sunken: oklch(0 0 0);
   --foreground: oklch(0.97 0 0);
   --text-secondary: oklch(0.72 0 0);
-  --text-tertiary: oklch(0.52 0 0);
+  --text-tertiary: oklch(0.6 0 0);
   --border-subtle: oklch(0.2 0 0);
   --border-strong: oklch(0.32 0 0);
   --focus-ring: var(--color-accent-400);
+  --chart-series: var(--color-accent-400);
+  --chart-series-weak: var(--color-accent-800);
   --gain: #059669;
   --loss: #f43f5e;
+  color-scheme: dark;
+}
+
+/* Más contraste si el usuario lo pide en el sistema: texto secundario y
+   terciario más cerca del principal y bordes más marcados. */
+@media (prefers-contrast: more) {
+  :root {
+    --text-secondary: var(--color-neutral-800);
+    --text-tertiary: var(--color-neutral-700);
+    --border-subtle: var(--color-neutral-400);
+    --border-strong: var(--color-neutral-600);
+  }
+  .dark {
+    --text-secondary: oklch(0.88 0 0);
+    --text-tertiary: oklch(0.8 0 0);
+    --border-subtle: oklch(0.45 0 0);
+    --border-strong: oklch(0.6 0 0);
+  }
 }
 
 @theme inline {
@@ -120,6 +151,53 @@ body {
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+/* Respuesta al tocar (Tanda 12): los botones y desplegables dan su propia
+   señal al pulsar (active:), así que se quita el destello gris del
+   navegador móvil, y el preflight de Tailwind v4 deja el cursor por
+   defecto en los botones: se repone la mano. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary {
+  cursor: pointer;
+}
+
+/* Desplegables nativos: el mismo indicador ▸ que gira al abrir en toda la
+   app (antes unos tenían el triángulo del navegador, que no gira, y otros
+   uno propio). */
+summary {
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.375rem;
+  color: var(--text-tertiary);
+}
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+summary:active {
+  background: var(--surface-raised);
+}
+/* Con el dedo, objetivo de al menos ~44px de alto (guía de Apple). */
+@media (pointer: coarse) {
+  summary {
+    padding-block: 0.625rem;
+  }
+}
+
+/* Barras de datos dibujadas solo con color de fondo: con colores forzados
+   (alto contraste de Windows) desaparecían. Se conservan sus colores. */
+.viz-color {
+  forced-color-adjust: none;
 }
 
 /* Todas las cifras del producto (precios, %, P&L, confianza, EV) usan
@@ -248,6 +326,10 @@ html[data-welcome-dismissed] [data-welcome-note] {
   }
   .m-stagger > :nth-child(n + 3) {
     animation-delay: calc(var(--motion-stagger) * 2);
+  }
+
+  summary::before {
+    transition: transform var(--motion-duration-micro) var(--motion-ease-out);
   }
 
   /* Paneles plegables nativos: lo que se despliega entra con un fundido y

@@ -9,7 +9,7 @@
 // solo para esta línea sería más ingeniería de la que pide el spec (que
 // solo pide ver el R², no una ecuación).
 import { CartesianGrid, Line, ComposedChart, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
-import { chartTooltipMotion, motion } from "@/lib/motion";
+import { chartAxisTick, chartTooltipMotion, motion } from "@/lib/motion";
 import { useChartMotion } from "@/components/viz/useChartMotion";
 import { useT } from "@/components/i18n/LocaleProvider";
 
@@ -38,7 +38,7 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               dataKey="predicted"
               type="number"
               name={t("Predicho (EV%)", "Predicted (EV%)")}
-              tick={{ fontSize: 10 }}
+              tick={chartAxisTick}
               unit="%"
               domain={[min, max]}
               tickFormatter={(v: number) => v.toFixed(1)}
@@ -47,9 +47,9 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               dataKey="actual"
               type="number"
               name={t("Real (%)", "Actual (%)")}
-              tick={{ fontSize: 10 }}
+              tick={chartAxisTick}
               unit="%"
-              width={40}
+              width={48}
               domain={[min, max]}
               tickFormatter={(v: number) => v.toFixed(1)}
             />
@@ -59,7 +59,7 @@ export function ScatterPredictedActual({ points, rSquared }: { points: { predict
               cursor={{ strokeDasharray: "3 3" }}
             />
             <Line isAnimationActive={false} data={diagonal} dataKey="actual" stroke="var(--border-strong)" strokeDasharray="4 3" dot={false} activeDot={false} legendType="none" name="y=x" />
-            <Scatter {...seriesMotion} data={points} fill="var(--color-accent-600)" fillOpacity={0.6} name={t("operaciones", "trades")} />
+            <Scatter {...seriesMotion} data={points} fill="var(--chart-series)" fillOpacity={0.6} name={t("operaciones", "trades")} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

@@ -77,7 +77,7 @@ export default async function CarteraPage() {
         <SampleBadge sample={report.sample} warning={report.oos_warning} />
         <div className="mb-4" />
 
-        <div className="flex flex-col gap-4 md:flex-row">
+        <div className="grid gap-4 lg:grid-cols-3">
           {VERSION_ORDER.filter((v) => report.versions[v]).map((version) => (
             <PortfolioVersionCard key={version} report={report.versions[version]} startingCapital={report.starting_capital} locale={locale} />
           ))}
@@ -136,11 +136,11 @@ export default async function CarteraPage() {
                 `From ${formatDate(paperReport.week_start, locale)} to ${formatDate(paperReport.week_end, locale)}, at real market prices since each signal.`,
               )}
             </p>
-            <div className="flex flex-col gap-4 md:flex-row">
+            <div className="grid gap-4 lg:grid-cols-3">
               {VERSION_ORDER.filter((v) => paperReport.versions[v]).map((version) => {
                 const v = paperReport.versions[version];
                 return (
-                  <div key={version} className="min-w-[300px] flex-1 border border-border-subtle bg-surface p-4">
+                  <div key={version} className="min-w-0 border border-border-subtle bg-surface p-4">
                     <h3 className="mb-3 text-base font-semibold text-foreground">{versionLabel(version, locale)}</h3>
 
                     <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">

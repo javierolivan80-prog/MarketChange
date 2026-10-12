@@ -55,7 +55,7 @@ function Stat({ label, value, hint, children }: { label: string; value: string; 
   return (
     <div className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
       <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">{label}</p>
-      <p className="text-2xl font-semibold text-foreground">{value}</p>
+      <p className="num text-2xl font-semibold text-foreground">{value}</p>
       {children}
       {hint && <p className="mt-0.5 text-xs text-text-tertiary">{hint}</p>}
     </div>
@@ -159,7 +159,7 @@ export default async function InicioPage() {
               </thead>
               <tbody>
                 {recent.map((s) => (
-                  <tr key={s.event_id} className="border-b border-border-subtle hover:bg-surface-raised">
+                  <tr key={s.event_id} className="border-b border-border-subtle">
                     <td className="py-2 pl-3 pr-3">
                       <Link href={`/senales/${s.event_id}`} className="inline-flex items-center gap-2 hover:underline">
                         <span className="font-mono font-medium text-foreground">{s.ticker}</span>
@@ -229,7 +229,7 @@ export default async function InicioPage() {
           {abstention.reasons.length > 0 && (
             <HBars
               max={abstention.analyzed - abstention.traded}
-              labelWidth="minmax(0,18rem)"
+              labelWidth="minmax(0,min(18rem,45%))"
               rows={abstention.reasons.map((r) => ({ key: r.category, label: abstentionLabel(r.category, t), value: r.n }))}
               format={(n) => {
                 const discarded = abstention.analyzed - abstention.traded;

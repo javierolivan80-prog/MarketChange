@@ -12,8 +12,10 @@ import { Button } from "@/components/ui/Button";
 import { eventClassLabel } from "@/lib/labels";
 import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 
+// Con el dedo: 44px de alto y 16px de letra (con menos, Safari en iPhone
+// amplía la página al tocar el campo y hay que deshacer el zoom a mano).
 const INPUT =
-  " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600";
+  " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600 pointer-coarse:min-h-11 pointer-coarse:text-base";
 const LABEL = "text-xs font-medium text-text-secondary";
 
 export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) {
@@ -146,7 +148,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         </Button>
       </div>
       {active.length > 0 && (
-        <div className="flex w-full flex-wrap items-center gap-2 border-t border-border-subtle pt-3" aria-label={t("Filtros activos", "Active filters")}>
+        <div role="group" className="flex w-full flex-wrap items-center gap-2 border-t border-border-subtle pt-3" aria-label={t("Filtros activos", "Active filters")}>
           <span className="text-xs text-text-secondary">{t("Filtros activos:", "Active filters:")}</span>
           {active.map((f) => (
             <button
@@ -154,7 +156,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
               type="button"
               onClick={() => removeFilter(f.key)}
               aria-label={`${t("Quitar filtro", "Remove filter")} ${f.label}`}
-              className="inline-flex items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:border-accent-500 hover:bg-surface"
+              className="inline-flex min-h-7 items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:border-accent-500 hover:bg-surface active:bg-surface-sunken pointer-coarse:min-h-11 pointer-coarse:px-3"
             >
               {f.label}
               <span aria-hidden="true" className="text-text-tertiary">×</span>
