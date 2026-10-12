@@ -279,6 +279,25 @@ def slippage_bps_por_lado(market_cap_usd: float | None) -> float:
         return SLIPPAGE_BPS_PER_SIDE_LARGE
     return SLIPPAGE_BPS_PER_SIDE_SMALL
 
+
+# Comisión: 10 pb por vuelta completa (entrada + salida) y POR POSICIÓN.
+COMMISSION_BPS_ROUND_TRIP = 10.0
+# Pata de cobertura en SPY (Tanda 8): deslizamiento de gran capitalización.
+SLIPPAGE_BPS_COBERTURA_POR_LADO = SLIPPAGE_BPS_PER_SIDE_LARGE
+
+
+def coste_ida_y_vuelta_cubierta_bps(market_cap_usd: float | None) -> float:
+    """Coste de una operación cubierta con SPY, en pb del nocional de una
+    pata: la comisión de las dos posiciones más el deslizamiento de entrada
+    y salida de la acción (según su capitalización en D0) y de SPY. Es lo
+    mismo que resta el backtest (portfolio_simulator.consolidate_trade_record):
+    60 pb en una empresa grande y 90 pb en una pequeña o sin dato."""
+    return (
+        2 * COMMISSION_BPS_ROUND_TRIP
+        + 2 * slippage_bps_por_lado(market_cap_usd)
+        + 2 * SLIPPAGE_BPS_COBERTURA_POR_LADO
+    )
+
 # --- Memoria de tesis (hallazgo de auditoría: el sistema no recordaba por qué
 # emitió una alerta ayer). Ver pipeline/backtest/thesis_engine.py para la
 # lógica completa. Desactivada por defecto — se activa explícitamente para

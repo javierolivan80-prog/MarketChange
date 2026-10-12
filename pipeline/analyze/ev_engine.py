@@ -43,6 +43,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pipeline import config
+
 # Umbrales de EV por versión de estrategia (fracción, no %): 0.008 = 0.8%.
 # BUGS_REPORT.md H-21: estaban al revés de lo que dice el docstring de este
 # módulo (Conservadora 0,2 % < Agresiva 0,8 %). Decisión del usuario
@@ -53,10 +55,21 @@ EV_THRESHOLDS = {
     "BALANCED": 0.005,
     "AGGRESSIVE": 0.002,
 }
-# Margen sumado al umbral de cada versión "hasta después de fees". Vive aquí
-# para que la abstención (que decide) y el texto de _threshold_check (que lo
-# enseña la app) usen exactamente la misma comparación (H-22).
-EV_ABSTENTION_BUFFER = 0.0050  # 50 bps
+# Margen sumado al umbral de cada versión para que el EV cubra los costes.
+# Vive aquí para que la abstención (que decide) y el texto de _threshold_check
+# (que lo enseña la app) usen exactamente la misma comparación (H-22).
+#
+# Antes era un fijo de 50 pb, de cuando cada operación tenía una sola pata.
+# Con la cobertura con SPY (Tanda 8) una operación cuesta 60-90 pb de ida y
+# vuelta, más que ese margen. Ahora es ese coste, según la capitalización en
+# D0 (Tanda 9; decisión tomada con la opción recomendada, delegada por el
+# usuario): 60 pb en empresas grandes y 90 pb en pequeñas o sin dato.
+
+
+def margen_ev(market_cap_usd: float | None) -> float:
+    """Margen (fracción) sobre el umbral: el coste de ida y vuelta de una
+    operación cubierta (config.coste_ida_y_vuelta_cubierta_bps)."""
+    return config.coste_ida_y_vuelta_cubierta_bps(market_cap_usd) / 10_000
 
 # Multiplicadores de magnitud — ver docstring del módulo para el porqué.
 _MAGNITUDE_MULTIPLIER = {
@@ -130,12 +143,12 @@ def _raw_point_estimate(
     return net_conviction * abs(expected_magnitude_pct) / 100 * (confidence_in_conviction / 100) * (impact_confidence / 100)
 
 
-def _threshold_check(ev: float, strategy: str) -> str:
+def _threshold_check(ev: float, strategy: str, market_cap_usd: float | None = None) -> str:
     """Texto del check de umbral que enseña la app. BUGS_REPORT.md H-22: antes
     comparaba el EV CON SIGNO sin buffer, así que todo SHORT salía como
     NO_TRADE aunque la abstención lo operara. Ahora es la misma comparación que
-    abstention_engine.decide_for_strategy: |EV| contra umbral + buffer."""
-    threshold = EV_THRESHOLDS[strategy] + EV_ABSTENTION_BUFFER
+    abstention_engine.decide_for_strategy: |EV| contra umbral + margen de costes."""
+    threshold = EV_THRESHOLDS[strategy] + margen_ev(market_cap_usd)
     supera = abs(ev) >= threshold
     decision = "TRADE" if supera else "NO_TRADE"
     return f"|EV|={abs(ev) * 100:.2f}% {'>=' if supera else '<'} {threshold * 100:.1f}% → {decision}"
@@ -164,9 +177,11 @@ def compute_ev(
     confidence_in_conviction: float,
     expected_magnitude_pct: float,
     impact_confidence: float,
+    market_cap_usd: float | None = None,
 ) -> EVResult:
     """Punto de entrada de la Etapa 7. Ver _raw_point_estimate para el
-    significado exacto de cada argumento."""
+    significado exacto de cada argumento. `market_cap_usd` (capitalización en
+    D0) solo decide el margen de costes del texto de umbral (margen_ev)."""
     raw = _raw_point_estimate(net_conviction, confidence_in_conviction, expected_magnitude_pct, impact_confidence)
 
     ev_conservative = raw * _MAGNITUDE_MULTIPLIER["CONSERVATIVE"]
@@ -189,8 +204,8 @@ def compute_ev(
         position_sizing_conservative_pct=position_size_pct(ev_conservative, confidence_in_conviction, "CONSERVATIVE"),
         position_sizing_aggressive_pct=position_size_pct(ev_aggressive, confidence_in_conviction, "AGGRESSIVE"),
         position_sizing_balanced_pct=position_size_pct(ev_balanced, confidence_in_conviction, "BALANCED"),
-        threshold_conservative=_threshold_check(ev_conservative, "CONSERVATIVE"),
-        threshold_aggressive=_threshold_check(ev_aggressive, "AGGRESSIVE"),
-        threshold_balanced=_threshold_check(ev_balanced, "BALANCED"),
+        threshold_conservative=_threshold_check(ev_conservative, "CONSERVATIVE", market_cap_usd),
+        threshold_aggressive=_threshold_check(ev_aggressive, "AGGRESSIVE", market_cap_usd),
+        threshold_balanced=_threshold_check(ev_balanced, "BALANCED", market_cap_usd),
         reasoning=reasoning,
     )

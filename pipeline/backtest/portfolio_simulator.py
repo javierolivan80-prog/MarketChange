@@ -77,7 +77,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from pipeline import config
-from pipeline.config import SLIPPAGE_BPS_PER_SIDE_LARGE, SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
+from pipeline.config import SLIPPAGE_BPS_PER_SIDE_SMALL, slippage_bps_por_lado
 from pipeline.analyze.historical_analogues import estimate_impact_for_event, get_historical_analogues
 from pipeline.backtest import thesis_engine
 from pipeline.backtest.portfolio_strategies import (
@@ -93,7 +93,7 @@ from pipeline.ingest.splits import PRECIO_NEGOCIADO_SQL
 
 logger = logging.getLogger(__name__)
 
-COMMISSION_BPS_ROUND_TRIP = 10.0  # 0.10%, ver docstring del módulo
+COMMISSION_BPS_ROUND_TRIP = config.COMMISSION_BPS_ROUND_TRIP  # 0.10% por posición, ver docstring del módulo
 
 # Capitalización en D0 para el deslizamiento (H-32): acciones del último 10-K
 # PUBLICADO antes de D0 (fundamentals.filed_at, sin look-ahead) × precio
@@ -257,7 +257,7 @@ def gain_pct(direction: str, entry_price: float, price: float) -> float:
 
 # Cobertura con SPY (ver "COBERTURA CON SPY" en el docstring del módulo).
 TICKER_COBERTURA = "SPY"
-SLIPPAGE_BPS_COBERTURA_POR_LADO = SLIPPAGE_BPS_PER_SIDE_LARGE
+SLIPPAGE_BPS_COBERTURA_POR_LADO = config.SLIPPAGE_BPS_COBERTURA_POR_LADO
 # Cierres de nivel que pueden ejecutarse a la apertura por un hueco
 # (fill_con_gap); MAX_HOLDING/EXPIRED/DATA_GAP son siempre al cierre.
 MOTIVOS_CON_HUECO = frozenset({"STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP"})

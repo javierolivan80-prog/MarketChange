@@ -334,6 +334,14 @@ app tolera que las columnas `spy_*` aún no existan (se crean en la siguiente
 pasada nocturna), así que el orden de despliegue no importa. Los avisos de
 Telegram dicen qué hacer con la pata de SPY al entrar y al salir.
 
+**Margen del EV (Tanda 9).** Para operar, |EV| debe superar el umbral de la
+estrategia más el coste de una operación cubierta según la capitalización en
+D0: 60 pb en empresas grandes y 90 pb en pequeñas o sin dato
+(`ev_engine.margen_ev`). Al cambiar la regla (método `analogos_signo_v4`), la
+regla sin IA de los análisis guardados se recalcula en el paso de backtest; si
+no termina en una noche, sigue en la siguiente y el informe lo dice en
+`cobertura_regla`.
+
 **Circuit-breaker de drawdown de cartera** (hallazgo de auditoría, prioridad
 máxima — protección de capital): si el drawdown pico-a-valle de la equity de
 UNA versión alcanza el 15%

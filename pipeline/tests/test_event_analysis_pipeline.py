@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
 from pipeline.tests.fake_batch_api import validar_requests_como_la_api
 
 pytestmark = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
@@ -939,7 +940,7 @@ def test_sin_ia_solo_cambia_el_origen_de_net_conviction():
     esperado = compute_ev(-1.0, 90.0, -6.0, 70.0)
     assert control["ev_balanced"] == pytest.approx(esperado.ev_balanced)
     assert control["decisiones"]["BALANCED"]["trade_decision"] == "SHORT"
-    assert control["metodo"] == "analogos_signo_v3" and control["n_analogues"] == 60
+    assert control["metodo"] == METODO_SIN_IA and control["n_analogues"] == 60
 
 
 @pytest.mark.parametrize("direccion", [1.0, -1.0, 0.0])
@@ -1030,7 +1031,7 @@ def test_el_analisis_guarda_la_decision_sin_ia_junto_a_la_real(conn, sin_techo_d
         cur.execute("SELECT net_conviction, decision_sin_ia FROM event_analyses")
         fila = cur.fetchone()
     control = fila["decision_sin_ia"]
-    assert control is not None and control["metodo"] == "analogos_signo_v3"
+    assert control is not None and control["metodo"] == METODO_SIN_IA
     assert set(control["decisiones"]) == {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}
     # Sin análogos sembrados el control no tiene dirección: nunca opera.
     assert control["net_conviction"] == 0.0
@@ -1101,7 +1102,7 @@ def test_backfill_calcula_el_control_de_los_analisis_antiguos(conn, sin_techo_de
         cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
         control = cur.fetchone()["decision_sin_ia"]
     assert control["recalculado"] is True and control["net_conviction"] == 1.0
-    assert control["metodo"] == "analogos_signo_v3" and control["confidence_in_conviction"] == pytest.approx(80.0)
+    assert control["metodo"] == METODO_SIN_IA and control["confidence_in_conviction"] == pytest.approx(80.0)
     assert control["regla_historica"]["confidence_in_conviction"] == 100.0
     assert control["regla_historica"]["net_conviction"] == 1.0
 
@@ -1463,3 +1464,36 @@ def test_la_cola_no_coge_un_d0_que_aun_no_ha_cerrado(conn, monkeypatch):
     assert [e for e in eap.fetch_events_needing_analysis(conn, require_d0_bar=True) if e["event_id"] == evento] == []
     monkeypatch.setattr(eap, "hoy_en_nueva_york", lambda: dates[281].date())
     assert [e["event_id"] for e in eap.fetch_events_needing_analysis(conn, require_d0_bar=True)] == [evento]
+
+
+def test_el_margen_del_umbral_usa_la_capitalizacion_en_d0(conn, corte_real, sin_techo_de_ev):
+    """Tanda 9: con 10-K anterior a D0, la capitalización en D0 es acciones ×
+    precio de D0, y el umbral guardado lleva el margen de empresa grande
+    (60 pb); sin 10-K, el de pequeña (90 pb)."""
+    from pipeline.analyze.event_analysis_pipeline import analizar_antes_del_corte, capitalizacion_en_d0
+    from pipeline.analyze.ev_engine import EV_THRESHOLDS
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    _sembrar_analogos(conn, dates)
+    d0 = dates[280].date()
+    objetivo = _seed_event(conn, "1", "TESTCO", d0)
+    _con_capitalizacion(conn)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE universe SET in_investable_universe = FALSE WHERE ticker LIKE 'AN%%'")
+    conn.commit()
+    assert capitalizacion_en_d0(conn, objetivo) is None  # sin 10-K
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) VALUES ('1', %s, %s, '10-K', 1e9)",
+            (d0.replace(year=d0.year - 1), d0.replace(year=d0.year - 1)),
+        )
+    conn.commit()
+    capitalizacion = capitalizacion_en_d0(conn, objetivo)
+    assert capitalizacion is not None and capitalizacion >= 10e9
+
+    analizar_antes_del_corte(conn, min_market_cap=0)
+    with conn.cursor() as cur:
+        cur.execute("SELECT ev_calculation FROM event_analyses WHERE event_id = %s", (objetivo,))
+        umbral = cur.fetchone()["ev_calculation"]["threshold_balanced"]
+    assert f"{(EV_THRESHOLDS['BALANCED'] + 0.0060) * 100:.1f}%" in umbral

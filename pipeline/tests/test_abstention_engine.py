@@ -64,8 +64,8 @@ def test_rule_2_confidence_below_floor():
 
 def test_rule_3_ev_below_buffered_threshold_per_strategy():
     # EV justo por encima del umbral crudo de Balanced pero por debajo del
-    # umbral + 50bps de buffer -> debe abstenerse.
-    just_above_raw = EV_THRESHOLDS["BALANCED"] + 0.0010  # +10bps sobre el umbral crudo, insuficiente con el buffer de 50bps
+    # umbral + el margen de costes -> debe abstenerse.
+    just_above_raw = EV_THRESHOLDS["BALANCED"] + 0.0010  # +10bps sobre el umbral crudo, insuficiente con los costes
     decision = decide_for_strategy(_clean_inputs(ev_by_strategy={"CONSERVATIVE": 0.05, "BALANCED": just_above_raw, "AGGRESSIVE": 0.05}), "BALANCED")
     assert decision.trade_decision == "NO_TRADE"
     assert "|ev|=" in decision.reason_if_no_trade
@@ -341,3 +341,28 @@ def test_ev_ceiling_matches_rule_3_of_decide_for_strategy():
         ]
         all_no_trade = all(d.trade_decision == "NO_TRADE" for d in decisions)
         assert (ev_ceiling_no_trade_reason(magnitude, conf) is not None) == all_no_trade, (magnitude, conf)
+
+
+def test_regla_3_el_margen_de_costes_depende_de_la_capitalizacion_en_d0():
+    """Tanda 9: el mismo EV opera en una empresa grande (costes 60 pb) y no
+    en una pequeña o sin dato (90 pb)."""
+    ev = EV_THRESHOLDS["BALANCED"] + 0.0075  # entre los dos márgenes
+    evs = {"CONSERVATIVE": 0.05, "BALANCED": ev, "AGGRESSIVE": 0.05}
+    grande = decide_for_strategy(_clean_inputs(ev_by_strategy=evs, market_cap_d0_usd=50e9), "BALANCED")
+    pequena = decide_for_strategy(_clean_inputs(ev_by_strategy=evs, market_cap_d0_usd=2e9), "BALANCED")
+    sin_dato = decide_for_strategy(_clean_inputs(ev_by_strategy=evs), "BALANCED")
+    assert grande.trade_decision in ("LONG", "SHORT")
+    assert pequena.trade_decision == "NO_TRADE" and "costes 90pb" in pequena.reason_if_no_trade
+    assert sin_dato.trade_decision == "NO_TRADE"
+
+
+def test_techo_de_ev_usa_el_margen_de_la_capitalizacion():
+    from pipeline.analyze.abstention_engine import ev_ceiling_no_trade_reason
+    from pipeline.analyze.ev_engine import compute_ev
+
+    # Magnitud con la que el mejor EV posible de Agresiva cae entre los dos márgenes.
+    magnitud = 0.5
+    mejor = compute_ev(1.0, 100.0, magnitud, 100.0).ev_aggressive
+    assert EV_THRESHOLDS["AGGRESSIVE"] + 0.0060 <= mejor < EV_THRESHOLDS["AGGRESSIVE"] + 0.0090
+    assert ev_ceiling_no_trade_reason(magnitud, 100.0, 50e9) is None
+    assert ev_ceiling_no_trade_reason(magnitud, 100.0, None) is not None
