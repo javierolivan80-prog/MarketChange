@@ -10,7 +10,7 @@ import { getT } from "@/lib/locale";
 export function StatePage({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <main className="mx-auto max-w-3xl px-4 pb-4 sm:px-6">
-      <h1 className="mb-4 text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+      <h1 className="mb-4 text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
       {children}
     </main>
   );

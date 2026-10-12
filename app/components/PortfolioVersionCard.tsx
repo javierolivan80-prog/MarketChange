@@ -56,15 +56,15 @@ export function PortfolioVersionCard({
       <div className="mb-3 grid grid-cols-3 gap-2">
         <div>
           <p className="text-xs text-text-secondary">{t("Resultado", "Return")}</p>
-          <p className="num text-xl font-semibold text-foreground">{formatFracAsPct(em.total_return, 1)}</p>
+          <p className="num text-xl leading-tight font-semibold tracking-tight text-foreground">{formatFracAsPct(em.total_return, 1)}</p>
         </div>
         <div>
           <p className="text-xs text-text-secondary">{t("Acierto", "Win rate")}</p>
-          <p className="num text-xl font-semibold text-foreground">{tm.win_rate !== null ? `${(tm.win_rate * 100).toFixed(0)}%` : "—"}</p>
+          <p className="num text-xl leading-tight font-semibold tracking-tight text-foreground">{tm.win_rate !== null ? `${(tm.win_rate * 100).toFixed(0)}%` : "—"}</p>
         </div>
         <div>
           <p className="text-xs text-text-secondary">{t("Peor caída", "Max drawdown")}</p>
-          <p className="num text-xl font-semibold text-foreground">{formatDrawdown(em.max_drawdown)}</p>
+          <p className="num text-xl leading-tight font-semibold tracking-tight text-foreground">{formatDrawdown(em.max_drawdown)}</p>
         </div>
       </div>
       <p className="num mb-3 text-xs text-text-tertiary">

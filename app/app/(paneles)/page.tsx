@@ -54,7 +54,7 @@ function Stat({ label, value, hint, children }: { label: string; value: string; 
   return (
     <div className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
       <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">{label}</p>
-      <p className="num text-2xl font-semibold text-foreground">{value}</p>
+      <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{value}</p>
       {children}
       {hint && <p className="mt-0.5 text-xs text-text-tertiary">{hint}</p>}
     </div>
@@ -97,7 +97,7 @@ export default async function InicioPage() {
     <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
 
       <header className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("Resumen", "Overview")}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{t("Resumen", "Overview")}</h1>
         <p className={`num text-xs ${isStale ? "text-amber-700 dark:text-amber-400" : "text-text-tertiary"}`}>
           {lastAnalyzed
             ? `${t("Actualizado", "Updated")}: ${formatDateTime(freshness.last_analyzed_at, locale)} · ${freshness.analyzed_last_24h} ${t(
@@ -255,7 +255,7 @@ export default async function InicioPage() {
           <div className="p-4">
             {verdict ? (
               <>
-                <p className={`mb-1 text-lg font-semibold ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
+                <p className={`mb-1 text-lg leading-snug font-semibold tracking-tight ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
                 <p className="text-sm text-foreground">{RELIABILITY[summary.validation!.best_decision.option].summary}</p>
                 <div className="mt-3">
                   <ReliabilityScale
@@ -267,7 +267,7 @@ export default async function InicioPage() {
               </>
             ) : (
               <>
-                <p className="mb-1 text-lg font-semibold text-foreground">{t("Evaluación de fiabilidad en curso", "Reliability assessment in progress")}</p>
+                <p className="mb-1 text-lg leading-snug font-semibold tracking-tight text-foreground">{t("Evaluación de fiabilidad en curso", "Reliability assessment in progress")}</p>
                 <p className="text-sm text-text-secondary">
                   {t(
                     "La calificación aparece cuando hay suficientes eventos para medirla con rigor.",

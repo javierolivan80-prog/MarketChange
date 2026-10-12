@@ -42,7 +42,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
             {row.company_name && <p className="truncate text-xs text-text-secondary">{row.company_name}</p>}
           </div>
           <div className="text-right">
-            <p className={`num text-2xl font-semibold ${scoreColorClass}`}>{row.total_score !== null ? row.total_score.toFixed(0) : "—"}</p>
+            <p className={`num text-2xl leading-tight font-semibold tracking-tight ${scoreColorClass}`}>{row.total_score !== null ? row.total_score.toFixed(0) : "—"}</p>
             <p className="num text-xs text-text-tertiary">
               {nDisponibles}/5 {t("criterios", "criteria")} · {row.n_years}{" "}
               {row.n_years === 1 ? t("ejercicio", "fiscal year") : t("ejercicios", "fiscal years")}
@@ -66,7 +66,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
                 <span className={`text-sm font-medium ${c.score === null ? "text-text-tertiary" : "text-foreground"}`}>{qualityText(c.name, locale)}</span>
                 <span className="num font-mono text-xs text-text-secondary">{c.score !== null ? `${c.score.toFixed(0)}/100` : t("sin datos", "no data")}</span>
               </div>
-              <div className="mb-1 h-1.5 bg-surface-sunken">
+              <div className="viz-color mb-1 h-1.5 bg-surface-sunken">
                 {/* Las barras se rellenan escalonadas (media unidad de stagger): se
                     ve qué criterios sostienen la nota y cuáles la bajan. */}
                 <div

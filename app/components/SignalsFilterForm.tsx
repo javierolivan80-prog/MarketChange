@@ -7,7 +7,7 @@
 // filtrados; SignalsTable (Tanstack Table) solo ordena/pagina lo que ya
 // llegó filtrado, no re-filtra en el cliente.
 import { useRouter, useSearchParams } from "next/navigation";
-import { useId, useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { eventClassLabel } from "@/lib/labels";
 import { useLocale, useT } from "@/components/i18n/LocaleProvider";
@@ -15,7 +15,7 @@ import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 // Con el dedo: 44px de alto y 16px de letra (con menos, Safari en iPhone
 // amplía la página al tocar el campo y hay que deshacer el zoom a mano).
 const INPUT =
-  " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600 pointer-coarse:min-h-11 pointer-coarse:text-base";
+  " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600 aria-[invalid=true]:border-rose-600 dark:aria-[invalid=true]:border-rose-400 pointer-coarse:min-h-11 pointer-coarse:text-base";
 const LABEL = "text-xs font-medium text-text-secondary";
 
 export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) {
@@ -57,10 +57,26 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
     dateFrom: useId(),
     dateTo: useId(),
     minConfidence: useId(),
+    errores: useId(),
   };
+
+  // Validación mientras se escribe (Tanda 12b, guía de Apple: avisar en el
+  // momento, no al enviar). Antes un rango de fechas al revés o una
+  // confianza de 150 devolvían una tabla vacía sin decir por qué.
+  const fechasAlReves = dateFrom !== "" && dateTo !== "" && dateFrom > dateTo;
+  const confianzaNum = Number(minConfidence);
+  const confianzaMal = minConfidence !== "" && (!Number.isFinite(confianzaNum) || confianzaNum < 0 || confianzaNum > 100);
+  const errores = [
+    fechasAlReves && t("«Desde» es posterior a «Hasta».", "«From» is later than «To»."),
+    confianzaMal && t("La confianza mínima va de 0 a 100.", "Minimum confidence goes from 0 to 100."),
+  ].filter(Boolean) as string[];
+  const refDesde = useRef<HTMLInputElement>(null);
+  const refConfianza = useRef<HTMLInputElement>(null);
 
   function apply(e: React.FormEvent) {
     e.preventDefault();
+    if (fechasAlReves) return refDesde.current?.focus();
+    if (confianzaMal) return refConfianza.current?.focus();
     const params = new URLSearchParams();
     if (ticker) params.set("ticker", ticker);
     if (eventClass) params.set("eventClass", eventClass);
@@ -87,7 +103,19 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         <label htmlFor={ids.ticker} className={LABEL}>
           Ticker
         </label>
-        <input id={ids.ticker} className={`${INPUT} w-28`} value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="AAPL" />
+        {/* Teclado del móvil en mayúsculas y sin autocorrector: un ticker no es una palabra. */}
+        <input
+          id={ids.ticker}
+          className={`${INPUT} w-28`}
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value)}
+          placeholder="AAPL"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          enterKeyHint="search"
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.eventClass} className={LABEL}>
@@ -117,26 +145,50 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
         <label htmlFor={ids.dateFrom} className={LABEL}>
           {t("Desde", "From")}
         </label>
-        <input id={ids.dateFrom} type="date" className={INPUT} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        {/* max/min: el calendario ya no ofrece días que dejarían el rango al revés. */}
+        <input
+          ref={refDesde}
+          id={ids.dateFrom}
+          type="date"
+          className={INPUT}
+          value={dateFrom}
+          max={dateTo || undefined}
+          onChange={(e) => setDateFrom(e.target.value)}
+          aria-invalid={fechasAlReves || undefined}
+          aria-describedby={fechasAlReves ? ids.errores : undefined}
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.dateTo} className={LABEL}>
           {t("Hasta", "To")}
         </label>
-        <input id={ids.dateTo} type="date" className={INPUT} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        <input
+          id={ids.dateTo}
+          type="date"
+          className={INPUT}
+          value={dateTo}
+          min={dateFrom || undefined}
+          onChange={(e) => setDateTo(e.target.value)}
+          aria-invalid={fechasAlReves || undefined}
+          aria-describedby={fechasAlReves ? ids.errores : undefined}
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.minConfidence} className={LABEL}>
           {t("Confianza mín. (%)", "Min. confidence (%)")}
         </label>
         <input
+          ref={refConfianza}
           id={ids.minConfidence}
           type="number"
+          inputMode="numeric"
           min={0}
           max={100}
           className={`${INPUT} num w-20`}
           value={minConfidence}
           onChange={(e) => setMinConfidence(e.target.value)}
+          aria-invalid={confianzaMal || undefined}
+          aria-describedby={confianzaMal ? ids.errores : undefined}
         />
       </div>
       <div className="flex gap-2">
@@ -147,6 +199,16 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
           {t("Limpiar", "Clear")}
         </Button>
       </div>
+      {errores.length > 0 && (
+        <p id={ids.errores} className="w-full text-xs text-rose-700 dark:text-rose-400">
+          {errores.join(" ")}
+        </p>
+      )}
+      {/* Región de aviso siempre montada (una que aparece de golpe no siempre
+          se anuncia); fuera del flujo, así no añade hueco al formulario. */}
+      <span aria-live="polite" className="sr-only">
+        {errores.join(" ")}
+      </span>
       {active.length > 0 && (
         <div role="group" className="flex w-full flex-wrap items-center gap-2 border-t border-border-subtle pt-3" aria-label={t("Filtros activos", "Active filters")}>
           <span className="text-xs text-text-secondary">{t("Filtros activos:", "Active filters:")}</span>

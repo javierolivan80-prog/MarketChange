@@ -119,7 +119,7 @@ function DecisionCard({ title, decision, locale }: { title: string; decision: Ve
   return (
     <div className={`border p-4 ${OPTION_STYLES[decision.option]}`}>
       <p className="mb-1 text-sm text-text-secondary">{title}</p>
-      <p className={`mb-2 text-lg font-semibold ${OPTION_TEXT_STYLES[decision.option]}`}>{RELIABILITY[decision.option].title}</p>
+      <p className={`mb-2 text-lg leading-snug font-semibold tracking-tight ${OPTION_TEXT_STYLES[decision.option]}`}>{RELIABILITY[decision.option].title}</p>
       <p className="mb-2 text-xs text-text-tertiary">{t("Criterios evaluados:", "Criteria checked:")}</p>
       <ul className="list-inside list-disc space-y-0.5 text-xs text-text-secondary">
         {decision.reasons.map((r, i) => (
@@ -213,7 +213,7 @@ export default async function FuncionaPage() {
   return (
     <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
         <p className="mt-1 text-sm text-text-secondary">
           {t(
             "Cómo de fiables son las señales: si los eventos mueven el precio de verdad, si la confianza declarada se cumple y cómo aguantan los resultados en condiciones peores.",
@@ -235,7 +235,7 @@ export default async function FuncionaPage() {
             <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">
               {t("Calificación global · estrategia recomendada", "Overall rating · recommended strategy")}: {versionLabel(validationReport.best_version, locale)}
             </p>
-            <p className={`mb-2 text-2xl font-semibold ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{RELIABILITY[validationReport.best_decision.option].title}</p>
+            <p className={`mb-2 text-2xl leading-tight font-semibold tracking-tight ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{RELIABILITY[validationReport.best_decision.option].title}</p>
             <p className="text-sm text-foreground">{RELIABILITY[validationReport.best_decision.option].summary}</p>
             <div className="mt-3">
               <ReliabilityScale
