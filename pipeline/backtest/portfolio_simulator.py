@@ -717,6 +717,8 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
     trading). Un análisis sin regla histórica todavía (pendiente del relleno
     de backfill_decision_sin_ia) no entra."""
     assert version in VERSIONS, f"versión desconocida: {version}"
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
+
     estrategia = _TRADE_DECISION_SOURCE_VERSION.get(version, version)
     ev_col = f"ev_{estrategia.lower()}"
     start, end = date_bounds(sample)
@@ -742,6 +744,10 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                     FROM (SELECT ea.decision_sin_ia->'regla_historica' AS r) x
                 ) rh
                 WHERE rh.decision != 'NO_TRADE'
+                  -- Solo la regla del método vigente: mientras el relleno
+                  -- recalcula la de un método anterior, esa fila no entra
+                  -- (el informe lo dice en cobertura_regla), no se mezcla.
+                  AND ea.decision_sin_ia->>'metodo' = %(metodo)s
                   AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
                   AND {PRECIO_D0_MINIMO_SQL}
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
@@ -750,7 +756,7 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
             ) unicos
             ORDER BY d0_close_date, abs({ev_col}) DESC, event_id
             """,
-            {"start": start, "end": end, "estrategia": estrategia},
+            {"start": start, "end": end, "estrategia": estrategia, "metodo": METODO_SIN_IA},
         )
         return cur.fetchall()
 
@@ -775,6 +781,8 @@ def _load_ticker_new_events(conn, ticker: str, prices: dict[date, dict]) -> dict
     umbral de EV/confianza de ESTA estrategia). Solo se llama cuando la
     memoria está activada — coste de una query extra por ticker, cero cuando
     está desactivada (comportamiento y coste de siempre)."""
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
+
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -786,9 +794,10 @@ def _load_ticker_new_events(conn, ticker: str, prices: dict[date, dict]) -> dict
             WHERE e.ticker = %s
               -- La misma regla sin IA que decide las entradas (H-06).
               AND ea.decision_sin_ia->'regla_historica' IS NOT NULL
+              AND ea.decision_sin_ia->>'metodo' = %s
             ORDER BY e.d0_close_date
             """,
-            (ticker,),
+            (ticker, METODO_SIN_IA),
         )
         rows = cur.fetchall()
     by_entry_date: dict[date, list[dict]] = {}

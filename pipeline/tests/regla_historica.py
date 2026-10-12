@@ -6,6 +6,7 @@ para que el backtest la vea igual que antes."""
 
 COPIAR_A_REGLA_HISTORICA_SQL = """
 UPDATE event_analyses SET decision_sin_ia = jsonb_build_object(
+    'metodo', %s::text,
     'regla_historica', jsonb_build_object(
         'net_conviction', net_conviction,
         'confidence_in_conviction', confidence_in_conviction,
@@ -24,4 +25,7 @@ WHERE event_id = %s
 
 
 def copiar_a_regla_historica(cur, event_id: int) -> None:
-    cur.execute(COPIAR_A_REGLA_HISTORICA_SQL, (event_id,))
+    # El backtest solo lee la regla del método vigente (Tanda 9).
+    from pipeline.analyze.event_analysis_pipeline import METODO_SIN_IA
+
+    cur.execute(COPIAR_A_REGLA_HISTORICA_SQL, (METODO_SIN_IA, event_id))

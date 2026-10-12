@@ -1497,3 +1497,90 @@ def test_el_margen_del_umbral_usa_la_capitalizacion_en_d0(conn, corte_real, sin_
         cur.execute("SELECT ev_calculation FROM event_analyses WHERE event_id = %s", (objetivo,))
         umbral = cur.fetchone()["ev_calculation"]["threshold_balanced"]
     assert f"{(EV_THRESHOLDS['BALANCED'] + 0.0060) * 100:.1f}%" in umbral
+
+
+@pytest.fixture
+def impacto_entre_margenes(monkeypatch):
+    """Etapa 6 fija: con convicción ±1 y confianza 100, el EV de Agresiva es
+    0,9 %, que supera umbral (0,2 %) + 60 pb pero no umbral + 90 pb. Así la
+    regla opera en Agresiva SOLO si el margen usa la capitalización de una
+    empresa grande, y el techo de EV (real, sin sin_techo_de_ev) igual."""
+    from pipeline.analyze import event_analysis_pipeline as eap
+    from pipeline.analyze.historical_analogues import ImpactEstimate
+
+    impacto = ImpactEstimate(
+        probability_5pct_move=10.0, probability_10pct_move=5.0, probability_20pct_move=1.0,
+        expected_direction=1.0, expected_magnitude_pct=0.5, volatility_increase=0.0, confidence=100.0, n_analogues=30,
+    )
+    monkeypatch.setattr(eap, "estimate_impact_for_event", lambda *a, **k: impacto)
+    return impacto
+
+
+def _empresa_grande_en_d0(conn, cik: str, d0: date) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) VALUES (%s, %s, %s, '10-K', 1e9)",
+            (cik, d0.replace(year=d0.year - 1), d0.replace(year=d0.year - 1)),
+        )
+    conn.commit()
+
+
+def _regla_agresiva(conn, event_id: int) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (event_id,))
+        return cur.fetchone()["decision_sin_ia"]["regla_historica"]["decisiones"]["AGGRESSIVE"]["trade_decision"]
+
+
+def test_la_capitalizacion_llega_al_techo_y_a_la_regla_en_todos_los_caminos(conn, corte_real, impacto_entre_margenes):
+    """Tanda 9 (revisión adversarial): la capitalización en D0 decide el
+    margen en el techo de EV y en la regla, por el camino normal
+    (process_chunk), por el relleno de análisis antiguos y sin datos
+    precalculados."""
+    from pipeline.analyze.adversarial_analyzer import MODELO_ANTES_DEL_CORTE
+    from pipeline.analyze.event_analysis_pipeline import (
+        MOTIVO_ANTES_DEL_CORTE,
+        _process_single_event,
+        analizar_antes_del_corte,
+        backfill_decision_sin_ia,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    objetivo = _seed_event(conn, "1", "TESTCO", d0)
+    _con_capitalizacion(conn)
+    _empresa_grande_en_d0(conn, "1", d0)
+
+    # Camino normal: el techo no lo descarta y la regla opera en Agresiva.
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
+    assert _regla_agresiva(conn, objetivo) == "LONG"
+
+    # Relleno de un análisis antiguo: misma decisión.
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE event_analyses SET decision_sin_ia = '{"metodo": "viejo"}' WHERE event_id = %s""", (objetivo,))
+    conn.commit()
+    assert backfill_decision_sin_ia(conn) >= 1
+    assert _regla_agresiva(conn, objetivo) == "LONG"
+
+    # Sin datos precalculados (caché): también calcula la capitalización.
+    with conn.cursor() as cur:
+        cur.execute("SELECT e.*, u.sic_code FROM events e JOIN universe u ON u.cik = e.cik WHERE e.event_id = %s", (objetivo,))
+        ev = cur.fetchone()
+        cur.execute("DELETE FROM event_analyses WHERE event_id = %s", (objetivo,))
+    conn.commit()
+    _process_single_event(
+        conn, ev, None, {}, {}, None, None, precomputed=None, skip_reason=MOTIVO_ANTES_DEL_CORTE,
+        skip_reason_regla=None, modelo_omitido=MODELO_ANTES_DEL_CORTE,
+    )
+    assert _regla_agresiva(conn, objetivo) == "LONG"
+
+
+def test_sin_capitalizacion_el_mismo_evento_no_opera(conn, corte_real, impacto_entre_margenes):
+    """Contraste del anterior: sin 10-K (margen de empresa pequeña, 90 pb) el
+    techo de EV lo descarta y la regla no opera."""
+    from pipeline.analyze.event_analysis_pipeline import analizar_antes_del_corte
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
+    _con_capitalizacion(conn)
+    assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
+    assert _regla_agresiva(conn, objetivo) == "NO_TRADE"

@@ -33,6 +33,7 @@ from pipeline.backtest.portfolio_simulator import (
 )
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
 from pipeline.analyze.event_analysis_pipeline import (
+    METODO_SIN_IA,
     analizar_antes_del_corte,
     cobertura_regla_sin_ia,
     rellenar_regla_sin_ia,
@@ -255,11 +256,12 @@ def excluidos_por_calidad(conn, sample: str | None) -> int:
             FROM events e
             JOIN event_analyses ea ON ea.event_id = e.event_id
             WHERE ea.decision_sin_ia->'regla_historica'->'decisiones'->'BALANCED'->>'trade_decision' != 'NO_TRADE'
+              AND ea.decision_sin_ia->>'metodo' = %(metodo)s
               AND EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
               AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
               AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
             """,
-            {"start": start, "end": end},
+            {"start": start, "end": end, "metodo": METODO_SIN_IA},
         )
         return cur.fetchone()["n"]
 
