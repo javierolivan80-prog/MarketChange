@@ -11,7 +11,7 @@ saltándose una segunda llamada al LLM para el mismo (ticker, event_class).
 """
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import numpy as np
@@ -546,7 +546,13 @@ def test_process_chunk_skips_llm_for_survivorship_warning_event(conn):
     _seed_event(conn, "1", "TESTCO", d0)
 
     with conn.cursor() as cur:
-        cur.execute("UPDATE prices SET survivorship_warning=TRUE WHERE ticker='TESTCO' AND trade_date=%s", (d0,))
+        # Un hueco real (sin precio) en los 5 días hasta D0 (Tanda 10: una
+        # marca sobre una vela con precio no cuenta).
+        cur.execute(
+            "UPDATE prices SET survivorship_warning=TRUE, close_raw=NULL, high_raw=NULL, low_raw=NULL "
+            "WHERE ticker='TESTCO' AND trade_date=%s",
+            (dates[278].date(),),
+        )
     conn.commit()
 
     scripted_client = _ScriptedBatchesClient()
@@ -1153,6 +1159,18 @@ def _con_capitalizacion(conn):
     conn.commit()
 
 
+def _con_10k(conn, cik: str, acciones: float = 1e9):
+    """Un 10-K muy anterior a cualquier D0: fija la capitalización en D0 (el
+    margen de costes del umbral de EV, Tanda 9)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO fundamentals (cik, fiscal_period_end, filed_at, form, shares_outstanding) "
+            "VALUES (%s, '1999-12-31', '2000-01-01', '10-K', %s)",
+            (cik, acciones),
+        )
+    conn.commit()
+
+
 def test_un_evento_anterior_al_corte_no_va_a_la_ia_y_guarda_la_regla(conn, corte_real, sin_techo_de_ev):
     from pipeline.analyze.adversarial_analyzer import MODELO_ANTES_DEL_CORTE
     from pipeline.analyze.event_analysis_pipeline import (
@@ -1575,12 +1593,85 @@ def test_la_capitalizacion_llega_al_techo_y_a_la_regla_en_todos_los_caminos(conn
 
 
 def test_sin_capitalizacion_el_mismo_evento_no_opera(conn, corte_real, impacto_entre_margenes):
-    """Contraste del anterior: sin 10-K (margen de empresa pequeña, 90 pb) el
-    techo de EV lo descarta y la regla no opera."""
+    """Contraste del anterior: con capitalización de empresa pequeña en D0
+    (margen de 90 pb) el techo de EV lo descarta y la regla no opera."""
     from pipeline.analyze.event_analysis_pipeline import analizar_antes_del_corte
 
     dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
     objetivo = _seed_event(conn, "1", "TESTCO", dates[280].date())
     _con_capitalizacion(conn)
+    _con_10k(conn, "1", acciones=1e6)  # 50 M$ en D0: empresa pequeña
     assert analizar_antes_del_corte(conn, min_market_cap=0) == 1
     assert _regla_agresiva(conn, objetivo) == "NO_TRADE"
+
+
+def test_un_descarte_viejo_anterior_al_corte_recalcula_su_regla_con_las_reglas_de_hoy(conn, corte_real, impacto_entre_margenes):
+    """Tanda 10: un descarte previo a la IA guardado con un motivo que ya no
+    vale (el aviso de supervivencia con información del futuro) no se copia a
+    la regla del relleno: si el evento es anterior al corte, la regla se
+    decide con las condiciones objetivas de hoy. La decisión de la IA
+    guardada (NO_TRADE, sin IA) no se toca."""
+    from pipeline.analyze.event_analysis_pipeline import (
+        SKIPPED_MODEL_VERSION,
+        analizar_antes_del_corte,
+        backfill_decision_sin_ia,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    objetivo = _seed_event(conn, "1", "TESTCO", d0)
+    _con_capitalizacion(conn)
+    _empresa_grande_en_d0(conn, "1", d0)
+    analizar_antes_del_corte(conn, min_market_cap=0)
+    with conn.cursor() as cur:
+        # Como lo guardaba una versión anterior: descarte previo a la IA por
+        # el aviso de supervivencia, con la regla de un método viejo.
+        cur.execute(
+            """UPDATE event_analyses SET model_version_bull_bear = %s, model_version_judge = %s,
+                   abstention_decision = '{"BALANCED": {"trade_decision": "NO_TRADE", "reason_if_no_trade": "ticker con WARNING de posible deslistado (flag de yfinance)"}}',
+                   decision_sin_ia = '{"metodo": "viejo"}'
+               WHERE event_id = %s""",
+            (SKIPPED_MODEL_VERSION, SKIPPED_MODEL_VERSION, objetivo),
+        )
+    conn.commit()
+    assert backfill_decision_sin_ia(conn) >= 1
+    assert _regla_agresiva(conn, objetivo) == "LONG"
+    with conn.cursor() as cur:
+        cur.execute("SELECT model_version_bull_bear, trade_decision_aggressive FROM event_analyses WHERE event_id = %s", (objetivo,))
+        fila = cur.fetchone()
+    assert fila["model_version_bull_bear"] == SKIPPED_MODEL_VERSION and fila["trade_decision_aggressive"] == "NO_TRADE"
+
+
+def test_un_descarte_posterior_al_corte_conserva_su_motivo_en_el_relleno(conn, impacto_entre_margenes, monkeypatch):
+    """El recálculo de las condiciones objetivas es SOLO para descartes
+    anteriores al corte. Uno posterior es una decisión de la cola de la IA:
+    la regla del relleno sigue su motivo guardado (hasta que se reevalúe)."""
+    from pipeline import config
+    from pipeline.analyze.event_analysis_pipeline import (
+        SKIPPED_MODEL_VERSION,
+        analizar_antes_del_corte,
+        backfill_decision_sin_ia,
+    )
+
+    dates = _seed_market_data(conn, [("TESTCO", 50.0), ("SPY", 400.0), ("XLV", 100.0), ("^VIX", 18.0)])
+    d0 = dates[280].date()
+    objetivo = _seed_event(conn, "1", "TESTCO", d0)
+    _con_capitalizacion(conn)
+    _empresa_grande_en_d0(conn, "1", d0)
+    monkeypatch.setattr(config, "AI_VALIDATION_START", d0 + timedelta(days=1))  # el evento es anterior al corte
+    analizar_antes_del_corte(conn, min_market_cap=0)
+    monkeypatch.setattr(config, "AI_VALIDATION_START", d0)  # y ahora posterior
+    with conn.cursor() as cur:
+        cur.execute(
+            """UPDATE event_analyses SET model_version_bull_bear = %s, model_version_judge = %s,
+                   abstention_decision = '{"BALANCED": {"trade_decision": "NO_TRADE", "reason_if_no_trade": "motivo guardado"}}',
+                   decision_sin_ia = '{"metodo": "viejo"}'
+               WHERE event_id = %s""",
+            (SKIPPED_MODEL_VERSION, SKIPPED_MODEL_VERSION, objetivo),
+        )
+    conn.commit()
+    assert backfill_decision_sin_ia(conn) >= 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT decision_sin_ia FROM event_analyses WHERE event_id = %s", (objetivo,))
+        regla = cur.fetchone()["decision_sin_ia"]["regla_historica"]["decisiones"]["AGGRESSIVE"]
+    assert regla["trade_decision"] == "NO_TRADE" and regla["reason_if_no_trade"] == "motivo guardado"

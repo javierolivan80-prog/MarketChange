@@ -31,6 +31,18 @@ aproximación deliberada, documentada aquí en vez de en cada función:
   las métricas de cada mitad — la misma pregunta que PARTE 4 pide bajo
   "regime dependency", resuelta una sola vez y reportada en ambos sitios.
 
+- Deslistado −30 % (Tanda 10, HIPÓTESIS, no dato): las operaciones cuyo
+  ticker dejó de cotizar se cierran a la última cotización (o al precio de
+  entrada), sin pérdida por el deslistado. Se reconocen por DATA_GAP o porque
+  su vela de salida tiene precio y lleva la marca de supervivencia: así deja
+  yfinance_backfill la última vela de un ticker que ya no devuelve datos, y
+  esa operación sale como MAX_HOLDING en esa vela. Con varios tramos (trailing)
+  se aplica al precio medio de salida, que incluye los tramos ya cobrados: es
+  una aproximación pesimista. Aquí la acción cae un 30 % más al salir, la
+  media que estima la literatura para los deslistados por mal desempeño
+  (Shumway, 1997). Para un corto es a favor; una OPA iría en contra. Mide
+  cuánto depende el resultado de ese supuesto.
+
 - Confidence -20%: recorta a los trades cuya confidence*0.8 seguiría
   pasando el único filtro de abstención que depende de confidence de forma
   monótona decreciente — el piso CONFIDENCE_FLOOR de abstention_engine.py
@@ -169,6 +181,53 @@ def apply_latency_sensitivity(conn, trades: list[dict]) -> list[dict]:
     return adjusted
 
 
+DESLISTADO_CAIDA_PCT = 30.0
+
+
+def salidas_en_vela_marcada(conn, trades: list[dict]) -> set[tuple[str, date]]:
+    """(ticker, fecha) de las salidas cuya vela tiene precio y la marca de
+    supervivencia: la última vela de un ticker que dejó de devolver datos."""
+    tickers = sorted({t["ticker"] for t in trades if t.get("ticker")})
+    if not tickers:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ticker, trade_date FROM prices WHERE ticker = ANY(%s) AND survivorship_warning AND close_raw IS NOT NULL",
+            (tickers,),
+        )
+        marcadas = {(r["ticker"], r["trade_date"]) for r in cur.fetchall()}
+    return {(t["ticker"], t["exit_date"]) for t in trades if (t.get("ticker"), t.get("exit_date")) in marcadas}
+
+
+def apply_delisting_haircut(
+    trades: list[dict], salidas_marcadas: set | None = None, caida_pct: float = DESLISTADO_CAIDA_PCT,
+) -> tuple[list[dict], int]:
+    """(trades, n_afectados): las operaciones cuyo ticker dejó de cotizar
+    (DATA_GAP o salida en una vela marcada, `salidas_marcadas`) con la acción
+    un `caida_pct` por debajo de su precio de salida (ver docstring del
+    módulo). Con cobertura, la pata de SPY no cambia; los costes son los del
+    original."""
+    marcadas = salidas_marcadas or set()
+    adjusted, afectados = [], 0
+    for t in trades:
+        if t.get("exit_reason") != "DATA_GAP" and (t.get("ticker"), t.get("exit_date")) not in marcadas:
+            adjusted.append(t)
+            continue
+        afectados += 1
+        salida = float(t["exit_price"]) * (1 - caida_pct / 100)
+        movimiento = gain_pct(t["direction"], float(t["entry_price"]), salida)
+        if t.get("spy_move_pct") is not None:
+            movimiento -= float(t["spy_move_pct"])
+        costes_pct = float(t["actual_move_pct"]) - float(t["pnl_pct"])
+        pnl_pct = movimiento - costes_pct
+        size = float(t["position_size_dollars"])
+        adjusted.append({
+            **t, "exit_price": salida, "actual_move_pct": movimiento,
+            "pnl_pct": pnl_pct, "pnl_abs": size * (pnl_pct / 100),
+        })
+    return adjusted, afectados
+
+
 def apply_confidence_haircut(trades: list[dict], haircut_fraction: float = CONFIDENCE_HAIRCUT_FRACTION) -> list[dict]:
     """Excluye los trades cuya confidence, reducida en haircut_fraction,
     caería por debajo de CONFIDENCE_FLOOR (la única regla de abstención de
@@ -252,6 +311,7 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
         commission_trades = apply_extra_cost_bps(trades, COMMISSION_SENSITIVITY_BPS)
         spread_trades = apply_extra_cost_bps(trades, SPREAD_SENSITIVITY_BPS)
         latency_trades = apply_latency_sensitivity(conn, trades)
+        deslistado_trades, n_deslistados = apply_delisting_haircut(trades, salidas_en_vela_marcada(conn, trades))
         vix_split = split_by_vix_regime(conn, trades)
 
         scenarios[version] = {
@@ -259,6 +319,11 @@ def run_sensitivity_analysis(conn, run_batch_tag: str, starting_capital: float =
             "commission_plus_0.1pct": summarize_scenario(commission_trades, starting_capital),
             "spread_plus_0.2pct": summarize_scenario(spread_trades, starting_capital),
             "latency_d_plus_2": summarize_scenario(latency_trades, starting_capital),
+            "delisting_minus_30pct": {
+                **summarize_scenario(deslistado_trades, starting_capital),
+                "n_afectadas": n_deslistados,
+                "hipotesis": "las que dejaron de cotizar pierden un 30 % más al salir",
+            },
             # El histórico decide con la regla sin IA, con la confianza fija
             # en 100 (H-06): recortarla un 20 % nunca la baja del mínimo, así
             # que el escenario no prueba nada. «No aplica» (decisión del

@@ -193,10 +193,17 @@ def compute_enrichment(
         if len(dollar_volumes) >= ADV_MIN_TRADING_DAYS:
             adv_usd_60d = float(dollar_volumes.mean())
 
+    # Aviso de supervivencia: solo un HUECO REAL en los 5 días hasta D0 (fila
+    # marcada y sin precio), algo que ya se veía en D0. La marca que una
+    # descarga posterior deja sobre una vela CON precio (yfinance_backfill:
+    # el ticker dejó de devolver datos después) es información del futuro:
+    # descartaba justo las operaciones en empresas que luego desaparecieron
+    # (Tanda 10, BUGS_REPORT.md H-05).
     had_survivorship_warning = False
     nearby = ticker_prices[(ticker_prices.index >= d0_ts - pd.Timedelta(days=5)) & (ticker_prices.index <= d0_ts)]
-    if "survivorship_warning" in nearby and nearby["survivorship_warning"].any():
-        had_survivorship_warning = True
+    if "survivorship_warning" in nearby:
+        huecos = nearby["survivorship_warning"].fillna(False).astype(bool) & nearby["close_raw"].isna()
+        had_survivorship_warning = bool(huecos.any())
 
     # Beta / exposición a factores: reutiliza el ajuste compartido con compute_car.
     fit = None

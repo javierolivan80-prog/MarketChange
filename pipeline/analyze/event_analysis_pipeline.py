@@ -779,7 +779,10 @@ MOTIVO_ANTES_DEL_CORTE = "anterior a la fecha de corte de los modelos: la IA no 
 # cubierta según la capitalización en D0, no un fijo de 50 pb. Al cambiar el
 # método, backfill_decision_sin_ia recalcula la regla de los análisis
 # guardados (sin la IA, solo Postgres).
-METODO_SIN_IA = "analogos_signo_v4"
+# v5 (Tanda 10): el aviso de supervivencia solo cuenta huecos reales hasta
+# D0 (sin información del futuro), y los descartes previos a la IA anteriores
+# al corte recalculan sus condiciones objetivas en vez de copiar el motivo.
+METODO_SIN_IA = "analogos_signo_v5"
 # Confianza de la regla histórica (ver regla_historica): fija, sin la IA.
 CONFIANZA_REGLA_HISTORICA = 100.0
 
@@ -888,9 +891,17 @@ def backfill_decision_sin_ia(conn, limit: int = 1000, fallidos: set | None = Non
             impact = estimate_impact_for_event(conn, f["event_class"], f["d0_close_date"], f["event_id"], window_days=20)
             fda_sin_8k = check_fda_crl_without_8k(conn, f["cik"], f["event_class"], f["d0_close_date"])
             capitalizacion = capitalizacion_en_d0(conn, f["event_id"])
-            if f["model_version_bull_bear"] == MODELO_ANTES_DEL_CORTE:
-                # La decisión guardada es «antes del corte»; la regla se decide
-                # con las condiciones objetivas, como en process_chunk.
+            antes_del_corte = config.AI_VALIDATION_START is not None and f["d0_close_date"] < config.AI_VALIDATION_START
+            if f["model_version_bull_bear"] == MODELO_ANTES_DEL_CORTE or (
+                f["model_version_bull_bear"] == SKIPPED_MODEL_VERSION and antes_del_corte
+            ):
+                # La decisión guardada es «antes del corte» (o un descarte
+                # previo a la IA de un evento que ya no va a la IA): la regla
+                # se decide con las condiciones objetivas DE HOY, como en
+                # process_chunk, no con el motivo guardado entonces, que pudo
+                # salir de una regla que ya no vale (Tanda 10: el aviso de
+                # supervivencia con información del futuro; Tanda 9: el
+                # margen del techo de EV).
                 skip_reason = objective_no_trade_reason(
                     novelty_score=float(f["novelty_score"]),
                     had_survivorship_warning=enrichment.had_survivorship_warning,

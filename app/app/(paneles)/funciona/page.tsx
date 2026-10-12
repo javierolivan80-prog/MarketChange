@@ -52,6 +52,11 @@ const scenarioLabels = (t: T): Record<string, string> => ({
   "commission_plus_0.1pct": t("Con más comisiones (+0.1%)", "Higher fees (+0.1%)"),
   "spread_plus_0.2pct": t("Con más diferencia compra/venta (+0.2%)", "Wider bid/ask spread (+0.2%)"),
   latency_d_plus_2: t("Entrando un día más tarde", "Entering one day later"),
+  // Tanda 10: hipótesis, no dato (sensitivity.py, apply_delisting_haircut).
+  delisting_minus_30pct: t(
+    "Si las que dejaron de cotizar hubieran perdido un 30 % (hipótesis)",
+    "If those that stopped trading had lost 30% (assumption)",
+  ),
   "confidence_minus_20pct": t("Si el modelo fuera menos seguro (-20%)", "If the model were less confident (-20%)"),
   high_vix_regime: t("En mercado muy volátil", "In a very volatile market"),
   low_vix_regime: t("En mercado tranquilo", "In a calm market"),
@@ -368,6 +373,21 @@ export default async function FuncionaPage() {
               </tbody>
             </table>
           </div>
+          {(() => {
+            // Tanda 10: con 0 operaciones afectadas, un resultado igual al
+            // normal no significa «robusto»: no había ninguna que tocar.
+            const afectadas = VERSION_ORDER.map((ver) => validationReport.sensitivity.scenarios[ver]?.delisting_minus_30pct?.n_afectadas);
+            if (afectadas.every((n) => n === undefined)) return null;
+            const texto = VERSION_ORDER.map((ver, i) => `${versionLabel(ver, locale)}: ${afectadas[i] ?? "—"}`).join(" · ");
+            return (
+              <p className="mt-2 text-xs text-text-tertiary">
+                {t(
+                  `Operaciones que dejaron de cotizar, a las que se aplica la hipótesis del −30 %: ${texto}.`,
+                  `Trades that stopped trading, to which the −30% assumption applies: ${texto}.`,
+                )}
+              </p>
+            );
+          })()}
         </section>
       )}
 

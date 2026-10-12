@@ -361,19 +361,22 @@ def test_bias_report_against_real_postgres():
                 "VALUES (%s,%s,'X','2024-01-01','2024-01-01',%s)",
                 (str(i), f"T{i}", i == 0),
             )
-        # 10 filas de precio, 2 con survivorship_warning.
+        # 10 filas de precio: 2 huecos reales (marca sin precio) y una marca
+        # sobre una vela con precio, que no es un hueco (Tanda 10).
         for i in range(10):
             cur.execute(
                 "INSERT INTO prices (ticker, trade_date, close_raw, survivorship_warning) "
-                "VALUES ('T0', %s, 100.0, %s)",
-                (date(2024, 1, i + 1), i < 2),
+                "VALUES ('T0', %s, %s, %s)",
+                (date(2024, 1, i + 1), None if i < 2 else 100.0, i < 3),
             )
     conn.commit()
 
     report = compute_bias_report(conn)
     assert report["n_total_tickers"] == 4
-    assert report["n_delisted"] == 1
-    assert report["survivorship_bias_pct"] == pytest.approx(25.0)
+    # Tanda 10: nada rellena is_delisted_flag en producción; la cifra sería un
+    # 0 % falso, así que se publica «no medido».
+    assert report["deslistados_medidos"] is False
+    assert report["n_delisted"] is None and report["survivorship_bias_pct"] is None
     assert report["n_price_gaps"] == 2
     assert report["n_price_rows"] == 10
     assert report["data_gap_pct"] == pytest.approx(20.0)
@@ -461,3 +464,53 @@ def test_bucket_by_confidence_reports_mean_confidence_per_bucket():
     records = [{"confidence": 91, "won": True}, {"confidence": 99, "won": True}]
     buckets = bucket_by_confidence(records, "confidence", "won")
     assert buckets[0]["mean_confidence"] == pytest.approx(95.0)
+
+
+@_pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="DATABASE_URL no definida")
+def test_perdida_por_clase_cuenta_los_eventos_sin_car_con_la_ventana_cerrada():
+    """Tanda 10 (auditoría T4): una clase que pierde más del 20 % de sus
+    eventos por falta de precios no es fiable. Los eventos recientes, con la
+    ventana aún abierta, no cuentan."""
+    from datetime import timedelta
+
+    from pipeline.backtest.portfolio_metrics import compute_bias_report
+    from pipeline.db.connection import get_connection, init_schema
+
+    conn = get_connection()
+    init_schema(conn)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE car_results, event_analyses, event_enrichment, events, prices, universe RESTART IDENTITY CASCADE")
+        cur.execute("INSERT INTO universe (cik, ticker, company_name, first_seen_date, last_seen_date) VALUES ('1','T','X','2024-01-01','2024-01-01')")
+        hoy = date.today()
+        eventos = (
+            [("8K_2.02_EARNINGS", True)] * 4
+            + [("8K_1.03_BANKRUPTCY", True), ("8K_1.03_BANKRUPTCY", False)]
+            # Justo en el límite: pierde el 20 %, sigue siendo fiable.
+            + [("8K_5.02_EXEC_CHANGE", True)] * 4 + [("8K_5.02_EXEC_CHANGE", False)]
+        )
+        for i, (clase, con_car) in enumerate(eventos):
+            cur.execute(
+                "INSERT INTO events (cik, ticker, source, event_class, accession_number, source_url, filed_at, d0_close_date, "
+                "classification_method, raw_text_hash) VALUES ('1','T','EDGAR',%s,%s,'https://x',%s,%s,'RULE',%s) RETURNING event_id",
+                (clase, f"a{i}", hoy - timedelta(days=200 + i), hoy - timedelta(days=200 + i), f"h{i}"),
+            )
+            eid = cur.fetchone()["event_id"]
+            if con_car:
+                cur.execute("INSERT INTO car_results (event_id, window_days, car, n_estimation_days) VALUES (%s, 20, 0.01, 200)", (eid,))
+        # Un evento reciente sin CAR (ventana aún abierta): no cuenta.
+        cur.execute(
+            "INSERT INTO events (cik, ticker, source, event_class, accession_number, source_url, filed_at, d0_close_date, "
+            "classification_method, raw_text_hash) VALUES ('1','T','EDGAR','8K_2.02_EARNINGS','reciente','https://x',%s,%s,'RULE','hr')",
+            (hoy - timedelta(days=3), hoy - timedelta(days=3)),
+        )
+    conn.commit()
+
+    report = compute_bias_report(conn)
+    clases = {c["event_class"]: c for c in report["perdida_por_clase"]}
+    assert clases["8K_2.02_EARNINGS"]["n_eventos"] == 4 and clases["8K_2.02_EARNINGS"]["n_sin_car"] == 0
+    assert clases["8K_2.02_EARNINGS"]["fiable"] is True
+    assert clases["8K_1.03_BANKRUPTCY"]["pct_perdido"] == pytest.approx(50.0)
+    assert clases["8K_5.02_EXEC_CHANGE"]["pct_perdido"] == pytest.approx(20.0)
+    assert clases["8K_5.02_EXEC_CHANGE"]["fiable"] is True
+    assert report["clases_no_fiables"] == ["8K_1.03_BANKRUPTCY"]
+    conn.close()

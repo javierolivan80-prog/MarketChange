@@ -149,11 +149,16 @@ export interface PortfolioVersionReport {
 
 export interface PortfolioBiasReport {
   n_total_tickers: number;
-  n_delisted: number;
+  /** Tanda 10: false = las deslistadas no se miden (n_delisted es null). Los
+   * informes antiguos no lo traen y su n_delisted era un 0 falso. */
+  deslistados_medidos?: boolean;
+  n_delisted: number | null;
   survivorship_bias_pct: number | null;
   n_price_gaps: number;
   n_price_rows: number;
   data_gap_pct: number | null;
+  /** Clases de evento que pierden más del 20 % de sus eventos por falta de precios. */
+  clases_no_fiables?: string[];
 }
 
 export interface PortfolioRecommendation {
@@ -344,6 +349,8 @@ export interface SensitivityScenarioResult {
   total_return?: number | null;
   /** El escenario no aplica (p. ej. el de confianza con la regla sin IA, H-06). */
   no_aplica?: string;
+  /** Escenario hipotético de deslistado (Tanda 10): operaciones a las que toca. */
+  n_afectadas?: number;
 }
 
 export interface Sensitivity {

@@ -221,12 +221,16 @@ def _sensitivity_table(sensitivity: dict) -> str:
         "|---|---|---|---|---|",
     ]
     scenarios = sensitivity["scenarios"]
-    scenario_keys = ["baseline", "commission_plus_0.1pct", "spread_plus_0.2pct", "latency_d_plus_2", "confidence_minus_20pct", "high_vix_regime", "low_vix_regime"]
+    scenario_keys = [
+        "baseline", "commission_plus_0.1pct", "spread_plus_0.2pct", "latency_d_plus_2", "delisting_minus_30pct",
+        "confidence_minus_20pct", "high_vix_regime", "low_vix_regime",
+    ]
     scenario_labels = {
         "baseline": "Baseline",
         "commission_plus_0.1pct": "Comisiones +0.1%/trade",
         "spread_plus_0.2pct": "Spread +0.2%",
         "latency_d_plus_2": "Entrada D+2 en vez de D+1 (latencia)",
+        "delisting_minus_30pct": "Las que dejaron de cotizar pierden un 30 % al salir (hipótesis)",
         "confidence_minus_20pct": "Modelo reduce confidence 20%",
         "high_vix_regime": "Régimen alto-VIX (proxy de 'VIX sube', ver sensitivity.py)",
         "low_vix_regime": "Régimen bajo-VIX",
@@ -242,7 +246,8 @@ def _sensitivity_table(sensitivity: dict) -> str:
         # (n) por escenario (IMPROVEMENT_PLAN.md R14): sin esto, un return
         # que se desploma en un escenario podía ser "el escenario importa" o
         # simplemente "la muestra se redujo a la mitad" — indistinguibles.
-        return f"{_fmt_pct(scenario.get('total_return'))} (n={scenario.get('n_trades', 0)})"
+        afectadas = f", afectadas={scenario['n_afectadas']}" if "n_afectadas" in scenario else ""
+        return f"{_fmt_pct(scenario.get('total_return'))} (n={scenario.get('n_trades', 0)}{afectadas})"
 
     for key in scenario_keys:
         c, b, a = cons.get(key, {}), bal.get(key, {}), aggr.get(key, {})
@@ -357,7 +362,7 @@ puede tener un efecto real más pequeño que el MDE actual, no cero.
 
 Rec = la misma decisión de PARTE 6 (A=GREENLIGHT, B=YELLOWLIGHT, C=REDLIGHT) — un único criterio, no un umbral aparte para esta tabla.
 
-Reporte de sesgos (sobre todo el universo, no por versión): {bias.get('n_delisted', '—')}/{bias.get('n_total_tickers', '—')} tickers deslistados ({_fmt_num(bias.get('survivorship_bias_pct'), 1)}% posible sesgo de supervivencia) · {bias.get('n_price_gaps', '—')}/{bias.get('n_price_rows', '—')} filas de precio con gap ({_fmt_num(bias.get('data_gap_pct'), 1)}%).
+Reporte de sesgos (sobre todo el universo, no por versión): empresas deslistadas **no medidas** (el universo es la lista de la SEC de hoy, solo supervivientes) · {bias.get('n_price_gaps', '—')}/{bias.get('n_price_rows', '—')} filas de precio con gap ({_fmt_num(bias.get('data_gap_pct'), 1)}%) · clases que pierden más del 20 % de sus eventos por falta de precios: {', '.join(bias.get('clases_no_fiables') or []) or 'ninguna'}.
 
 ## PARTE 3 — Calibración (confiabilidad del modelo)
 
@@ -371,8 +376,10 @@ spec:
 
 ## PARTE 4 — Sesgo y limitaciones
 
-1. **Survivorship bias**: ver PARTE 2 arriba — deslistados SÍ se capturan
-   (`universe.is_delisted_flag`), no se excluyen del universo simulado.
+1. **Survivorship bias**: NO corregido (BUGS_REPORT.md H-05). El universo
+   sale de la lista de tickers de la SEC de hoy: las empresas que ya habían
+   desaparecido no están, y eso infla los resultados (sobre todo los LONG).
+   Ver PARTE 2 para la pérdida de eventos por clase.
 2. **Data quality**: gaps de precio flageados, no interpolados (ver
    `yfinance_backfill.py` — es información, no un bug).
 3. **Look-ahead checks**:
