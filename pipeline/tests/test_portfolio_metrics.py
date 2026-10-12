@@ -514,3 +514,67 @@ def test_perdida_por_clase_cuenta_los_eventos_sin_car_con_la_ventana_cerrada():
     assert clases["8K_5.02_EXEC_CHANGE"]["fiable"] is True
     assert report["clases_no_fiables"] == ["8K_1.03_BANKRUPTCY"]
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Incertidumbre (Tanda 11)
+# ---------------------------------------------------------------------------
+
+
+def test_intervalo_wilson_valores_de_referencia():
+    from pipeline.backtest.portfolio_metrics import intervalo_wilson
+
+    # Referencia: 50 aciertos de 100 -> [0,4038; 0,5962]; 0 de 10 -> [0; 0,2775].
+    lo, hi = intervalo_wilson(50, 100)
+    assert lo == pytest.approx(0.4038, abs=1e-4) and hi == pytest.approx(0.5962, abs=1e-4)
+    lo, hi = intervalo_wilson(0, 10)
+    assert lo == 0.0 and hi == pytest.approx(0.2775, abs=1e-4)
+    assert intervalo_wilson(0, 0) is None
+
+
+# Muestra de referencia (valores con scipy.stats.t): media 0,48 e intervalo
+# [−0,00199385, 0,96199385], que incluye el 0 por muy poco.
+MUESTRA_REF = [1.2, -0.4, 0.8, 2.1, -1.5, 0.3, 0.9, -0.2, 1.7, 0.0, 0.6, -0.9, 1.1, 0.4, -0.3, 2.4, 0.7, -1.1, 0.5, 1.3]
+
+
+def test_intervalo_t_valores_de_referencia_y_minimo_de_20():
+    from pipeline.backtest.portfolio_metrics import intervalo_t_media
+
+    lo, hi = intervalo_t_media(MUESTRA_REF)
+    assert lo == pytest.approx(-0.0019938517839761527, abs=1e-12)
+    assert hi == pytest.approx(0.9619938517839761, abs=1e-12)
+    assert intervalo_t_media(MUESTRA_REF[:19]) is None
+
+
+def test_wilson_es_exacto_en_los_extremos():
+    from pipeline.backtest.portfolio_metrics import intervalo_wilson
+
+    assert intervalo_wilson(10, 10)[1] == 1.0
+    assert intervalo_wilson(0, 3)[0] == 0.0
+    # Sin simetría: 3 de 10 no es lo mismo que 7 de 10.
+    lo, hi = intervalo_wilson(3, 10)
+    assert lo == pytest.approx(0.10779, abs=1e-5) and hi == pytest.approx(0.60322, abs=1e-5)
+
+
+def test_metricas_de_trade_con_incertidumbre():
+    """El veredicto «se distingue de cero» sale del intervalo: la muestra de
+    referencia lo roza (incluye el 0); desplazada +0,01, ya no. Con menos de
+    20 operaciones no hay intervalo ni veredicto."""
+    def _metricas(valores):
+        return compute_trade_metrics([{"pnl_pct": p, "exit_date": date(2024, 1, 1) + timedelta(days=i)} for i, p in enumerate(valores)])
+
+    roza = _metricas(MUESTRA_REF)
+    assert roza["expectancy"] == pytest.approx(0.48)
+    assert roza["avg_pnl_distinguible_de_cero"] is False
+    assert roza["avg_pnl_ic95"] == pytest.approx([-0.0019938517839761527, 0.9619938517839761])
+    assert _metricas([v + 0.01 for v in MUESTRA_REF])["avg_pnl_distinguible_de_cero"] is True
+    # Acierto: 13 de 20 ganadoras (las que dan > 0).
+    assert roza["win_rate"] == pytest.approx(13 / 20)
+    lo, hi = roza["win_rate_ic95"]
+    assert lo == pytest.approx(0.43286, abs=1e-5) and hi == pytest.approx(0.81880, abs=1e-5)
+
+    pocas = _metricas([0.01, 5.0])
+    assert pocas["avg_pnl_ic95"] is None and pocas["avg_pnl_distinguible_de_cero"] is None
+
+    vacio = compute_trade_metrics([])
+    assert vacio["win_rate_ic95"] is None and vacio["avg_pnl_ic95"] is None
