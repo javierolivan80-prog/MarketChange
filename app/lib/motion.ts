@@ -23,8 +23,10 @@ export const chartTooltipMotion = {
   animationEasing: "ease-out",
   contentStyle: {
     background: "var(--surface-raised)",
-    border: "1px solid var(--border-strong)",
-    borderRadius: 0,
+    border: "1px solid var(--border-subtle)",
+    // Esquinas y sombra como el resto de superficies (Tanda 12c).
+    borderRadius: "0.625rem",
+    boxShadow: "var(--shadow-card)",
     color: "var(--foreground)",
     fontSize: "0.75rem",
   },

@@ -85,7 +85,7 @@ export default async function CarteraPage() {
             pantalla: el veredicto interno de go/no-go del motor vive en
             /funciona, y el capital nominal del backtest no se muestra (las
             cifras van en %). */}
-        <details className="tarjeta mt-4 px-4 text-sm open:pb-4">
+        <details suppressHydrationWarning className="tarjeta mt-4 px-4 text-sm [&>*:last-child]:pb-4">
           <summary className="py-3 text-foreground">{t("Cómo leer estas cifras", "How to read these figures")}</summary>
           <div className="mt-2 space-y-1 text-text-secondary">
             <p>

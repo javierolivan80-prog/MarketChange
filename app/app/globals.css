@@ -54,6 +54,7 @@
      tarjeta; un gris opaco desaparecía sobre el fondo gris. */
   --fill: oklch(0.55 0.01 286 / 0.12);
   --fill-strong: oklch(0.55 0.01 286 / 0.2);
+  --fill-pressed: oklch(0.55 0.01 286 / 0.3);
   --focus-ring: var(--color-accent-600);
   /* Serie principal de los gráficos y su versión tenue (muestra pequeña).
      La tenue no llega a 3:1 sobre el fondo en ningún tema: siempre se pinta
@@ -109,13 +110,15 @@
   --surface-pressed: oklch(0.335 0.003 286);
   --foreground: oklch(0.97 0 0);
   --text-secondary: oklch(0.74 0 0);
-  /* 0,64: sobre la tarjeta (#1C1C1E) da ≈5,2:1; con 0,6 no llegaba a AA. */
-  --text-tertiary: oklch(0.64 0 0);
+  /* 0,68: ≥4,5:1 también sobre el relleno y sobre surface-raised (la fila
+     desplegada, las cabeceras teñidas); con 0,64 se quedaba en 4,3. */
+  --text-tertiary: oklch(0.68 0 0);
   --border-subtle: oklch(0.31 0.003 286);
   --border-strong: oklch(0.42 0.003 286);
   --shadow-card: none;
   --fill: oklch(0.6 0.01 286 / 0.24);
   --fill-strong: oklch(0.6 0.01 286 / 0.36);
+  --fill-pressed: oklch(0.6 0.01 286 / 0.5);
   --focus-ring: var(--color-accent-400);
   --chart-series: var(--color-accent-400);
   --chart-series-weak: var(--color-accent-700);
@@ -149,6 +152,7 @@
   --color-surface-pressed: var(--surface-pressed);
   --color-fill: var(--fill);
   --color-fill-strong: var(--fill-strong);
+  --color-fill-pressed: var(--fill-pressed);
   --color-foreground: var(--foreground);
   --color-text-secondary: var(--text-secondary);
   --color-text-tertiary: var(--text-tertiary);
@@ -347,16 +351,18 @@
       font-size: 2.125rem;
     }
   }
-}
-@media (prefers-contrast: more) {
-  .tarjeta {
-    box-shadow: none;
-    border: 1px solid var(--border-strong);
+  /* Dentro de la capa: fuera de ella ganaban a ring-2 (el anillo de la
+     estrategia recomendada desaparecía justo con más contraste). */
+  @media (prefers-contrast: more) {
+    .tarjeta {
+      box-shadow: none;
+      border: 1px solid var(--border-strong);
+    }
   }
-}
-@media (forced-colors: active) {
-  .tarjeta {
-    border: 1px solid CanvasText;
+  @media (forced-colors: active) {
+    .tarjeta {
+      border: 1px solid CanvasText;
+    }
   }
 }
 
@@ -484,10 +490,13 @@ html[data-welcome-dismissed] [data-welcome-note] {
      esté, y no se retiene ninguna acción esperando a la salida. Hace falta
      ::details-content e interpolate-size (hoy, Chromium); en el resto se
      mantiene la entrada con fundido y plegar es instantáneo. */
-  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
+  /* Animar hasta height: auto (desplegables y fila de la tabla). */
+  @supports (interpolate-size: allow-keywords) {
     :root {
       interpolate-size: allow-keywords;
     }
+  }
+  @supports (interpolate-size: allow-keywords) and selector(::details-content) {
     details::details-content {
       block-size: 0;
       opacity: 0;

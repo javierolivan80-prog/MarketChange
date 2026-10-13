@@ -64,7 +64,7 @@ export default async function LargoPlazoPage() {
       </header>
 
       {/* Aviso: esto no es asesoramiento */}
-      <div className="mb-6 rounded-card bg-amber-50 p-4 text-sm dark:bg-amber-500/15">
+      <div className="mb-6 rounded-card border border-transparent bg-amber-50 p-4 text-sm contrast-more:border-border-strong dark:bg-amber-500/15">
         <p className="mb-1 font-medium text-amber-800 dark:text-amber-400">{t("Esto no es una recomendación de inversión", "This is not an investment recommendation")}</p>
         <p className="text-text-secondary">
           {t(

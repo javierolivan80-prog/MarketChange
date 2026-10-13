@@ -36,7 +36,7 @@ export function ComparisonTable({ rows, locale = "es" }: { rows: ComparisonRow[]
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.metric} className="border-b border-border-subtle">
+            <tr key={row.metric} className="border-b border-border-subtle last:border-b-0">
               <th scope="row" className="py-2 pl-3 pr-4 font-normal text-text-secondary">
                 {row.metric}
               </th>

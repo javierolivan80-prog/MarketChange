@@ -53,7 +53,7 @@ export function SampleBadge({ sample, inset = false }: { sample: SampleSplit | u
   const t = useT();
   const c = copy(t)[sample === "oos" ? "oos" : sample === "in_sample" ? "in_sample" : "full"];
   return (
-    <div className={`px-3 py-2 text-xs ${c.tone} ${inset ? "" : "rounded-control"}`}>
+    <div className={`py-2 text-xs ${c.tone} ${inset ? "px-4" : "rounded-control border border-transparent px-3 contrast-more:border-border-strong"}`}>
       <span className="mr-1 font-semibold">{c.label}.</span>
       {c.text}
       <span className="mt-1 block">

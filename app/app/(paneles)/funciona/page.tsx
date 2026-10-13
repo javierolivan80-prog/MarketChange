@@ -117,7 +117,7 @@ function DecisionCard({ title, decision, locale }: { title: string; decision: Ve
   const t = makeT(locale);
   const RELIABILITY = reliability(locale);
   return (
-    <div className={`rounded-card p-4 ${OPTION_STYLES[decision.option]}`}>
+    <div className={`rounded-card border border-transparent p-4 contrast-more:border-border-strong ${OPTION_STYLES[decision.option]}`}>
       <p className="mb-1 text-sm text-text-secondary">{title}</p>
       <p className={`mb-2 text-lg leading-snug font-semibold tracking-tight ${OPTION_TEXT_STYLES[decision.option]}`}>{RELIABILITY[decision.option].title}</p>
       <p className="mb-2 text-xs text-text-tertiary">{t("Criterios evaluados:", "Criteria checked:")}</p>
@@ -231,7 +231,7 @@ export default async function FuncionaPage() {
       {/* Veredicto + decisión por versión */}
       {validationReport && (
         <section className="mb-10">
-          <div className={`mb-4 rounded-card p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
+          <div className={`mb-4 rounded-card border border-transparent p-5 contrast-more:border-border-strong ${OPTION_STYLES[validationReport.best_decision.option]}`}>
             <p className="mb-1 text-[0.8125rem] text-text-secondary">
               {t("Calificación global · estrategia recomendada", "Overall rating · recommended strategy")}: {versionLabel(validationReport.best_version, locale)}
             </p>
@@ -347,7 +347,7 @@ export default async function FuncionaPage() {
               </thead>
               <tbody>
                 {SCENARIO_ORDER.map((key) => (
-                  <tr key={key} className="border-b border-border-subtle">
+                  <tr key={key} className="border-b border-border-subtle last:border-b-0">
                     <td className="py-2 pl-3 pr-4 text-foreground">{SCENARIO_LABELS[key]}</td>
                     {VERSION_ORDER.map((ver) => {
                       const scenario = validationReport.sensitivity.scenarios[ver]?.[key];

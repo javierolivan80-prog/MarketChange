@@ -174,6 +174,14 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
     - **Desplegables** como filas de lista: chevron › al final que gira al abrir, separadores finos, 44 px con el dedo.
     - **Maquetación:** cabecera, páginas y pie con el mismo ancho (antes la cabecera iba más ancha que el contenido y el logo no se alineaba con el título); las páginas de lectura mantienen su columna estrecha.
     - Comprobado: 53/53 tests de la app; capturas en claro y oscuro a 1280, 820, 390 y 320 px sin desbordes ni errores de consola; pruebas de interacción (píldora deslizándose, fila que crece y vuelve, borde y título de la barra solo al bajar, 44 px con el dedo, exportaciones, filtro, tema, anclas).
+    - Revisión adversarial (1 alta, 5 medias, 8 bajas), corregido:
+      - **Contraste (alta):** el botón principal en oscuro llevaba texto blanco sobre un azul claro (4,0:1; 2,7:1 al pasar el ratón): ahora sobre accent-600 (6,2:1).
+      - Texto terciario en oscuro subido para llegar a 4,5:1 también sobre la fila desplegada, el relleno y las cabeceras teñidas; la etiqueta LONG en claro, más oscura.
+      - El indicador de pestaña no se volvía a medir al cambiar de idioma (quedaba 28 px más estrecho); ahora se observa cada pestaña. El título recogido le quitaba ancho a la tira a 768 px: solo desde 1024 px, y sale con el mismo muelle con el que entra.
+      - El crecimiento de la fila con `grid-template-rows` no funcionaba dentro de una celda de tabla (quedaba una franja vacía de hasta 145 px): ahora se anima la altura hasta `auto` (medido: la fila y su contenido miden lo mismo en cada fotograma). Al ordenar con una fila abierta ya no vuelve a crecer desde 0.
+      - Con más contraste, la tarjeta de la estrategia recomendada perdía su anillo (la regla estaba fuera de capa); botones grises, de texto, avisos, píldoras y campos llevan un borde que solo aparece con más contraste o colores forzados (antes no tenían contorno).
+      - Relleno de los desplegables dentro del contenido (saltaba 16 px al abrir); pulsado distinto del hover; píldoras del índice a 44 px con el dedo; tooltip de los gráficos redondeado; línea del pie alineada con las tarjetas; sin línea bajo la última fila de las tablas; «Dark mode» ya no sale como «Dark Mode» a 320 px.
+      - El aviso de hidratación que aparecía a veces en las capturas no es de la app: Playwright oculta el cursor de los campos (`caret-color`) antes de que React termine de hidratar. Los `<details>` abiertos antes de hidratar sí daban un aviso benigno: `suppressHydrationWarning`.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 

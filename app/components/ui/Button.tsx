@@ -19,16 +19,19 @@ import type { ButtonHTMLAttributes } from "react";
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 
 const BASE =
-  "inline-flex min-h-9 pointer-coarse:min-h-11 items-center justify-center gap-1.5 rounded-control px-3.5 text-sm font-medium transition-[color,background-color,border-color,scale] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) [-webkit-tap-highlight-color:transparent] active:scale-[0.97] active:duration-(--motion-duration-micro) motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
+  "inline-flex min-h-9 pointer-coarse:min-h-11 items-center justify-center gap-1.5 rounded-control border border-transparent px-3.5 text-sm font-medium transition-[color,background-color,border-color,scale] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) [-webkit-tap-highlight-color:transparent] active:scale-[0.97] active:duration-(--motion-duration-micro) contrast-more:border-border-strong motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
 
 // Estilos de botón de Apple (Tanda 12c): relleno para la acción principal,
 // gris para las de apoyo y solo texto en el color de acento para las menores.
-// Sin bordes: la forma la da el relleno.
+// El borde es transparente: no se ve, salvo con más contraste (borde marcado)
+// y con colores forzados (el sistema lo pinta; sin él, los grises y los de
+// texto no tenían contorno). En oscuro el principal va en accent-600 con
+// texto blanco: sobre accent-500/400 no llegaba a 4,5:1.
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
-    "bg-accent-600 text-white hover:bg-accent-700 active:bg-accent-700 dark:bg-accent-500 dark:hover:bg-accent-400 dark:active:bg-accent-400 dark:text-white",
-  secondary: "bg-fill text-foreground hover:bg-fill-strong active:bg-fill-strong",
-  ghost: "text-accent-700 hover:bg-fill active:bg-fill-strong dark:text-accent-400",
+    "bg-accent-600 text-white hover:bg-accent-700 active:bg-accent-700 dark:bg-accent-600 dark:hover:bg-accent-700 dark:active:bg-accent-700",
+  secondary: "bg-fill text-foreground hover:bg-fill-strong active:bg-fill-pressed",
+  ghost: "text-accent-700 hover:bg-fill active:bg-fill-pressed dark:text-accent-400",
 };
 
 export function buttonClass(variant: ButtonVariant = "secondary", extra = ""): string {

@@ -204,7 +204,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       botones): el realce al pasar por encima ya prometía que
                       era pulsable. Con teclado, el botón ▸. */}
                   <tr
-                    className="cursor-pointer border-b border-border-subtle [-webkit-tap-highlight-color:transparent] hover:bg-surface-raised active:bg-surface-pressed"
+                    className="cursor-pointer border-b border-border-subtle last:border-b-0 [-webkit-tap-highlight-color:transparent] hover:bg-surface-raised active:bg-surface-pressed"
                     onClick={(e) => {
                       if ((e.target as HTMLElement).closest("a, button")) return;
                       // Seleccionar texto (arrastrar, doble clic) no despliega.
@@ -272,6 +272,12 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
   const [state, setState] = useState<DetailState>(() => analisisCargados.get(eventId) ?? { status: "loading" });
   const t = useT();
   const locale = useLocale();
+  // @starting-style solo en el primer fotograma (ver el comentario de abajo).
+  const [recienMontada, setRecienMontada] = useState(true);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setRecienMontada(false));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   useEffect(() => {
     if (analisisCargados.has(eventId)) return;
@@ -291,19 +297,22 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
 
   return (
     // Crece desde su fila y vuelve a ella por el mismo camino (Tanda 12c,
-    // guía de Apple: origen anclado y muelle). La altura va de 0 a la del
-    // contenido con el truco de grid-template-rows 0fr → 1fr (sirve con
-    // altura desconocida y en todos los navegadores); entra desde 0 con
-    // @starting-style y, como es una transición, pulsar a mitad la invierte
-    // desde donde esté.
-    <tr className="border-b border-border-subtle bg-surface-raised">
+    // guía de Apple: origen anclado y muelle). Se anima la altura hasta
+    // height: auto (interpolate-size, en globals.css); el truco de
+    // grid-template-rows 0fr → 1fr no sirve dentro de un <td> (la celda toma
+    // la altura de la fila en una segunda pasada y quedaba una franja vacía).
+    // Donde no hay interpolate-size, la altura salta y solo se funde la
+    // opacidad. Entra desde 0 con @starting-style solo la primera vez: al
+    // ordenar, React mueve la fila y volvía a crecer desde 0. Como es una
+    // transición, pulsar a mitad la invierte desde donde esté.
+    <tr className="border-b border-border-subtle bg-surface-raised last:border-b-0">
       <td colSpan={colSpan} className="p-0">
         <div
-          className={`grid transition-[grid-template-rows,opacity] duration-(--motion-duration-spring) ease-(--motion-ease-spring) starting:grid-rows-[0fr] starting:opacity-0 motion-reduce:transition-none ${
-            cerrando ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
-          }`}
+          className={`overflow-hidden transition-[height,opacity] duration-(--motion-duration-spring) ease-(--motion-ease-spring) motion-reduce:transition-none ${
+            recienMontada ? "starting:h-0 starting:opacity-0" : ""
+          } ${cerrando ? "h-0 opacity-0" : "h-auto opacity-100"}`}
         >
-          <div className="min-h-0 overflow-hidden">
+          <div>
             <div className="px-4 py-4">
         {state.status === "loading" && <AnalysisSkeleton label={t("Cargando análisis…", "Loading analysis…")} />}
         {state.status === "error" && (

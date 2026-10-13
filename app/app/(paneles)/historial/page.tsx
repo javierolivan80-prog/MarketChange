@@ -122,7 +122,7 @@ export default async function HistorialPage() {
           </thead>
           <tbody>
             {history.rows.map((r) => (
-              <tr key={r.event_id} className="border-b border-border-subtle">
+              <tr key={r.event_id} className="border-b border-border-subtle last:border-b-0">
                 <td className="num py-2 pl-3 pr-4 text-text-secondary">{formatDate(r.d0_close_date, locale)}</td>
                 <td className="py-2 pr-4">
                   <Link href={`/senales/${r.event_id}`} className="font-mono font-medium text-foreground hover:underline">

@@ -17,7 +17,7 @@ import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 // Tanda 12c: campos como los de Apple, con relleno translúcido y esquinas
 // suaves en vez de borde; el borde (transparente) solo se ve con un error.
 const INPUT =
-  " min-h-9 rounded-control border border-transparent bg-fill px-2.5 py-1.5 text-sm text-foreground placeholder:text-text-tertiary aria-[invalid=true]:border-rose-600 dark:aria-[invalid=true]:border-rose-400 pointer-coarse:min-h-11 pointer-coarse:text-base";
+  " min-h-9 rounded-control border border-transparent bg-fill px-2.5 py-1.5 text-sm text-foreground placeholder:text-text-tertiary aria-[invalid=true]:border-rose-600 dark:aria-[invalid=true]:border-rose-400 contrast-more:border-border-strong pointer-coarse:min-h-11 pointer-coarse:text-base";
 const LABEL = "text-[0.8125rem] font-medium text-text-secondary";
 
 export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) {
@@ -235,7 +235,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
               type="button"
               onClick={() => removeFilter(f.key)}
               aria-label={`${t("Quitar filtro", "Remove filter")} ${f.label}`}
-              className="inline-flex min-h-7 items-center gap-1 rounded-full bg-accent-500/12 px-3 py-0.5 text-xs font-medium text-accent-700 transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:bg-accent-500/20 active:bg-accent-500/25 dark:bg-accent-400/15 dark:text-accent-300 pointer-coarse:min-h-11 pointer-coarse:px-3.5"
+              className="inline-flex min-h-7 items-center gap-1 rounded-full border border-transparent bg-accent-500/12 px-3 py-0.5 text-xs font-medium text-accent-700 transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:bg-accent-500/20 active:bg-accent-500/25 dark:bg-accent-400/15 dark:text-accent-300 pointer-coarse:min-h-11 pointer-coarse:px-3.5"
             >
               {f.label}
               <span aria-hidden="true" className="opacity-70">×</span>

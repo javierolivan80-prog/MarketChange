@@ -179,7 +179,7 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
       </div>
 
       {d.exit_rules && d.exit_rules.length > 0 && (
-        <details className="mt-3 border-t border-border-subtle text-xs text-text-secondary open:pb-1">
+        <details suppressHydrationWarning className="mt-3 border-t border-border-subtle text-xs text-text-secondary [&>*:last-child]:pb-1">
           <summary className="pt-2.5 pb-2 text-sm text-foreground pointer-coarse:py-3">{t("Reglas de entrada y salida", "Entry and exit rules")}</summary>
           <ul className="mt-1 list-inside list-disc space-y-0.5">
             {d.exit_rules.map((r) => (

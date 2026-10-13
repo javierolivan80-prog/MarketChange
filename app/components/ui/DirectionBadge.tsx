@@ -5,7 +5,7 @@
 // ningún otro sitio de la interfaz se usa ese color, para que cuando
 // aparezca signifique siempre lo mismo: dirección o resultado.
 const STYLES: Record<string, string> = {
-  LONG: "bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-400",
+  LONG: "bg-emerald-500/12 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-400",
   SHORT: "bg-rose-500/12 text-rose-700 dark:bg-rose-400/15 dark:text-rose-400",
   NO_TRADE: "bg-fill text-text-secondary",
 };

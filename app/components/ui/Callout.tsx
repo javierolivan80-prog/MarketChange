@@ -32,7 +32,7 @@ export function Callout({
   };
   return (
     // Banda con relleno de color y esquinas suaves (Tanda 12c), sin borde.
-    <div className={`rounded-control px-3 py-2 text-xs ${STYLES[kind]} ${className}`}>
+    <div className={`rounded-control border border-transparent px-3 py-2 text-xs contrast-more:border-border-strong ${STYLES[kind]} ${className}`}>
       <span className="mr-1 font-semibold">{LABELS[kind]}:</span>
       {children}
     </div>

@@ -52,7 +52,7 @@ export function Nav() {
   // al documento); el margen es el ancho del degradado, para que la activa
   // no quede debajo. Sin scrollIntoView: también movería la página en
   // vertical si la cabecera no está a la vista.
-  useEffect(() => {
+  function llevarActivaALaVista() {
     const el = tira.current;
     const activa = el?.querySelector<HTMLElement>('[aria-current="page"]');
     if (el && activa) {
@@ -62,17 +62,7 @@ export function Nav() {
       if (a.left < caja.left + margen) el.scrollLeft -= caja.left + margen - a.left;
       else if (a.right > caja.right - margen) el.scrollLeft += a.right - (caja.right - margen);
     }
-    medir();
-  }, [current]);
-
-  // Al girar el móvil o cambiar el ancho, cambia si hay pestañas ocultas.
-  useEffect(() => {
-    const el = tira.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observador = new ResizeObserver(medir);
-    observador.observe(el);
-    return () => observador.disconnect();
-  }, []);
+  }
 
   // Indicador de la pestaña activa (Tanda 12c, guía de Apple): una píldora
   // que se desliza con un muelle de una pestaña a otra, como un control
@@ -85,12 +75,27 @@ export function Nav() {
     if (!activa) return setIndicador(null);
     setIndicador((prev) => ({ x: activa.offsetLeft, y: activa.offsetTop, w: activa.offsetWidth, h: activa.offsetHeight, animar: prev !== null }));
   }
-  useEffect(medirIndicador, [current]);
+
+  useEffect(() => {
+    llevarActivaALaVista();
+    medir();
+    medirIndicador();
+  }, [current]);
+
+  // Se observa la tira y cada pestaña: al girar el móvil cambia el ancho de
+  // la tira, y al cambiar de idioma cambia el de las pestañas (la tira, que
+  // es flex-1, no). En los dos casos hay que volver a medir el indicador y
+  // el degradado y volver a traer la activa a la vista.
   useEffect(() => {
     const el = tira.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const observador = new ResizeObserver(() => medirIndicador());
+    const observador = new ResizeObserver(() => {
+      llevarActivaALaVista();
+      medir();
+      medirIndicador();
+    });
     observador.observe(el);
+    el.querySelectorAll("a").forEach((a) => observador.observe(a));
     return () => observador.disconnect();
   }, []);
 
@@ -99,7 +104,9 @@ export function Nav() {
   // (2) el título de la página se recoge en la barra cuando el grande queda
   // tapado. La barra está pegada cuando su top real coincide con el `top`
   // negativo del sticky (ver layout.tsx).
-  const [tituloRecogido, setTituloRecogido] = useState<string | null>(null);
+  // El texto se conserva al ocultarse, para que salga con el mismo muelle
+  // con el que entra en vez de desaparecer de golpe.
+  const [titulo, setTitulo] = useState({ texto: "", visible: false });
   const cabecera = useRef<HTMLElement>(null);
   useEffect(() => {
     const banda = cabecera.current?.closest<HTMLElement>(".barra-material");
@@ -114,7 +121,8 @@ export function Nav() {
       if (pegada) banda.dataset.pegada = "";
       else delete banda.dataset.pegada;
       const h1 = document.querySelector("main h1");
-      setTituloRecogido(h1 && h1.getBoundingClientRect().bottom < caja.bottom ? (h1.textContent ?? "").trim() : null);
+      const tapado = h1 !== null && h1.getBoundingClientRect().bottom < caja.bottom;
+      setTitulo((prev) => (tapado ? { texto: (h1!.textContent ?? "").trim(), visible: true } : { ...prev, visible: false }));
     }
     function alDesplazar() {
       if (!pendiente) pendiente = requestAnimationFrame(actualizar);
@@ -122,9 +130,14 @@ export function Nav() {
     actualizar();
     window.addEventListener("scroll", alDesplazar, { passive: true });
     window.addEventListener("resize", alDesplazar);
+    // La página puede llegar después (pantalla de carga → contenido) sin que
+    // haya scroll: se vuelve a mirar cuando cambia el contenido.
+    const cambios = typeof MutationObserver === "undefined" ? null : new MutationObserver(alDesplazar);
+    cambios?.observe(document.body, { childList: true, subtree: true });
     return () => {
       window.removeEventListener("scroll", alDesplazar);
       window.removeEventListener("resize", alDesplazar);
+      cambios?.disconnect();
       cancelAnimationFrame(pendiente);
     };
   }, [current]);
@@ -181,14 +194,16 @@ export function Nav() {
           })}
         </div>
         {/* Título recogido: duplica el h1 (por eso aria-hidden) y solo se ve
-            desde md; en el móvil la pestaña activa ya dice dónde se está. */}
+            desde lg (a 768px le quitaba ancho a la tira y la última pestaña
+            quedaba cortada); por debajo, la pestaña activa ya dice dónde se
+            está. */}
         <span
           aria-hidden="true"
-          className={`hidden max-w-[16rem] shrink-0 truncate text-sm font-semibold text-foreground transition-[opacity,translate] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) motion-reduce:transition-none md:block ${
-            tituloRecogido ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+          className={`hidden max-w-[16rem] shrink-0 truncate text-sm font-semibold text-foreground transition-[opacity,translate] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) motion-reduce:transition-none lg:block ${
+            titulo.visible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
           }`}
         >
-          {tituloRecogido}
+          {titulo.texto}
         </span>
       </nav>
     </header>

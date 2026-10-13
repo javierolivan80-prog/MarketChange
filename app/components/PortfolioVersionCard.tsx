@@ -99,7 +99,7 @@ export function PortfolioVersionCard({
         )}
       </p>
 
-      <details className="mb-3 border-y border-border-subtle text-xs open:pb-3">
+      <details suppressHydrationWarning className="mb-3 border-y border-border-subtle text-xs [&>*:last-child]:pb-3">
         <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Todas las métricas", "All metrics")}</summary>
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
           <dt className="text-text-secondary">{t("Operaciones", "Trades")}</dt>
@@ -151,23 +151,23 @@ export function PortfolioVersionCard({
         <PortfolioEquityCurve points={report.equity_curve} startingCapital={startingCapital} locale={locale} />
       </div>
 
-      <details className="border-t border-border-subtle text-xs open:pb-3">
+      <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
         <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Caídas a lo largo del tiempo", "Drawdowns over time")}</summary>
         <DrawdownChart equityCurve={report.equity_curve} />
       </details>
 
-      <details className="border-t border-border-subtle text-xs open:pb-3">
+      <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
         <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Distribución de retornos", "Return distribution")}</summary>
         <ReturnHistogram pnlPcts={report.all_trades.map((t) => t.pnl_pct)} />
       </details>
 
-      <details className="border-t border-border-subtle text-xs open:pb-3">
+      <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
         <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Predicho frente a real", "Predicted vs actual")}</summary>
         <ScatterPredictedActual points={report.prediction_regression.scatter} rSquared={report.prediction_regression.r_squared} />
       </details>
 
       {!report.confidence_calibration.no_aplica && (
-      <details className="border-t border-border-subtle text-xs open:pb-3">
+      <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
         <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">
           {t("Acierto según la confianza declarada", "Win rate by stated confidence")}{" "}
           {report.confidence_calibration.correlation !== null &&
@@ -178,7 +178,7 @@ export function PortfolioVersionCard({
       )}
 
       {temporal_stability && (
-        <details className="border-t border-border-subtle text-xs open:pb-3">
+        <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
           <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">
             {t("Estabilidad temporal", "Stability over time")} (split {temporal_stability.split_date})
           </summary>
@@ -198,7 +198,7 @@ export function PortfolioVersionCard({
       )}
 
       {eventTypeRows.length > 0 && (
-        <details className="border-t border-border-subtle text-xs open:pb-3">
+        <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
           <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">
             {t("Por tipo de evento", "By event type")} ({eventTypeRows.length})
           </summary>
@@ -235,7 +235,7 @@ export function PortfolioVersionCard({
         </details>
       )}
 
-      <details className="border-t border-border-subtle text-xs open:pb-3">
+      <details suppressHydrationWarning className="border-t border-border-subtle text-xs [&>*:last-child]:pb-3">
         <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Las 10 mejores y peores operaciones", "Top 10 best and worst trades")}</summary>
         <TradeMiniTable trades={report.top_10_winners} locale={locale} />
         <div className="mt-2" />

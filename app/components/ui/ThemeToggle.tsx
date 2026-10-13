@@ -46,11 +46,13 @@ export function ThemeToggle() {
     <Button variant="ghost" onClick={toggle} className="whitespace-nowrap text-xs max-[359px]:px-2">
       <span className="dark:hidden">
         <span className="max-[359px]:sr-only">{t("Modo ", "")}</span>
-        <span className="max-[359px]:capitalize">{t("oscuro", "Dark mode")}</span>
+        {/* Solo la primera letra (first-letter, no capitalize): en inglés
+            capitalize daba "Dark Mode". */}
+        <span className="max-[359px]:inline-block max-[359px]:first-letter:uppercase">{t("oscuro", "Dark mode")}</span>
       </span>
       <span className="hidden dark:inline">
         <span className="max-[359px]:sr-only">{t("Modo ", "")}</span>
-        <span className="max-[359px]:capitalize">{t("claro", "Light mode")}</span>
+        <span className="max-[359px]:inline-block max-[359px]:first-letter:uppercase">{t("claro", "Light mode")}</span>
       </span>
     </Button>
   );

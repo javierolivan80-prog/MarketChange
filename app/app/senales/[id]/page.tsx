@@ -51,18 +51,18 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
           del primer bloque ni dónde estaba cada parte. */}
       <nav aria-label={t("En esta página", "On this page")} className="mb-5 flex flex-wrap gap-2 text-sm">
         {detail.technical && (
-          <a href="#plan" className="rounded-full bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-strong pointer-coarse:py-2.5">
+          <a href="#plan" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
             {t("Plan técnico", "Technical plan")}
           </a>
         )}
-        <a href="#analisis" className="rounded-full bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-strong pointer-coarse:py-2.5">
+        <a href="#analisis" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
           {t("Análisis del evento", "Event analysis")}
         </a>
-        <a href="#versiones" className="rounded-full bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-strong pointer-coarse:py-2.5">
+        <a href="#versiones" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
           {t("Las tres estrategias", "The three strategies")}
         </a>
         {detail.source_url && (
-          <a href={detail.source_url} target="_blank" rel="noopener noreferrer" className="rounded-full bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-strong pointer-coarse:py-2.5">
+          <a href={detail.source_url} target="_blank" rel="noopener noreferrer" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
             {t("Filing original ↗", "Original filing ↗")}
           </a>
         )}
