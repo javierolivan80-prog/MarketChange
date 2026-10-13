@@ -90,10 +90,10 @@
   /* Ease-out fuerte (Emil): arranca deprisa, que es cuando se mira. La
      anterior (0.2, 0, 0, 1) salía con tangente plana, un arranque lento. */
   --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Movimiento de un sitio a otro en pantalla (la píldora de la pestaña
-     activa): ease-in-out fuerte, la curva de Emil para esto. */
-  --motion-ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  /* Sin ease-in-out: su primera mitad es un ease-in (la píldora de la
+     pestaña apenas se movía 1 px en los primeros 75 ms tras el clic). Para
+     llevar algo de un sitio a otro, el muelle de abajo (Apple: mover y
+     recolocar con amortiguación 1), que responde en el primer fotograma. */
   --motion-shift: 4px;
   /* Muelle críticamente amortiguado (guía de Apple: amortiguación 1, sin
      rebote), muestreado en linear(). Es una curva de salida fuerte: la que
@@ -398,10 +398,12 @@ html[data-welcome-dismissed] [data-welcome-note] {
 /* ── Motion ─────────────────────────────────────────────────────────────
    La animación está para comunicar (qué apareció, en qué orden se razonó,
    desde dónde sale un plan), no para decorar. Todas las clases .m-* son
-   opt-in y solo existen dentro de `no-preference`: con movimiento reducido
-   el elemento se pinta directamente en su estado final, sin fundidos. Solo
-   se anima opacity, transform, clip-path y stroke-dashoffset (componibles,
-   sin recalcular layout). Los @keyframes solo declaran el `from`: el `to`
+   opt-in y su movimiento solo existe dentro de `no-preference`: con
+   movimiento reducido las entradas se quedan en un fundido de opacidad
+   (Tanda 12d, más abajo) y el resto se pinta en su estado final. Se anima
+   opacity, transform, clip-path y stroke-dashoffset (componibles, sin
+   recalcular layout); las excepciones a propósito son la altura de los
+   desplegables y de la fila de la tabla (crecen desde su sitio). Los @keyframes solo declaran el `from`: el `to`
    es el estado natural del elemento, así que el dato final es siempre el
    que hay en el DOM. */
 @keyframes m-enter {
@@ -572,9 +574,24 @@ html[data-welcome-dismissed] [data-welcome-note] {
 /* Lo que se activa con el teclado no se anima (Emil: son acciones que se
    repiten y la animación las hace sentir lentas). Nav.tsx marca el <html>
    con data-teclado al pulsar Intro, espacio o tabulador, y lo quita con el
-   primer clic o toque. */
-html[data-teclado] details::details-content,
+   primer clic o toque. Reglas separadas a propósito: en una lista, un
+   navegador sin ::details-content descartaría todas. */
 html[data-teclado] summary::after,
 html[data-teclado] [data-anima-con-puntero] {
   transition: none !important;
+}
+html[data-teclado] details::details-content {
+  transition: none !important;
+}
+html[data-teclado] .m-enter,
+html[data-teclado] details[open] > :not(summary) {
+  animation: none !important;
+}
+/* Ni el botón (y los enlaces con aspecto de botón) se encoge ni cambia de
+   color con transición al pulsar espacio o Intro. */
+html[data-teclado] .pulsable {
+  transition: none !important;
+}
+html[data-teclado] .pulsable:active {
+  scale: none !important;
 }

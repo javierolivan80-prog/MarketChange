@@ -18,8 +18,10 @@ import type { ButtonHTMLAttributes } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 
+// `pulsable` no es de Tailwind: es la marca con la que globals.css quita la
+// animación al pulsar con el teclado (Tanda 12d).
 const BASE =
-  "inline-flex min-h-9 pointer-coarse:min-h-11 items-center justify-center gap-1.5 rounded-control border border-transparent px-3.5 text-sm font-medium transition-[color,background-color,border-color,scale] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) [-webkit-tap-highlight-color:transparent] active:scale-[0.97] active:duration-(--motion-duration-micro) contrast-more:border-border-strong motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
+  "pulsable inline-flex min-h-9 pointer-coarse:min-h-11 items-center justify-center gap-1.5 rounded-control border border-transparent px-3.5 text-sm font-medium transition-[color,background-color,border-color,scale] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) [-webkit-tap-highlight-color:transparent] active:scale-[0.97] active:duration-(--motion-duration-micro) contrast-more:border-border-strong motion-reduce:active:scale-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
 
 // Estilos de botón de Apple (Tanda 12c): relleno para la acción principal,
 // gris para las de apoyo y solo texto en el color de acento para las menores.

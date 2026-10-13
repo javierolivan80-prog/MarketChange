@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { LanguageToggle } from "@/components/ui/LanguageToggle";
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -31,6 +31,18 @@ const TABS = [
   { href: "/funciona", es: "Fiabilidad", en: "Reliability" },
   { href: "/como-funciona", es: "Cómo funciona", en: "How it works" },
 ] as const;
+
+// Aspecto de la pestaña activa: lo lleva la copia recortada y, hasta que
+// esta se mide al hidratar (o sin JS), la propia pestaña. El fondo va en el
+// contenedor de la copia, no en cada pestaña: así, a mitad del recorrido,
+// lo recortado es una sola píldora y no trozos de dos. Con más contraste la
+// píldora gris (~1,3:1 sobre el fondo) no bastaba: se invierte (fondo del
+// color del texto). Con colores forzados el sistema anula el relleno: se
+// usan sus colores de selección (Highlight / HighlightText).
+const ACTIVA_FONDO =
+  "bg-fill-strong contrast-more:bg-foreground forced-colors:forced-color-adjust-none forced-colors:bg-[color:Highlight]";
+const ACTIVA_TEXTO =
+  "text-foreground contrast-more:text-background forced-colors:forced-color-adjust-none forced-colors:text-[color:HighlightText]";
 
 export function Nav() {
   const pathname = usePathname();
@@ -77,8 +89,10 @@ export function Nav() {
   // cambiar de pestaña se anima el recorte. Así el color del texto cambia a
   // la vez que se mueve la píldora, sin dos estados superpuestos. Todas las
   // pestañas van en el mismo peso (font-medium) para que copia y original
-  // midan lo mismo. Es un movimiento de un sitio a otro: ease-in-out fuerte
-  // en 240 ms; con el teclado, sin animación.
+  // midan lo mismo. Es un movimiento de un sitio a otro: el muelle sin
+  // rebote de Apple (mover y recolocar) en 235 ms, que se mueve desde el
+  // primer fotograma; con el teclado, sin animación; con movimiento
+  // reducido, salta (transición estática).
   //
   // Solo se anima al cambiar de pestaña. Al girar el móvil o cambiar de
   // idioma la copia se recoloca de golpe, así que el recorte también salta
@@ -118,11 +132,20 @@ export function Nav() {
     };
   }, []);
 
-  useEffect(() => {
+  // Antes del pintado (useLayoutEffect): al navegar, el recorte empieza a
+  // moverse en el mismo fotograma en que cambia la activa; al cambiar de
+  // idioma (t cambia con él), la copia y el recorte se recolocan juntos. Con
+  // el ResizeObserver solo, el recorte quedaba un fotograma descolocado.
+  useLayoutEffect(() => {
     llevarActivaALaVista();
     medir();
     medirIndicador(true);
   }, [current]);
+  useLayoutEffect(() => {
+    llevarActivaALaVista();
+    medir();
+    medirIndicador(false);
+  }, [t]);
 
   // Se observa la tira y cada pestaña: al girar el móvil cambia el ancho de
   // la tira, y al cambiar de idioma cambia el de las pestañas (la tira, que
@@ -217,20 +240,25 @@ export function Nav() {
                 key={tab.href}
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
-                className="relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium text-text-secondary transition-colors duration-(--motion-duration-micro) hover:text-foreground active:bg-fill pointer-coarse:py-3"
+                className={`relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors duration-(--motion-duration-micro) pointer-coarse:py-3 ${
+                  isActive && !indicador ? `${ACTIVA_FONDO} ${ACTIVA_TEXTO}` : "text-text-secondary hover:text-foreground active:bg-fill"
+                }`}
               >
                 {t(tab.es, tab.en)}
               </Link>
             );
           })}
           {/* Copia con el estilo activo, recortada a la pestaña activa (ver
-              arriba). Decorativa: sin eventos y fuera del árbol accesible. */}
+              arriba). Decorativa: sin eventos, fuera del árbol accesible
+              (aria-hidden) y de la búsqueda en la página y la selección
+              (inert, select-none), para que cada etiqueta no salga dos veces. */}
           <div
             ref={copia}
             aria-hidden="true"
+            inert
             data-anima-con-puntero
-            className={`pointer-events-none absolute left-0 top-0 flex gap-1 motion-reduce:transition-none ${
-              indicador?.animar ? "transition-[clip-path] duration-(--motion-duration-base) ease-(--motion-ease-in-out-strong)" : ""
+            className={`pointer-events-none absolute left-0 top-0 flex select-none gap-1 ${ACTIVA_FONDO} motion-reduce:transition-none ${
+              indicador?.animar ? "transition-[clip-path] duration-(--motion-duration-spring) ease-(--motion-ease-spring)" : ""
             } ${indicador ? "" : "invisible"}`}
             style={
               indicador
@@ -241,7 +269,7 @@ export function Nav() {
             }
           >
             {TABS.map((tab) => (
-              <span key={tab.href} className="whitespace-nowrap rounded-full bg-fill-strong px-3.5 py-1.5 text-sm font-medium text-foreground pointer-coarse:py-3">
+              <span key={tab.href} className={`whitespace-nowrap px-3.5 py-1.5 text-sm font-medium pointer-coarse:py-3 ${ACTIVA_TEXTO}`}>
                 {t(tab.es, tab.en)}
               </span>
             ))}

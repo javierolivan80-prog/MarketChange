@@ -2,6 +2,8 @@
 
 Estado: **implementado y verificado** (PR 1-4, #68 y siguiente). Las preguntas de producto del §5 están decididas; el PR 5 queda descartado.
 
+> **Actualizado en la Tanda 12d.** Los tokens y tiempos de este documento son los vigentes. Se aplicó la skill `emil-design-eng` (Emil Kowalski) a la vez que la de Apple: la forma de muelle de Apple (amortiguación 1) con los tiempos de Emil (interfaz por debajo de 300 ms, salir más rápido que entrar), sin ease-in ni ease-in-out en ningún sitio, nada animado cuando se actúa con el teclado y, con movimiento reducido, fundidos en vez de nada. Las filas de las tablas de abajo que dicen otra cosa se leen con estos valores.
+
 Referencias aplicadas: skills `animate` (Emil Kowalski) y `motion-design`
 (arquetipo **Corporate**: 200-400 ms, `cubic-bezier(0.2,0,0,1)`, 0 % de
 rebote). Donde chocan con este brief (los springs del `layoutId` de `animate`,
@@ -54,14 +56,16 @@ Una sola fuente de verdad en `app/app/globals.css` y un espejo en TS
   --motion-duration-micro:   120ms;   /* hover, tooltip, chevron */
   --motion-duration-fast:    180ms;   /* crossfade de estado, salidas */
   --motion-duration-base:    240ms;   /* expansión de panel, entradas */
-  --motion-duration-data:    560ms;   /* barras que se rellenan, gráficos */
+  --motion-duration-data:    400ms;   /* barras que se rellenan, gráficos */
   --motion-duration-max:     800ms;   /* tope duro: nada lo supera */
   --motion-stagger:          80ms;    /* Bull → Bear → Judge */
 
-  /* Curvas (sin rebote ni elástico) */
-  --motion-ease-out:    cubic-bezier(0.2, 0, 0, 1);    /* entradas: firma de la app */
-  --motion-ease-in:     cubic-bezier(0.4, 0, 1, 1);    /* salidas */
-  --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);  /* movimiento dentro de pantalla */
+  /* Curvas (sin rebote ni elástico, y nada que arranque despacio) */
+  --motion-ease-out:    cubic-bezier(0.23, 1, 0.32, 1); /* fundidos y datos */
+  --motion-ease-spring: linear(0, 0.0575, …, 1);        /* muelle de Apple, amortiguación 1:
+                                                           entradas, salidas y lo que se mueve */
+  --motion-duration-spring:      235ms;                 /* entrar (respuesta 0,16 s) */
+  --motion-duration-spring-fast: 176ms;                 /* salir (respuesta 0,12 s) */
   --motion-ease-linear: linear;                        /* solo opacidad en bucle (skeleton) */
 
   /* Distancia */
@@ -72,7 +76,7 @@ Una sola fuente de verdad en `app/app/globals.css` y un espejo en TS
 ```ts
 // app/lib/motion.ts: espejo para Recharts (ms y nombres de easing de Recharts)
 export const motion = {
-  duration: { micro: 120, fast: 180, base: 240, data: 560, max: 800 },
+  duration: { instant: 0, micro: 120, fast: 180, base: 240, data: 400, spring: 235, "spring-fast": 176, max: 800 },
   stagger: 80,
   rechartsEase: "ease-out" as const,
 };
@@ -108,17 +112,17 @@ navegar; *interacción* significa que lo provoca el usuario.
 | Parámetro | Componente / archivo | Hoy | Cambia | Animación propuesta | Duración | Easing | Trigger | Justificación | Reduced-motion |
 |---|---|---|---|---|---|---|---|---|---|
 | **Precios: entrada, stop, objetivo** | `app/(paneles)/page.tsx` (tabla «Señales operables») | Texto `.num` estático | Nunca en sesión | **Ninguna** | — | — | — | Precio de referencia de un plan, no una cotización. Animarlo sugiere un «en vivo» que no existe y eso le resta credibilidad | — |
-| **Plan de niveles** (stop–entrada–objetivo) | `components/viz/TradeLevels.tsx` en su versión completa (ficha de la señal) | Barra estática | Nunca en sesión | Los tramos crecen **desde la marca de entrada hacia fuera**: el de riesgo hacia el stop y el de beneficio hacia el objetivo (`.m-fill-x` con `transform-origin` en la entrada) | `data` 560 ms | `ease-out` | Carga | Cuenta la causalidad del plan: todo sale de la entrada, y el riesgo y el beneficio se comparan por longitud. Las cifras de la leyenda **no** se animan | Estado final directo |
+| **Plan de niveles** (stop–entrada–objetivo) | `components/viz/TradeLevels.tsx` en su versión completa (ficha de la señal) | Barra estática | Nunca en sesión | Los tramos crecen **desde la marca de entrada hacia fuera**: el de riesgo hacia el stop y el de beneficio hacia el objetivo (`.m-fill-x` con `transform-origin` en la entrada) | `data` 400 ms | `ease-out` | Carga | Cuenta la causalidad del plan: todo sale de la entrada, y el riesgo y el beneficio se comparan por longitud. Las cifras de la leyenda **no** se animan | Estado final directo |
 | Plan de niveles, versión compacta | `TradeLevels compact` en la tabla de Inicio | Estático | Nunca en sesión | **Ninguna** | — | — | — | En una tabla, 10 barras moviéndose a la vez son ruido; la tabla se escanea, no se descubre | — |
 | **% de cambio / P&L con signo** | `SignedPct` en `ui/DirectionBadge.tsx` (historial, señales, funciona, cartera) | Signo `+`/`−` y color, tabular | Nunca en sesión | **Ninguna** | — | — | — | Ya cumple «signo + color». No hay transición de estado que comunicar | — |
 | Barra de P&L | `PnlBar` en `viz/Bars.tsx` (tabla de historial) | Estática | Nunca en sesión | **Ninguna** | — | — | — | Columna de tabla; la misma razón que la versión compacta de TradeLevels | — |
-| **KPIs del resumen** (resultado, acierto, peor caída, nº de operaciones) | `Stat` en `app/(paneles)/page.tsx`; cabecera de `PortfolioVersionCard.tsx` | `text-2xl` / `text-xl` estáticos | Nunca en sesión | Recomendado: **fade de entrada del bloque** (`.m-enter`), sin count-up. Alternativa si se aprueba la PREGUNTA 1: count-up del número | `base` 240 ms (count-up: 560 ms) | `ease-out` | Primera carga | Señala que el bloque es el centro de la página sin enseñar cifras intermedias falsas | Sin animación |
+| **KPIs del resumen** (resultado, acierto, peor caída, nº de operaciones) | `Stat` en `app/(paneles)/page.tsx`; cabecera de `PortfolioVersionCard.tsx` | `text-2xl` / `text-xl` estáticos | Nunca en sesión | Recomendado: **fade de entrada del bloque** (`.m-enter`), sin count-up. Alternativa si se aprueba la PREGUNTA 1: count-up del número | `base` 240 ms (count-up: 400 ms) | `ease-out` | Primera carga | Señala que el bloque es el centro de la página sin enseñar cifras intermedias falsas | Sin animación |
 | **Confianza del análisis** (0-100) | Columna de `SignalsTable.tsx`; ficha | Texto `NN%` | Nunca en sesión | **Ninguna** | — | — | — | Número en tabla. Va en la misma línea que la confianza técnica | — |
 | **Confianza técnica** (barra) | `viz/Meter.tsx` en las tablas de Inicio y Señales | Barra estática con el color fijado por `strong` | Nunca en sesión | **Ninguna** en tablas | — | — | — | Hasta 25 barras rellenándose a la vez anulan el efecto; el color ya llega fijo | — |
 | Puntuación técnica por partes (40/30/20/10) | `ScoreSegments` en `TechnicalPlanCard.tsx` | Segmentos estáticos | Nunca en sesión | Los segmentos cumplidos aparecen **en orden** (stagger de 80 ms, `.m-fade`); el color de cada uno llega fijo | `fast` 180 ms ×4 | `ease-out` | Carga de la ficha | Es una suma por criterios y el orden refuerza que la nota se construye por partes | Estático |
 | **EV** (valor esperado) | Columna de `SignalsTable`; sección «Valor esperado» de `SignalAnalysis.tsx` | Texto | Nunca en sesión | **Ninguna** propia (entra con su sección, ver la fila del pipeline) | — | — | — | — | — |
 | Tamaño de posición | `TechnicalPlanCard.tsx` (`position_size_pct`) | Texto | Nunca en sesión | **Ninguna** | — | — | — | Dato de lectura directa | — |
-| Probabilidad de movimiento ±5/10/20 % | `HBars` en `SignalAnalysis.tsx` | Barras estáticas | Nunca en sesión | Relleno `.m-fill-x` de las 3 barras, sin stagger (se comparan entre sí) | `data` 560 ms | `ease-out` | Carga o despliegue | Tres barras comparables: el relleno simultáneo deja ver las proporciones | Estático |
+| Probabilidad de movimiento ±5/10/20 % | `HBars` en `SignalAnalysis.tsx` | Barras estáticas | Nunca en sesión | Relleno `.m-fill-x` de las 3 barras, sin stagger (se comparan entre sí) | `data` 400 ms | `ease-out` | Carga o despliegue | Tres barras comparables: el relleno simultáneo deja ver las proporciones | Estático |
 | **Decisión recomendada** (LONG/SHORT/NO_TRADE) | Recuadro superior de `SignalAnalysis.tsx` y `DirectionBadge` | Badge estático | Nunca en sesión | **Ninguna**: es la respuesta y tiene que estar ya ahí | — | — | — | Si el veredicto aparece animado, se retrasa la respuesta | — |
 | **Pipeline Bull → Bear → Judge** | Rejilla `#analisis` de `SignalAnalysis.tsx` | 6 secciones a la vez | Al cargar la ficha o desplegar una fila | `.m-stagger` + `.m-enter`: Bull 0 ms → Bear 80 ms → Judge 160 ms; el resto de secciones entra con Judge | `base` 240 ms + 160 ms máx. = **400 ms** en total | `ease-out` | Carga o despliegue | Hace visible el orden del razonamiento: tesis → antítesis → veredicto | Todo a la vez, sin animación |
 | Las tres estrategias | Bloque `#versiones` de `SignalAnalysis.tsx` | Estático | Nunca en sesión | **Ninguna** | — | — | — | Se comparan lado a lado; escalonarlas daría a entender una jerarquía que no hay | — |
@@ -129,10 +133,10 @@ navegar; *interacción* significa que lo provoca el usuario.
 | Frescura del pipeline (retraso en ámbar) | Cabecera de Inicio | Texto ámbar | Nunca en sesión | **Ninguna** | — | — | — | Lo mismo | — |
 | **Curva de equity** (SVG hecho a mano) | `PortfolioEquityCurve.tsx` | Estática | Nunca en sesión | La línea se dibuja (`.m-draw`). El punto final y la etiqueta `+x %` aparecen **después** con `.m-fade` y retardo = `data` | Línea 600 ms + etiqueta 180 ms | `ease-out` | Primera carga | La curva cuenta un recorrido y la cifra final es su conclusión | Estado final directo |
 | Sparkline del resultado | `viz/Sparkline.tsx` en Inicio | Estática | Nunca en sesión | **Ninguna** | — | — | — | Acompaña a la cifra, no es protagonista | — |
-| Drawdown (área) | `DrawdownChart.tsx` (Recharts) | Animación por defecto de Recharts (ver §3) | Al abrir su `<details>` | Barrido de entrada de Recharts | `data` 560 ms | `ease-out` | Al abrir | Lectura de tramo temporal | `isAnimationActive={false}` |
-| Histograma de retornos | `ReturnHistogram.tsx` | Animación por defecto | Al abrir su `<details>` | Barras que crecen desde 0 | `data` 560 ms | `ease-out` | Al abrir | El crecimiento desde el eje refuerza que se lee una frecuencia | Igual |
-| P&L diario | `DailyPnLChart.tsx` | Animación por defecto | Carga | Barras que crecen desde el eje 0, hacia arriba o hacia abajo | `data` 560 ms | `ease-out` | Carga | Igual | Igual |
-| Acierto por tramo de confianza | `ConfidenceBucketBars.tsx` | Animación por defecto | Al abrir | Igual | `data` 560 ms | `ease-out` | Al abrir | Igual | Igual |
+| Drawdown (área) | `DrawdownChart.tsx` (Recharts) | Animación por defecto de Recharts (ver §3) | Al abrir su `<details>` | Barrido de entrada de Recharts | `data` 400 ms | `ease-out` | Al abrir | Lectura de tramo temporal | `isAnimationActive={false}` |
+| Histograma de retornos | `ReturnHistogram.tsx` | Animación por defecto | Al abrir su `<details>` | Barras que crecen desde 0 | `data` 400 ms | `ease-out` | Al abrir | El crecimiento desde el eje refuerza que se lee una frecuencia | Igual |
+| P&L diario | `DailyPnLChart.tsx` | Animación por defecto | Carga | Barras que crecen desde el eje 0, hacia arriba o hacia abajo | `data` 400 ms | `ease-out` | Carga | Igual | Igual |
+| Acierto por tramo de confianza | `ConfidenceBucketBars.tsx` | Animación por defecto | Al abrir | Igual | `data` 400 ms | `ease-out` | Al abrir | Igual | Igual |
 | Calibración / predicho frente a real | `CalibrationCurve.tsx`, `ScatterPredictedActual.tsx` | Animación por defecto, **también en la diagonal** | Al abrir | Los puntos entran con un fade; la **diagonal de referencia no se anima** | `base` 240 ms | `ease-out` | Al abrir | La diagonal es el marco de referencia: si se anima, parece un dato más | Igual |
 | Tooltips de gráficos | Recharts `<Tooltip>` | 400 ms de deslizamiento (por defecto) | Interacción | Seguir el cursor con `micro` 120 ms, o sin animación | `micro` 120 ms | `ease-out` | Hover | Con 400 ms el tooltip va detrás del cursor y parece descuidado | Sin animación |
 | **Tabla de señales: ordenar** | `SignalsTable.tsx` | Reordenación instantánea | Interacción | **Ninguna** (sin animación de layout) | — | — | — | Con 25 filas cruzándose, el ojo pierde la fila que estaba siguiendo. Los terminales profesionales ordenan al instante | — |
@@ -141,10 +145,10 @@ navegar; *interacción* significa que lo provoca el usuario.
 | Plegar una fila | Igual | Desaparece de golpe | Interacción | Salida instantánea | 0 | — | Clic | Animar la salida retrasa la siguiente acción y obliga a mantener el nodo montado | — |
 | Carga del razonamiento de una fila | `SignalRowDetail` (texto «Cargando análisis…») | Texto | Interacción | **Skeleton** con la forma real (recuadro de decisión + 2×2 bloques) y un pulso de opacidad sutil; se sustituye con `.m-fade` | Pulso de 1,6 s en bucle (solo mientras carga) | `linear` | Fetch | Avisa de que algo llega y deja ver ya la forma | Skeleton estático |
 | Paneles `<details>` (todas las métricas, gráficos plegados, reglas) | `PortfolioVersionCard.tsx`, `TechnicalPlanCard.tsx`, `cartera/page.tsx` | Apertura instantánea, sin animación | Interacción | El contenido entra con `.m-enter`. La altura solo se anima con `::details-content` + `interpolate-size` donde el navegador lo admite (mejora progresiva) | `base` 240 ms | `ease-out` | Clic | Deja claro qué apareció. Animar la altura es lo único que el brief permite como excepción, y aquí no es imprescindible | Instantáneo |
-| Tarjeta de calidad (largo plazo) | `QualityCard.tsx` | El panel aparece de golpe | Interacción | `grid-template-rows: 0fr→1fr` + opacidad (`base`); las 5 barras de criterio se rellenan con `.m-fill-x` y un stagger de 40 ms | 240 ms + 560 ms | `ease-out` | Clic | Deja ver qué criterios sostienen la nota | Instantáneo |
+| Tarjeta de calidad (largo plazo) | `QualityCard.tsx` | El panel aparece de golpe | Interacción | `grid-template-rows: 0fr→1fr` + opacidad (`base`); las 5 barras de criterio se rellenan con `.m-fill-x` y un stagger de 40 ms | 240 ms + 400 ms | `ease-out` | Clic | Deja ver qué criterios sostienen la nota | Instantáneo |
 | Estado de carga de la página | `app/(paneles)/loading.tsx` | `animate-pulse` de Tailwind (2 s, opacidad 1↔0,5) | Navegación | Pulso más suave (opacidad 0,55↔0,85, 1,6 s, `linear`) y bloques con la forma real (franja de KPIs + tabla) | 1,6 s en bucle | `linear` | Navegación | Lo pide el brief. **Sin el shimmer con gradiente que sugieren las skills:** el brief prohíbe gradientes | Estático (ya tiene `motion-reduce`) |
 | Estados vacío y error | `ui/PageState.tsx`, `app/error.tsx`, vacíos de los gráficos | Estáticos | Nunca en sesión | **Ninguna** | — | — | — | Un estado vacío tiene que leerse al momento | — |
-| Nota de bienvenida | `WelcomeNote.tsx` | Aparece tras hidratar (salto de layout) y desaparece de golpe | Primera visita | Entrada `.m-fade` (180 ms); al cerrar, salida `ease-in` 150 ms antes de desmontar | 180 / 150 ms | `ease-out` / `ease-in` | Carga / clic | El cierre confirma la acción. *Al margen del motion: el salto de layout se arregla reservando el hueco, y va en el mismo PR* | Instantáneo |
+| Nota de bienvenida | `WelcomeNote.tsx` | Aparece tras hidratar (salto de layout) y desaparece de golpe | Primera visita | Entrada `.m-fade` (180 ms); al cerrar, salida con el muelle en 176 ms antes de desmontar (con el teclado, en el acto) | 180 / 176 ms | `ease-out` / muelle | Carga / clic | El cierre confirma la acción. *Al margen del motion: el salto de layout se arregla reservando el hueco, y va en el mismo PR* | Instantáneo |
 | Botones y chips de filtro | `ui/Button.tsx`, `SignalsFilterForm.tsx` | `transition-colors` 150 ms (valores sueltos) | Interacción | Igual, pero con token `micro` | 120 ms | `ease-out` | Hover y foco | Respuesta táctil sin rebote | Se mantiene (es color, no movimiento) |
 | Hover de filas | Tablas de Inicio, Señales e Historial | `hover:bg-surface-raised` instantáneo | Interacción | **Instantáneo** (`--motion-duration-instant`) | 0 | — | Hover | En tablas densas, un fundido entre filas deja un rastro al mover el ratón | — |
 | Exportar CSV / PDF | `ExportCsvButton.tsx`, `ExportPdfButton.tsx` | Cambio de texto («Generando…», «Descargado») | Interacción | Crossfade del texto | `fast` 180 ms | `ease-out` | Clic | Cambio de estado del botón | Instantáneo |
@@ -158,9 +162,9 @@ navegar; *interacción* significa que lo provoca el usuario.
 | Precio que cambia | Flash del fondo de la celda con `--gain`/`--loss` al 12 % de opacidad, que se desvanece. Sin contador rodante. El número se escribe ya con su valor final | 480 ms | `ease-out` | Sin flash; solo cambia el valor |
 | Ritmo | Como mucho 1 flash por celda cada 1 s; si llegan más de 10 cambios por segundo en la vista, se suspenden los flashes | — | — | — |
 | Cambio de estado de la señal (badge) | Crossfade del badge viejo al nuevo | `fast` 180 ms | `ease-out` | Instantáneo |
-| STOP_LOSS / circuit-breaker al activarse en directo | **Un único** pulso de contorno de 2 px (sin bucle) y aviso en `aria-live="assertive"` | 600 ms, 1 vez | `ease-in-out` | Sin pulso; el aviso de `aria-live` se mantiene |
+| STOP_LOSS / circuit-breaker al activarse en directo | **Un único** pulso de contorno de 2 px (sin bucle) y aviso en `aria-live="assertive"` | 600 ms, 1 vez | `ease-out` | Sin pulso; el aviso de `aria-live` se mantiene |
 | Punto nuevo en una serie | Recharts interpola el punto nuevo, sin redibujar la serie (claves de datos estables) | `base` 240 ms | `ease-out` | Sin animación |
-| Fila nueva / eliminada | Entrada: fade + 4 px (`.m-enter`). Salida: fade `ease-in` 150 ms. Las demás filas **no** se recolocan con animación | 240 / 150 ms | `ease-out` / `ease-in` | Instantáneo |
+| Fila nueva / eliminada | Entrada: fade + 4 px (`.m-enter`). Salida: fade con el muelle en 176 ms. Las demás filas **no** se recolocan con animación | 235 / 176 ms | muelle | Instantáneo |
 
 ---
 
@@ -192,7 +196,7 @@ Performance para comprobar que no hay tareas largas ni *layout thrashing*.
 1. **PR 1: tokens y red de seguridad.** Tokens en `globals.css`,
    `lib/motion.ts` con su test de sincronía, bloque global de movimiento
    reducido y clases `.m-*` (sin usarlas todavía). Puntos 1, 2, 3, 5 y 7 del
-   §3 (Recharts a 560 ms con `ease-out`, diagonales sin animación, tooltips
+   §3 (Recharts a 400 ms con `ease-out`, diagonales sin animación, tooltips
    a 120 ms, movimiento reducido en los gráficos). *Es la parte de más valor
    y menos riesgo: quita lo que hoy incumple el brief.*
 2. **PR 2: carga.** Skeleton de `loading.tsx` con la forma real y pulso más

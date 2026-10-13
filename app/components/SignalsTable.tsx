@@ -136,10 +136,8 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
       setExpanded((prev) => conSin(prev, eventId, true));
       return;
     }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setExpanded((prev) => conSin(prev, eventId, false));
-      return;
-    }
+    // También con movimiento reducido: entonces solo se funde (ver abajo),
+    // en vez de desaparecer en el acto mientras que al abrir se fundía.
     setCerrando((prev) => conSin(prev, eventId, true));
     temporizadores.current.set(
       eventId,
@@ -222,6 +220,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                         {/* Un solo glifo que gira: se lee como el mismo control cambiando de estado, no como dos iconos. */}
                         <span
                           aria-hidden="true"
+                          data-anima-con-puntero
                           className={`inline-block transition-transform duration-(--motion-duration-micro) ease-(--motion-ease-out) motion-reduce:transition-none ${isExpanded ? "rotate-90" : ""}`}
                         >
                           ▸
@@ -308,14 +307,15 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
     // Tanda 12d (Emil): se despliega decenas de veces al día, así que entra
     // en 235 ms y sale en 176 ms (más rápido que entrar); con el teclado no
     // se anima (data-anima-con-puntero); con movimiento reducido solo se
-    // funde, sin cambio de altura animado.
+    // funde, al abrir y al cerrar: la altura se queda (motion-reduce:h-auto)
+    // mientras se desvanece y la fila se recoge de golpe al desmontarse.
     <tr className="border-b border-border-subtle bg-surface-raised last:border-b-0">
       <td colSpan={colSpan} className="p-0">
         <div
           data-anima-con-puntero
           className={`overflow-hidden transition-[height,opacity] ease-(--motion-ease-spring) motion-reduce:transition-opacity ${
             recienMontada ? "starting:h-0 starting:opacity-0" : ""
-          } ${cerrando ? "h-0 opacity-0 duration-(--motion-duration-spring-fast)" : "h-auto opacity-100 duration-(--motion-duration-spring)"}`}
+          } ${cerrando ? "h-0 opacity-0 duration-(--motion-duration-spring-fast) motion-reduce:h-auto" : "h-auto opacity-100 duration-(--motion-duration-spring)"}`}
         >
           <div>
             <div className="px-4 py-4">
