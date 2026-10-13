@@ -82,7 +82,7 @@ export function ExportCsvButton({ rows }: { rows: SignalFeedRow[] }) {
       {/* Ancho mínimo fijo: el botón no cambia de tamaño al cambiar el texto. */}
       <Button onClick={handleExport} className="min-w-40">
         {/* Crossfade solo al confirmar: la etiqueta de reposo no se anima al cargar la página. */}
-        <span key={estado} className={estado === "reposo" ? undefined : estado === "error" ? "m-fade text-rose-700 dark:text-rose-400" : "m-fade"}>
+        <span key={estado} className={estado === "reposo" ? undefined : estado === "error" ? "m-fade-blur text-rose-700 dark:text-rose-400" : "m-fade-blur"}>
           {aviso || t("Exportar (CSV)", "Export (CSV)")}
         </span>
       </Button>

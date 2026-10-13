@@ -147,7 +147,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         temporizadores.current.delete(eventId);
         setExpanded((prev) => conSin(prev, eventId, false));
         setCerrando((prev) => conSin(prev, eventId, false));
-      }, motion.duration.spring),
+      }, motion.duration["spring-fast"]),
     );
   }
 
@@ -305,12 +305,17 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
     // opacidad. Entra desde 0 con @starting-style solo la primera vez: al
     // ordenar, React mueve la fila y volvía a crecer desde 0. Como es una
     // transición, pulsar a mitad la invierte desde donde esté.
+    // Tanda 12d (Emil): se despliega decenas de veces al día, así que entra
+    // en 235 ms y sale en 176 ms (más rápido que entrar); con el teclado no
+    // se anima (data-anima-con-puntero); con movimiento reducido solo se
+    // funde, sin cambio de altura animado.
     <tr className="border-b border-border-subtle bg-surface-raised last:border-b-0">
       <td colSpan={colSpan} className="p-0">
         <div
-          className={`overflow-hidden transition-[height,opacity] duration-(--motion-duration-spring) ease-(--motion-ease-spring) motion-reduce:transition-none ${
+          data-anima-con-puntero
+          className={`overflow-hidden transition-[height,opacity] ease-(--motion-ease-spring) motion-reduce:transition-opacity ${
             recienMontada ? "starting:h-0 starting:opacity-0" : ""
-          } ${cerrando ? "h-0 opacity-0" : "h-auto opacity-100"}`}
+          } ${cerrando ? "h-0 opacity-0 duration-(--motion-duration-spring-fast)" : "h-auto opacity-100 duration-(--motion-duration-spring)"}`}
         >
           <div>
             <div className="px-4 py-4">

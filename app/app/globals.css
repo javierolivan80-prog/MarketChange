@@ -71,26 +71,40 @@
   /* Motion (ver MOTION_PLAN.md). Única fuente de verdad de duraciones y
      curvas; lib/motion.ts las replica en ms para Recharts y un test
      comprueba que no se separen. Tono institucional: sin rebote ni
-     elástico, y nada por encima de --motion-duration-max. */
+     elástico, y nada por encima de --motion-duration-max.
+     Tanda 12d (skills de Emil Kowalski y de Apple a la vez): la interfaz
+     se mueve por debajo de 300 ms (Emil: un panel profesional debe ser
+     rápido; lo que se usa decenas de veces al día, apenas animado), sin
+     ease-in en ninguna parte (empieza lento justo cuando se mira), y la
+     salida más rápida que la entrada por el mismo camino (Apple: simetría
+     de recorrido; Emil: salir más deprisa). */
   --motion-duration-instant: 0ms;
   --motion-duration-micro: 120ms;
   --motion-duration-fast: 180ms;
   --motion-duration-base: 240ms;
-  --motion-duration-data: 560ms;
+  /* Datos que se dibujan al aparecer (barras, curvas): algo más largos
+     porque explican, pero no 560 ms en cada visita. */
+  --motion-duration-data: 400ms;
   --motion-duration-max: 800ms;
   --motion-stagger: 80ms;
-  --motion-ease-out: cubic-bezier(0.2, 0, 0, 1);
-  --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* Ease-out fuerte (Emil): arranca deprisa, que es cuando se mira. La
+     anterior (0.2, 0, 0, 1) salía con tangente plana, un arranque lento. */
+  --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Movimiento de un sitio a otro en pantalla (la píldora de la pestaña
+     activa): ease-in-out fuerte, la curva de Emil para esto. */
+  --motion-ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
   --motion-shift: 4px;
   /* Muelle críticamente amortiguado (guía de Apple: amortiguación 1, sin
-     rebote), muestreado en linear(). La forma es la misma para cualquier
-     "response"; solo cambia la duración: 0,4 s → 588 ms (movimientos) y
-     0,3 s → 441 ms (respuestas rápidas). Se recalcula con
-     x(u) = 1 − (1 + 9,23u)·e^(−9,23u). */
+     rebote), muestreado en linear(). Es una curva de salida fuerte: la que
+     usan entradas, salidas y respuestas al soltar. La forma es la misma para
+     cualquier "response"; solo cambia la duración. Con las 0,3-0,4 s de
+     Apple duraba 441-588 ms, por encima de los 300 ms de Emil para la
+     interfaz: respuesta 0,16 s → 235 ms (entrar) y 0,12 s → 176 ms (salir,
+     soltar). Se recalcula con x(u) = 1 − (1 + 9,23u)·e^(−9,23u). */
   --motion-ease-spring: linear(0, 0.0575, 0.1802, 0.3206, 0.4549, 0.5727, 0.6709, 0.7499, 0.812, 0.86, 0.8965, 0.9239, 0.9444, 0.9596, 0.9707, 0.9789, 0.9848, 0.9891, 0.9922, 0.9944, 0.996, 0.9972, 0.998, 0.9986, 1);
-  --motion-duration-spring: 588ms;
-  --motion-duration-spring-fast: 441ms;
+  --motion-duration-spring: 235ms;
+  --motion-duration-spring-fast: 176ms;
 
   /* Controles nativos (fechas, desplegables, barras de scroll) en el tema
      de la página: sin esto, en oscuro salían claros y el icono del
@@ -406,6 +420,15 @@ html[data-welcome-dismissed] [data-welcome-note] {
     opacity: 0;
   }
 }
+/* Cambio de texto en un mismo sitio (los avisos de exportar): un fundido
+   con 2px de desenfoque, para que se lea como un único elemento que cambia
+   y no como dos textos superpuestos (Emil). */
+@keyframes m-fade-blur {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+}
 /* Relleno de barra sin animar width: se recorta y se destapa. */
 @keyframes m-fill-right {
   from {
@@ -439,13 +462,17 @@ html[data-welcome-dismissed] [data-welcome-note] {
 
 @media (prefers-reduced-motion: no-preference) {
   .m-enter {
-    animation: m-enter var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
+    animation: m-enter var(--motion-duration-spring) var(--motion-ease-spring) both;
   }
   .m-fade {
     animation: m-fade var(--motion-duration-fast) var(--motion-ease-out) both;
   }
+  .m-fade-blur {
+    animation: m-fade-blur var(--motion-duration-fast) var(--motion-ease-out) both;
+  }
+  /* Salida: más rápida que la entrada y sin ease-in (Tanda 12d). */
   .m-exit {
-    animation: m-exit var(--motion-duration-fast) var(--motion-ease-in) both;
+    animation: m-exit var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
   }
   .m-fill-right {
     animation: m-fill-right var(--motion-duration-data) var(--motion-ease-out) both;
@@ -471,7 +498,7 @@ html[data-welcome-dismissed] [data-welcome-note] {
      escalonados y el resto a la vez que el tercero — el escalonado solo
      tiene sentido mientras cuenta un orden; más allá solo retrasa. */
   .m-stagger > * {
-    animation: m-enter var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
+    animation: m-enter var(--motion-duration-spring) var(--motion-ease-spring) both;
   }
   .m-stagger > :nth-child(2) {
     animation-delay: var(--motion-stagger);
@@ -482,6 +509,9 @@ html[data-welcome-dismissed] [data-welcome-note] {
 
   summary::after {
     transition: transform var(--motion-duration-spring-fast) var(--motion-ease-spring);
+  }
+  details[open] > summary::after {
+    transition-duration: var(--motion-duration-spring);
   }
 
   /* Paneles plegables nativos: se abren y se cierran por el mismo camino
@@ -497,6 +527,8 @@ html[data-welcome-dismissed] [data-welcome-note] {
     }
   }
   @supports (interpolate-size: allow-keywords) and selector(::details-content) {
+    /* La transición que se aplica es la del estado de destino: la de la
+       regla base al cerrar (más rápida) y la de [open] al abrir. */
     details::details-content {
       block-size: 0;
       opacity: 0;
@@ -505,18 +537,44 @@ html[data-welcome-dismissed] [data-welcome-note] {
       overflow: clip;
       overflow-clip-margin: 0.25rem;
       transition:
-        block-size var(--motion-duration-spring) var(--motion-ease-spring),
-        opacity var(--motion-duration-fast) var(--motion-ease-out),
-        content-visibility var(--motion-duration-spring) allow-discrete;
+        block-size var(--motion-duration-spring-fast) var(--motion-ease-spring),
+        opacity var(--motion-duration-spring-fast) var(--motion-ease-spring),
+        content-visibility var(--motion-duration-spring-fast) allow-discrete;
     }
     details[open]::details-content {
       block-size: auto;
       opacity: 1;
+      transition:
+        block-size var(--motion-duration-spring) var(--motion-ease-spring),
+        opacity var(--motion-duration-fast) var(--motion-ease-out),
+        content-visibility var(--motion-duration-spring) allow-discrete;
     }
   }
   @supports not ((interpolate-size: allow-keywords) and selector(::details-content)) {
     details[open] > :not(summary) {
-      animation: m-enter var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
+      animation: m-enter var(--motion-duration-spring) var(--motion-ease-spring) both;
     }
   }
+}
+
+/* Movimiento reducido (Tanda 12d; Emil y Apple coinciden): menos y más
+   suave, no nada. Se quitan los desplazamientos y se dejan los fundidos de
+   opacidad que ayudan a entender qué apareció. */
+@media (prefers-reduced-motion: reduce) {
+  .m-enter,
+  .m-stagger > *,
+  .m-fade,
+  .m-fade-blur {
+    animation: m-fade var(--motion-duration-fast) ease-out both;
+  }
+}
+
+/* Lo que se activa con el teclado no se anima (Emil: son acciones que se
+   repiten y la animación las hace sentir lentas). Nav.tsx marca el <html>
+   con data-teclado al pulsar Intro, espacio o tabulador, y lo quita con el
+   primer clic o toque. */
+html[data-teclado] details::details-content,
+html[data-teclado] summary::after,
+html[data-teclado] [data-anima-con-puntero] {
+  transition: none !important;
 }

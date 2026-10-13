@@ -51,8 +51,25 @@ test("el muelle es críticamente amortiguado: empieza en 0, acaba en 1, nunca re
   }
 });
 
-test("las duraciones del muelle corresponden a una respuesta de 0,4 s y 0,3 s", () => {
+test("las duraciones del muelle corresponden a una respuesta de 0,16 s y 0,12 s", () => {
   const ms = (r: number) => Math.round((9.23 / ((2 * Math.PI) / r)) * 1000);
-  assert.equal(cssMs("motion-duration-spring"), ms(0.4));
-  assert.equal(cssMs("motion-duration-spring-fast"), ms(0.3));
+  assert.equal(cssMs("motion-duration-spring"), ms(0.16));
+  assert.equal(cssMs("motion-duration-spring-fast"), ms(0.12));
+});
+
+test("la interfaz se mueve por debajo de 300 ms y la salida es más rápida que la entrada (Tanda 12d)", () => {
+  for (const nombre of ["micro", "fast", "base", "spring", "spring-fast"]) {
+    assert.ok(cssMs(`motion-duration-${nombre}`) < 300, `--motion-duration-${nombre}`);
+  }
+  assert.ok(cssMs("motion-duration-spring-fast") < cssMs("motion-duration-spring"));
+});
+
+test("sin ease-in: las curvas de entrada/salida arrancan rápido (Tanda 12d)", () => {
+  assert.ok(!/--motion-ease-in:/.test(css), "--motion-ease-in no debe existir");
+  const curvas = [...css.matchAll(/--motion-ease-([\w-]+):\s*cubic-bezier\(([^)]+)\)/g)];
+  for (const [, nombre, args] of curvas) {
+    if (nombre.includes("in-out")) continue; // movimiento de un sitio a otro: ease-in-out a propósito
+    const [x1, y1] = args.split(",").map(Number);
+    assert.ok(y1 >= x1, `--motion-ease-${nombre}: cubic-bezier(${args}) arranca lento`);
+  }
 });

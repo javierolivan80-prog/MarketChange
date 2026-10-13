@@ -69,17 +69,59 @@ export function Nav() {
   // segmentado, en vez de un subrayado que salta. Posición medida con
   // offsetLeft/offsetTop respecto a la tira (que es `relative`), así que se
   // desplaza con ella al hacer scroll. La primera medida no se anima.
-  const [indicador, setIndicador] = useState<{ x: number; y: number; w: number; h: number; animar: boolean } | null>(null);
-  function medirIndicador() {
+  //
+  // Tanda 12d (técnica de Emil para pestañas): en vez de mover y estirar una
+  // píldora (animar width/height obliga a recalcular el layout en cada
+  // fotograma), hay una COPIA de la tira con el estilo activo en todas las
+  // pestañas, recortada con clip-path para que solo se vea la activa; al
+  // cambiar de pestaña se anima el recorte. Así el color del texto cambia a
+  // la vez que se mueve la píldora, sin dos estados superpuestos. Todas las
+  // pestañas van en el mismo peso (font-medium) para que copia y original
+  // midan lo mismo. Es un movimiento de un sitio a otro: ease-in-out fuerte
+  // en 240 ms; con el teclado, sin animación.
+  //
+  // Solo se anima al cambiar de pestaña. Al girar el móvil o cambiar de
+  // idioma la copia se recoloca de golpe, así que el recorte también salta
+  // (si se deslizara, durante 240 ms recortaría el texto en sitio viejo). Una
+  // medida que no cambia nada (p. ej. al aparecer la barra de scroll a mitad
+  // de una animación) no toca el estado, para no cortar la animación en curso.
+  const copia = useRef<HTMLDivElement>(null);
+  const [indicador, setIndicador] = useState<{ x: number; y: number; w: number; h: number; cw: number; ch: number; animar: boolean } | null>(null);
+  function medirIndicador(animar: boolean) {
     const activa = tira.current?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!activa) return setIndicador(null);
-    setIndicador((prev) => ({ x: activa.offsetLeft, y: activa.offsetTop, w: activa.offsetWidth, h: activa.offsetHeight, animar: prev !== null }));
+    const c = copia.current;
+    if (!activa || !c) return setIndicador(null);
+    const nuevo = { x: activa.offsetLeft, y: activa.offsetTop, w: activa.offsetWidth, h: activa.offsetHeight, cw: c.offsetWidth, ch: c.offsetHeight };
+    setIndicador((prev) =>
+      prev && prev.x === nuevo.x && prev.y === nuevo.y && prev.w === nuevo.w && prev.h === nuevo.h && prev.cw === nuevo.cw && prev.ch === nuevo.ch
+        ? prev
+        : { ...nuevo, animar: animar && prev !== null },
+    );
   }
+
+  // Lo activado con el teclado no se anima (ver globals.css): se marca el
+  // <html> al pulsar Intro, espacio o tabulador, y se desmarca con el primer
+  // clic o toque.
+  useEffect(() => {
+    const html = document.documentElement;
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Tab") html.dataset.teclado = "";
+    };
+    const puntero = () => {
+      delete html.dataset.teclado;
+    };
+    window.addEventListener("keydown", tecla, true);
+    window.addEventListener("pointerdown", puntero, true);
+    return () => {
+      window.removeEventListener("keydown", tecla, true);
+      window.removeEventListener("pointerdown", puntero, true);
+    };
+  }, []);
 
   useEffect(() => {
     llevarActivaALaVista();
     medir();
-    medirIndicador();
+    medirIndicador(true);
   }, [current]);
 
   // Se observa la tira y cada pestaña: al girar el móvil cambia el ancho de
@@ -92,7 +134,7 @@ export function Nav() {
     const observador = new ResizeObserver(() => {
       llevarActivaALaVista();
       medir();
-      medirIndicador();
+      medirIndicador(false);
     });
     observador.observe(el);
     el.querySelectorAll("a").forEach((a) => observador.observe(a));
@@ -168,15 +210,6 @@ export function Nav() {
       </div>
       <nav aria-label={t("Secciones", "Sections")} className="mt-2 flex items-center gap-4 pb-2">
         <div ref={tira} onScroll={medir} className={`relative flex min-w-0 flex-1 gap-1 overflow-x-auto [scrollbar-width:none] ${mascara}`}>
-          {indicador && (
-            <span
-              aria-hidden="true"
-              className={`absolute left-0 top-0 rounded-full bg-fill-strong motion-reduce:transition-none ${
-                indicador.animar ? "transition-[translate,width,height] duration-(--motion-duration-spring) ease-(--motion-ease-spring)" : ""
-              }`}
-              style={{ translate: `${indicador.x}px ${indicador.y}px`, width: indicador.w, height: indicador.h }}
-            />
-          )}
           {TABS.map((tab) => {
             const isActive = tab.href === "/" ? current === "/" : current.startsWith(tab.href);
             return (
@@ -184,14 +217,35 @@ export function Nav() {
                 key={tab.href}
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
-                className={`relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm transition-colors duration-(--motion-duration-micro) pointer-coarse:py-3 ${
-                  isActive ? "font-medium text-foreground" : "text-text-secondary hover:text-foreground active:bg-fill"
-                }`}
+                className="relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium text-text-secondary transition-colors duration-(--motion-duration-micro) hover:text-foreground active:bg-fill pointer-coarse:py-3"
               >
                 {t(tab.es, tab.en)}
               </Link>
             );
           })}
+          {/* Copia con el estilo activo, recortada a la pestaña activa (ver
+              arriba). Decorativa: sin eventos y fuera del árbol accesible. */}
+          <div
+            ref={copia}
+            aria-hidden="true"
+            data-anima-con-puntero
+            className={`pointer-events-none absolute left-0 top-0 flex gap-1 motion-reduce:transition-none ${
+              indicador?.animar ? "transition-[clip-path] duration-(--motion-duration-base) ease-(--motion-ease-in-out-strong)" : ""
+            } ${indicador ? "" : "invisible"}`}
+            style={
+              indicador
+                ? {
+                    clipPath: `inset(${indicador.y}px ${indicador.cw - indicador.x - indicador.w}px ${indicador.ch - indicador.y - indicador.h}px ${indicador.x}px round 9999px)`,
+                  }
+                : undefined
+            }
+          >
+            {TABS.map((tab) => (
+              <span key={tab.href} className="whitespace-nowrap rounded-full bg-fill-strong px-3.5 py-1.5 text-sm font-medium text-foreground pointer-coarse:py-3">
+                {t(tab.es, tab.en)}
+              </span>
+            ))}
+          </div>
         </div>
         {/* Título recogido: duplica el h1 (por eso aria-hidden) y solo se ve
             desde lg (a 768px le quitaba ancho a la tira y la última pestaña
@@ -199,8 +253,8 @@ export function Nav() {
             está. */}
         <span
           aria-hidden="true"
-          className={`hidden max-w-[16rem] shrink-0 truncate text-sm font-semibold text-foreground transition-[opacity,translate] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) motion-reduce:transition-none lg:block ${
-            titulo.visible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+          className={`hidden max-w-[16rem] shrink-0 truncate text-sm font-semibold text-foreground transition-[opacity,translate] ease-(--motion-ease-spring) motion-reduce:transition-opacity lg:block ${
+            titulo.visible ? "translate-y-0 opacity-100 duration-(--motion-duration-spring)" : "translate-y-1 opacity-0 duration-(--motion-duration-spring-fast)"
           }`}
         >
           {titulo.texto}

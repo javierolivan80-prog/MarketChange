@@ -2,7 +2,7 @@
 // puede animar con CSS (Recharts recibe duraciones como número). La fuente
 // de verdad es globals.css; motion.test.ts falla si se separan.
 export const motion = {
-  duration: { instant: 0, micro: 120, fast: 180, base: 240, data: 560, spring: 588, max: 800 },
+  duration: { instant: 0, micro: 120, fast: 180, base: 240, data: 400, spring: 235, "spring-fast": 176, max: 800 },
   stagger: 80,
 } as const;
 
