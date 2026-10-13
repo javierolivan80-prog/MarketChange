@@ -34,7 +34,7 @@ export function PortfolioVersionCard({
   const eventTypeRows = Object.values(report.metrics_by_event_type);
 
   return (
-    <div className="min-w-0 border border-border-subtle bg-surface p-4">
+    <div className="min-w-0 tarjeta p-4">
       <h2 className="mb-3 text-base font-semibold text-foreground">{versionLabel(report.version, locale)}</h2>
 
       {no_lookahead_violations.length > 0 && (
@@ -99,8 +99,8 @@ export function PortfolioVersionCard({
         )}
       </p>
 
-      <details className="mb-3 text-xs">
-        <summary className="mb-2 cursor-pointer text-text-secondary">{t("Todas las métricas", "All metrics")}</summary>
+      <details className="mb-3 border-y border-border-subtle text-xs open:pb-3">
+        <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Todas las métricas", "All metrics")}</summary>
       <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
           <dt className="text-text-secondary">{t("Operaciones", "Trades")}</dt>
           <dd className="num text-right text-foreground">{tm.total_trades}</dd>
@@ -151,24 +151,24 @@ export function PortfolioVersionCard({
         <PortfolioEquityCurve points={report.equity_curve} startingCapital={startingCapital} locale={locale} />
       </div>
 
-      <details className="mb-3 text-xs">
-        <summary className="mb-2 cursor-pointer text-text-secondary">{t("Caídas a lo largo del tiempo", "Drawdowns over time")}</summary>
+      <details className="border-t border-border-subtle text-xs open:pb-3">
+        <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Caídas a lo largo del tiempo", "Drawdowns over time")}</summary>
         <DrawdownChart equityCurve={report.equity_curve} />
       </details>
 
-      <details className="mb-3 text-xs">
-        <summary className="mb-2 cursor-pointer text-text-secondary">{t("Distribución de retornos", "Return distribution")}</summary>
+      <details className="border-t border-border-subtle text-xs open:pb-3">
+        <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Distribución de retornos", "Return distribution")}</summary>
         <ReturnHistogram pnlPcts={report.all_trades.map((t) => t.pnl_pct)} />
       </details>
 
-      <details className="mb-3 text-xs">
-        <summary className="mb-2 cursor-pointer text-text-secondary">{t("Predicho frente a real", "Predicted vs actual")}</summary>
+      <details className="border-t border-border-subtle text-xs open:pb-3">
+        <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Predicho frente a real", "Predicted vs actual")}</summary>
         <ScatterPredictedActual points={report.prediction_regression.scatter} rSquared={report.prediction_regression.r_squared} />
       </details>
 
       {!report.confidence_calibration.no_aplica && (
-      <details className="mb-3 text-xs">
-        <summary className="mb-2 cursor-pointer text-text-secondary">
+      <details className="border-t border-border-subtle text-xs open:pb-3">
+        <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">
           {t("Acierto según la confianza declarada", "Win rate by stated confidence")}{" "}
           {report.confidence_calibration.correlation !== null &&
             `(${t("correlación", "correlation")} ${report.confidence_calibration.correlation.toFixed(2)})`}
@@ -178,8 +178,8 @@ export function PortfolioVersionCard({
       )}
 
       {temporal_stability && (
-        <details className="mb-3 text-xs">
-          <summary className="mb-1 cursor-pointer text-text-secondary">
+        <details className="border-t border-border-subtle text-xs open:pb-3">
+          <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">
             {t("Estabilidad temporal", "Stability over time")} (split {temporal_stability.split_date})
           </summary>
           <p className={temporal_stability.stable === false ? "text-amber-700 dark:text-amber-400" : "text-text-secondary"}>
@@ -198,8 +198,8 @@ export function PortfolioVersionCard({
       )}
 
       {eventTypeRows.length > 0 && (
-        <details className="mb-3 text-xs">
-          <summary className="mb-2 cursor-pointer text-text-secondary">
+        <details className="border-t border-border-subtle text-xs open:pb-3">
+          <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">
             {t("Por tipo de evento", "By event type")} ({eventTypeRows.length})
           </summary>
           <table className="w-full border-collapse text-left">
@@ -218,7 +218,7 @@ export function PortfolioVersionCard({
                     {eventClassLabel(row.event_type, locale)}
                     {row.insufficient_sample && (
                       <span
-                        className="ml-1.5 bg-amber-50 px-1 text-xs font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                        className="ml-1.5 rounded-full bg-amber-500/12 px-2 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
                         title={t("n < 20 — muestra insuficiente", "n < 20 — sample too small")}
                       >
                         {t("n bajo", "low n")}
@@ -235,8 +235,8 @@ export function PortfolioVersionCard({
         </details>
       )}
 
-      <details className="text-xs">
-        <summary className="mb-2 cursor-pointer text-text-secondary">{t("Las 10 mejores y peores operaciones", "Top 10 best and worst trades")}</summary>
+      <details className="border-t border-border-subtle text-xs open:pb-3">
+        <summary className="py-2.5 text-sm text-foreground pointer-coarse:py-3">{t("Las 10 mejores y peores operaciones", "Top 10 best and worst trades")}</summary>
         <TradeMiniTable trades={report.top_10_winners} locale={locale} />
         <div className="mt-2" />
         <TradeMiniTable trades={report.top_10_losers} locale={locale} />

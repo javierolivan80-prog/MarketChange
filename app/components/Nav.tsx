@@ -74,6 +74,61 @@ export function Nav() {
     return () => observador.disconnect();
   }, []);
 
+  // Indicador de la pestaña activa (Tanda 12c, guía de Apple): una píldora
+  // que se desliza con un muelle de una pestaña a otra, como un control
+  // segmentado, en vez de un subrayado que salta. Posición medida con
+  // offsetLeft/offsetTop respecto a la tira (que es `relative`), así que se
+  // desplaza con ella al hacer scroll. La primera medida no se anima.
+  const [indicador, setIndicador] = useState<{ x: number; y: number; w: number; h: number; animar: boolean } | null>(null);
+  function medirIndicador() {
+    const activa = tira.current?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!activa) return setIndicador(null);
+    setIndicador((prev) => ({ x: activa.offsetLeft, y: activa.offsetTop, w: activa.offsetWidth, h: activa.offsetHeight, animar: prev !== null }));
+  }
+  useEffect(medirIndicador, [current]);
+  useEffect(() => {
+    const el = tira.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observador = new ResizeObserver(() => medirIndicador());
+    observador.observe(el);
+    return () => observador.disconnect();
+  }, []);
+
+  // Al desplazarse: (1) borde difuminado bajo la barra solo cuando el
+  // contenido pasa por debajo (guía de Apple: efecto de borde, no línea fija);
+  // (2) el título de la página se recoge en la barra cuando el grande queda
+  // tapado. La barra está pegada cuando su top real coincide con el `top`
+  // negativo del sticky (ver layout.tsx).
+  const [tituloRecogido, setTituloRecogido] = useState<string | null>(null);
+  const cabecera = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const banda = cabecera.current?.closest<HTMLElement>(".barra-material");
+    if (!banda) return;
+    let pendiente = 0;
+    function actualizar() {
+      pendiente = 0;
+      if (!banda) return;
+      const topFijo = parseFloat(getComputedStyle(banda).top) || 0;
+      const caja = banda.getBoundingClientRect();
+      const pegada = window.scrollY > 0 && caja.top <= topFijo + 0.5;
+      if (pegada) banda.dataset.pegada = "";
+      else delete banda.dataset.pegada;
+      const h1 = document.querySelector("main h1");
+      setTituloRecogido(h1 && h1.getBoundingClientRect().bottom < caja.bottom ? (h1.textContent ?? "").trim() : null);
+    }
+    function alDesplazar() {
+      if (!pendiente) pendiente = requestAnimationFrame(actualizar);
+    }
+    actualizar();
+    window.addEventListener("scroll", alDesplazar, { passive: true });
+    window.addEventListener("resize", alDesplazar);
+    return () => {
+      window.removeEventListener("scroll", alDesplazar);
+      window.removeEventListener("resize", alDesplazar);
+      cancelAnimationFrame(pendiente);
+    };
+  }, [current]);
+
   const mascara =
     mas.izquierda && mas.derecha
       ? "[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]"
@@ -84,11 +139,13 @@ export function Nav() {
           : "";
 
   return (
-    <header className="mb-5 border-b border-border-subtle">
+    <header ref={cabecera} className="mb-5">
       {/* Por debajo de 360px (móviles de 320) el logo y los huecos se
-          reducen: la fila no cabía (311px en 288) y daba scroll horizontal. */}
+          reducen: la fila no cabía (311px en 288) y daba scroll horizontal.
+          Logo en la fuente del sistema (Tanda 12c), no en monoespaciada y
+          mayúsculas. */}
       <div className="flex items-center justify-between gap-4 max-[359px]:gap-2">
-        <Link href="/" className="font-mono text-sm font-semibold uppercase tracking-wider text-foreground max-[359px]:text-xs max-[359px]:tracking-wide">
+        <Link href="/" className="text-[1.0625rem] font-semibold tracking-[-0.01em] text-foreground max-[359px]:text-[0.875rem]">
           MarketChange
         </Link>
         <div className="flex items-center gap-2 max-[359px]:gap-1">
@@ -96,8 +153,17 @@ export function Nav() {
           <ThemeToggle />
         </div>
       </div>
-      <nav aria-label={t("Secciones", "Sections")} className="-mb-px mt-2">
-        <div ref={tira} onScroll={medir} className={`flex gap-1 overflow-x-auto [scrollbar-width:none] ${mascara}`}>
+      <nav aria-label={t("Secciones", "Sections")} className="mt-2 flex items-center gap-4 pb-2">
+        <div ref={tira} onScroll={medir} className={`relative flex min-w-0 flex-1 gap-1 overflow-x-auto [scrollbar-width:none] ${mascara}`}>
+          {indicador && (
+            <span
+              aria-hidden="true"
+              className={`absolute left-0 top-0 rounded-full bg-fill-strong motion-reduce:transition-none ${
+                indicador.animar ? "transition-[translate,width,height] duration-(--motion-duration-spring) ease-(--motion-ease-spring)" : ""
+              }`}
+              style={{ translate: `${indicador.x}px ${indicador.y}px`, width: indicador.w, height: indicador.h }}
+            />
+          )}
           {TABS.map((tab) => {
             const isActive = tab.href === "/" ? current === "/" : current.startsWith(tab.href);
             return (
@@ -105,10 +171,8 @@ export function Nav() {
                 key={tab.href}
                 href={tab.href}
                 aria-current={isActive ? "page" : undefined}
-                className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm pointer-coarse:py-3 active:bg-surface-pressed ${
- isActive
-                    ? "border-accent-600 font-medium text-foreground dark:border-accent-400"
-                    : "border-transparent text-text-secondary hover:text-foreground"
+                className={`relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm transition-colors duration-(--motion-duration-micro) pointer-coarse:py-3 ${
+                  isActive ? "font-medium text-foreground" : "text-text-secondary hover:text-foreground active:bg-fill"
                 }`}
               >
                 {t(tab.es, tab.en)}
@@ -116,6 +180,16 @@ export function Nav() {
             );
           })}
         </div>
+        {/* Título recogido: duplica el h1 (por eso aria-hidden) y solo se ve
+            desde md; en el móvil la pestaña activa ya dice dónde se está. */}
+        <span
+          aria-hidden="true"
+          className={`hidden max-w-[16rem] shrink-0 truncate text-sm font-semibold text-foreground transition-[opacity,translate] duration-(--motion-duration-spring-fast) ease-(--motion-ease-spring) motion-reduce:transition-none md:block ${
+            tituloRecogido ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+          }`}
+        >
+          {tituloRecogido}
+        </span>
       </nav>
     </header>
   );

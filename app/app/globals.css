@@ -23,23 +23,37 @@
   --color-accent-700: oklch(0.41 0.15 261);
   --color-accent-800: oklch(0.33 0.11 262);
   --color-accent-900: oklch(0.27 0.08 262);
+
+  /* Radios (Tanda 12c, aspecto Apple): tarjetas y controles con esquinas
+     suaves; rounded-card y rounded-control en los componentes. */
+  --radius-card: 0.875rem;
+  --radius-control: 0.625rem;
 }
 
 :root {
-  --background: var(--color-white);
+  /* Estilo agrupado de Apple (Tanda 12c): fondo gris muy claro y tarjetas
+     blancas encima; la jerarquía la dan las superficies y la sombra, no los
+     bordes. raised = relleno dentro de una tarjeta (pasar por encima,
+     campos), pressed = al pulsar, sunken = pistas de las barras. */
+  --background: oklch(0.966 0.004 286);
   --surface: var(--color-white);
-  --surface-raised: var(--color-neutral-50);
-  --surface-sunken: var(--color-neutral-100);
-  /* Fondo al pulsar (active:): distinto del de pasar por encima y del fondo
-     de la página en los dos temas (en oscuro, sunken es el mismo negro). */
-  --surface-pressed: var(--color-neutral-200);
+  --surface-raised: oklch(0.966 0.004 286);
+  --surface-sunken: oklch(0.935 0.004 286);
+  --surface-pressed: oklch(0.91 0.004 286);
   --foreground: var(--color-neutral-900);
   --text-secondary: var(--color-neutral-600);
-  /* neutral-500 (≈4,7:1 sobre blanco): con neutral-400 (≈2,6:1) las pistas,
-     fechas y el aviso legal no llegaban al mínimo AA (Tanda 12). */
-  --text-tertiary: var(--color-neutral-500);
-  --border-subtle: var(--color-neutral-200);
-  --border-strong: var(--color-neutral-300);
+  /* oklch 0,5 (≈5,4:1 sobre el fondo gris y ≈5,9:1 sobre blanco): con
+     neutral-500 sobre el gris no se llegaba a AA. */
+  --text-tertiary: oklch(0.5 0 0);
+  /* Separadores dentro de las tarjetas (hairlines), no cajas. */
+  --border-subtle: oklch(0.905 0.004 286);
+  --border-strong: oklch(0.82 0.004 286);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.05), 0 4px 14px oklch(0 0 0 / 0.04);
+  /* Rellenos translúcidos de Apple (system fill): botones grises, campos y
+     píldoras. Al ser translúcidos funcionan igual sobre el fondo y sobre una
+     tarjeta; un gris opaco desaparecía sobre el fondo gris. */
+  --fill: oklch(0.55 0.01 286 / 0.12);
+  --fill-strong: oklch(0.55 0.01 286 / 0.2);
   --focus-ring: var(--color-accent-600);
   /* Serie principal de los gráficos y su versión tenue (muestra pequeña).
      La tenue no llega a 3:1 sobre el fondo en ningún tema: siempre se pinta
@@ -68,6 +82,14 @@
   --motion-ease-in: cubic-bezier(0.4, 0, 1, 1);
   --motion-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --motion-shift: 4px;
+  /* Muelle críticamente amortiguado (guía de Apple: amortiguación 1, sin
+     rebote), muestreado en linear(). La forma es la misma para cualquier
+     "response"; solo cambia la duración: 0,4 s → 588 ms (movimientos) y
+     0,3 s → 441 ms (respuestas rápidas). Se recalcula con
+     x(u) = 1 − (1 + 9,23u)·e^(−9,23u). */
+  --motion-ease-spring: linear(0, 0.0575, 0.1802, 0.3206, 0.4549, 0.5727, 0.6709, 0.7499, 0.812, 0.86, 0.8965, 0.9239, 0.9444, 0.9596, 0.9707, 0.9789, 0.9848, 0.9891, 0.9922, 0.9944, 0.996, 0.9972, 0.998, 0.9986, 1);
+  --motion-duration-spring: 588ms;
+  --motion-duration-spring-fast: 441ms;
 
   /* Controles nativos (fechas, desplegables, barras de scroll) en el tema
      de la página: sin esto, en oscuro salían claros y el icono del
@@ -75,25 +97,25 @@
   color-scheme: light;
 }
 
-/* Modo oscuro: negro real (no "gris oscuro" tipo neutral-950) — la app abre
-   en este modo por defecto (ver el script de layout.tsx y ThemeToggle.tsx).
-   El contraste entre --surface y --background es deliberadamente bajo (las
-   tarjetas casi se funden con el fondo) mientras que --border-subtle sube de
-   intensidad respecto a la versión anterior: sin ese borde más marcado, un
-   negro puro detrás de otro negro puro no define dónde empieza cada tarjeta.
-   El acento y el texto principal suben de brillo/contraste para el efecto
-   "terminal" pedido — más dramático que el gris tenue de antes. */
+/* Modo oscuro: negro real de fondo — la app abre en este modo por defecto
+   (ver el script de layout.tsx y ThemeToggle.tsx) — y tarjetas en los grises
+   del modo oscuro de Apple (#1C1C1E, #2C2C2E): en oscuro la profundidad la
+   da la superficie más clara, no la sombra. */
 .dark {
   --background: oklch(0 0 0);
-  --surface: oklch(0.04 0 0);
-  --surface-raised: oklch(0.08 0 0);
-  --surface-sunken: oklch(0 0 0);
-  --surface-pressed: oklch(0.16 0 0);
+  --surface: oklch(0.218 0.003 286);
+  --surface-raised: oklch(0.283 0.003 286);
+  --surface-sunken: oklch(0.16 0.002 286);
+  --surface-pressed: oklch(0.335 0.003 286);
   --foreground: oklch(0.97 0 0);
-  --text-secondary: oklch(0.72 0 0);
-  --text-tertiary: oklch(0.6 0 0);
-  --border-subtle: oklch(0.2 0 0);
-  --border-strong: oklch(0.32 0 0);
+  --text-secondary: oklch(0.74 0 0);
+  /* 0,64: sobre la tarjeta (#1C1C1E) da ≈5,2:1; con 0,6 no llegaba a AA. */
+  --text-tertiary: oklch(0.64 0 0);
+  --border-subtle: oklch(0.31 0.003 286);
+  --border-strong: oklch(0.42 0.003 286);
+  --shadow-card: none;
+  --fill: oklch(0.6 0.01 286 / 0.24);
+  --fill-strong: oklch(0.6 0.01 286 / 0.36);
   --focus-ring: var(--color-accent-400);
   --chart-series: var(--color-accent-400);
   --chart-series-weak: var(--color-accent-700);
@@ -125,6 +147,8 @@
   --color-surface-raised: var(--surface-raised);
   --color-surface-sunken: var(--surface-sunken);
   --color-surface-pressed: var(--surface-pressed);
+  --color-fill: var(--fill);
+  --color-fill-strong: var(--fill-strong);
   --color-foreground: var(--foreground);
   --color-text-secondary: var(--text-secondary);
   --color-text-tertiary: var(--text-tertiary);
@@ -204,29 +228,33 @@
     cursor: pointer;
   }
 
-  /* Desplegables nativos: el mismo indicador ▸ que gira al abrir en toda la
-     app (antes unos tenían el triángulo del navegador, que no gira, y otros
-     uno propio). El texto alternativo vacío (`/ ""`) evita que el lector de
-     pantalla lea "triángulo" en cada desplegable; el primer `content` queda
-     para los navegadores que no lo entienden. */
+  /* Desplegables nativos como filas de lista de Apple (Tanda 12c): chevron ›
+     al final de la fila que gira hacia abajo al abrir, el mismo en toda la
+     app (antes ▸ delante del texto). El texto alternativo vacío (`/ ""`)
+     evita que el lector de pantalla lo lea en cada desplegable; el primer
+     `content` queda para los navegadores que no lo entienden. Flotado y no
+     flex: un summary con texto y <span> perdería el espacio entre ellos. */
   summary {
     list-style: none;
   }
   summary::-webkit-details-marker {
     display: none;
   }
-  summary::before {
-    content: "▸";
-    content: "▸" / "";
+  summary::after {
+    content: "›";
+    content: "›" / "";
+    float: right;
     display: inline-block;
-    margin-right: 0.375rem;
+    margin-left: 0.75rem;
+    font-size: 1.15em;
+    line-height: 1;
     color: var(--text-tertiary);
   }
-  details[open] > summary::before {
+  details[open] > summary::after {
     transform: rotate(90deg);
   }
   summary:active {
-    background: var(--surface-pressed);
+    background: var(--fill);
   }
   /* Con el dedo, 44px de alto sea cual sea el tamaño de letra: el relleno
      es lo que falta hasta 2.75rem sobre la altura de línea (1lh). */
@@ -247,7 +275,31 @@
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
 }
+/* Borde de la barra (Tanda 12c, guía de Apple: "scroll edge effect"): un
+   degradado corto que funde el contenido que pasa por debajo, solo cuando
+   la barra está pegada (data-pegada, lo pone Nav.tsx). Sin línea fija. */
+.barra-material::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 0.75rem;
+  background: linear-gradient(to bottom, color-mix(in oklch, var(--background) 70%, transparent), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-out);
+}
+.barra-material[data-pegada]::after {
+  opacity: 1;
+}
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  /* Sólida: en vez del degradado, una línea que marque el borde. */
+  .barra-material[data-pegada] {
+    box-shadow: 0 1px 0 var(--border-strong);
+  }
+  .barra-material::after {
+    display: none;
+  }
   .barra-material {
     background: var(--background);
     -webkit-backdrop-filter: none;
@@ -270,10 +322,43 @@
   font-feature-settings: "tnum" 1;
 }
 
-/* Esquinas rectas en toda la interfaz: los componentes simplemente no usan
-   `rounded` (antes lo usaban y una regla global `.rounded { border-radius: 0 }`
-   lo anulaba — una clase que dice una cosa y hace otra). rounded-full se
-   mantiene donde un círculo es intencional. */
+/* Tarjeta (Tanda 12c, aspecto Apple): superficie, esquinas suaves y sombra
+   en claro; sustituye a las cajas con borde. En @layer components para que
+   las utilidades (relleno, overflow, otro fondo) puedan completarla. Con
+   más contraste lleva borde, y con colores forzados también (fondo y sombra
+   desaparecen y sin borde no se vería dónde empieza). */
+@layer components {
+  .tarjeta {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  /* Título grande de cada página (el "Large Title" de Apple): negrita,
+     interlineado apretado y espaciado negativo, que a este tamaño es lo que
+     pide la letra (guía de Apple §15). 28px en móvil, 34px desde 640px. */
+  .titulo-grande {
+    font-size: 1.75rem;
+    line-height: 1.12;
+    font-weight: 700;
+    letter-spacing: -0.022em;
+  }
+  @media (min-width: 40rem) {
+    .titulo-grande {
+      font-size: 2.125rem;
+    }
+  }
+}
+@media (prefers-contrast: more) {
+  .tarjeta {
+    box-shadow: none;
+    border: 1px solid var(--border-strong);
+  }
+}
+@media (forced-colors: active) {
+  .tarjeta {
+    border: 1px solid CanvasText;
+  }
+}
 
 /* Saltos del índice de la ficha (#plan, #analisis…) con desplazamiento suave,
    para que se entienda que es la misma página y no una navegación nueva.
@@ -348,7 +433,7 @@ html[data-welcome-dismissed] [data-welcome-note] {
 
 @media (prefers-reduced-motion: no-preference) {
   .m-enter {
-    animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
+    animation: m-enter var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
   }
   .m-fade {
     animation: m-fade var(--motion-duration-fast) var(--motion-ease-out) both;
@@ -380,7 +465,7 @@ html[data-welcome-dismissed] [data-welcome-note] {
      escalonados y el resto a la vez que el tercero — el escalonado solo
      tiene sentido mientras cuenta un orden; más allá solo retrasa. */
   .m-stagger > * {
-    animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
+    animation: m-enter var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
   }
   .m-stagger > :nth-child(2) {
     animation-delay: var(--motion-stagger);
@@ -389,8 +474,8 @@ html[data-welcome-dismissed] [data-welcome-note] {
     animation-delay: calc(var(--motion-stagger) * 2);
   }
 
-  summary::before {
-    transition: transform var(--motion-duration-micro) var(--motion-ease-out);
+  summary::after {
+    transition: transform var(--motion-duration-spring-fast) var(--motion-ease-spring);
   }
 
   /* Paneles plegables nativos: se abren y se cierran por el mismo camino
@@ -411,9 +496,9 @@ html[data-welcome-dismissed] [data-welcome-note] {
       overflow: clip;
       overflow-clip-margin: 0.25rem;
       transition:
-        block-size var(--motion-duration-base) var(--motion-ease-out),
+        block-size var(--motion-duration-spring) var(--motion-ease-spring),
         opacity var(--motion-duration-fast) var(--motion-ease-out),
-        content-visibility var(--motion-duration-base) allow-discrete;
+        content-visibility var(--motion-duration-spring) allow-discrete;
     }
     details[open]::details-content {
       block-size: auto;
@@ -422,7 +507,7 @@ html[data-welcome-dismissed] [data-welcome-note] {
   }
   @supports not ((interpolate-size: allow-keywords) and selector(::details-content)) {
     details[open] > :not(summary) {
-      animation: m-enter var(--motion-duration-base) var(--motion-ease-out) both;
+      animation: m-enter var(--motion-duration-spring-fast) var(--motion-ease-spring) both;
     }
   }
 }

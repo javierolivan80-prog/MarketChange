@@ -61,7 +61,7 @@ export default async function RootLayout({
               + 0,5 rem; con el dedo los botones de esa fila miden 2,75 rem).
               Translúcida, con el contenido pasando por debajo (.barra-material). */}
           <div className="barra-material sticky top-[-3.75rem] z-30 pointer-coarse:top-[-4.25rem]">
-            <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6">
+            <div className="mx-auto max-w-6xl px-4 pt-4 sm:px-6">
               <Nav />
             </div>
           </div>

@@ -5,9 +5,9 @@
 // ningún otro sitio de la interfaz se usa ese color, para que cuando
 // aparezca signifique siempre lo mismo: dirección o resultado.
 const STYLES: Record<string, string> = {
-  LONG: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/20",
-  SHORT: "bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-400/20",
-  NO_TRADE: "bg-surface-sunken text-text-secondary ring-border-strong",
+  LONG: "bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-400",
+  SHORT: "bg-rose-500/12 text-rose-700 dark:bg-rose-400/15 dark:text-rose-400",
+  NO_TRADE: "bg-fill text-text-secondary",
 };
 
 import { useT } from "@/components/i18n/LocaleProvider";
@@ -18,7 +18,7 @@ export function DirectionBadge({ value, className = "" }: { value: string; class
   const LABELS: Record<string, string> = { LONG: "Long", SHORT: "Short", NO_TRADE: t("Sin operar", "No trade") };
   const label = LABELS[value] ?? value;
   return (
-    <span className={`inline-flex items-center whitespace-nowrap px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style} ${className}`}>
+    <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${style} ${className}`}>
       {label}
     </span>
   );

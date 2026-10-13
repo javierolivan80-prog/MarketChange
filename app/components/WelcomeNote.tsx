@@ -47,7 +47,7 @@ export function WelcomeNote() {
     <aside
       data-welcome-note
       aria-label={t("Qué es MarketChange", "What MarketChange is")}
-      className={`mb-5 border border-accent-500/50 bg-surface p-4 text-sm ${leaving ? "m-exit" : "m-fade"}`}
+      className={`mb-5 tarjeta p-4 text-sm ${leaving ? "m-exit" : "m-fade"}`}
       onAnimationEnd={(e) => {
         if (leaving && e.target === e.currentTarget) setVisible(false);
       }}

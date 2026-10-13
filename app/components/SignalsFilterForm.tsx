@@ -14,9 +14,11 @@ import { useLocale, useT } from "@/components/i18n/LocaleProvider";
 
 // Con el dedo: 44px de alto y 16px de letra (con menos, Safari en iPhone
 // amplía la página al tocar el campo y hay que deshacer el zoom a mano).
+// Tanda 12c: campos como los de Apple, con relleno translúcido y esquinas
+// suaves en vez de borde; el borde (transparente) solo se ve con un error.
 const INPUT =
-  " border border-border-strong bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-text-tertiary focus-visible:border-accent-600 aria-[invalid=true]:border-rose-600 dark:aria-[invalid=true]:border-rose-400 pointer-coarse:min-h-11 pointer-coarse:text-base";
-const LABEL = "text-xs font-medium text-text-secondary";
+  " min-h-9 rounded-control border border-transparent bg-fill px-2.5 py-1.5 text-sm text-foreground placeholder:text-text-tertiary aria-[invalid=true]:border-rose-600 dark:aria-[invalid=true]:border-rose-400 pointer-coarse:min-h-11 pointer-coarse:text-base";
+const LABEL = "text-[0.8125rem] font-medium text-text-secondary";
 
 export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) {
   const router = useRouter();
@@ -107,7 +109,7 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
   }
 
   return (
-    <form noValidate onSubmit={apply} className="mb-5 flex flex-wrap items-end gap-3 border border-border-subtle bg-surface-raised p-3 text-sm">
+    <form noValidate onSubmit={apply} className="tarjeta mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.ticker} className={LABEL}>
           Ticker
@@ -233,10 +235,10 @@ export function SignalsFilterForm({ eventClasses }: { eventClasses: string[] }) 
               type="button"
               onClick={() => removeFilter(f.key)}
               aria-label={`${t("Quitar filtro", "Remove filter")} ${f.label}`}
-              className="inline-flex min-h-7 items-center gap-1 border border-accent-500/60 px-2 py-0.5 text-xs text-foreground transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:border-accent-500 hover:bg-surface active:bg-surface-pressed pointer-coarse:min-h-11 pointer-coarse:px-3"
+              className="inline-flex min-h-7 items-center gap-1 rounded-full bg-accent-500/12 px-3 py-0.5 text-xs font-medium text-accent-700 transition-colors duration-(--motion-duration-micro) ease-(--motion-ease-out) hover:bg-accent-500/20 active:bg-accent-500/25 dark:bg-accent-400/15 dark:text-accent-300 pointer-coarse:min-h-11 pointer-coarse:px-3.5"
             >
               {f.label}
-              <span aria-hidden="true" className="text-text-tertiary">×</span>
+              <span aria-hidden="true" className="opacity-70">×</span>
             </button>
           ))}
         </div>

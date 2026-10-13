@@ -20,10 +20,10 @@ const KEY = { CONSERVATIVE: "conservative", BALANCED: "balanced", AGGRESSIVE: "a
 export function ComparisonTable({ rows, locale = "es" }: { rows: ComparisonRow[]; locale?: Locale }) {
   const t = makeT(locale);
   return (
-    <div className="overflow-x-auto border border-border-subtle">
+    <div className="tarjeta overflow-x-auto">
       <table className="w-full border-collapse text-left text-sm">
         <thead>
-          <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+          <tr className="border-b border-border-subtle text-[0.8125rem] text-text-secondary">
             <th scope="col" className="py-2 pl-3 pr-4 font-medium">
               {t("Métrica", "Metric")}
             </th>

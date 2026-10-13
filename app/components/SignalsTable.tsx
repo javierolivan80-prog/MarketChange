@@ -147,7 +147,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         temporizadores.current.delete(eventId);
         setExpanded((prev) => conSin(prev, eventId, false));
         setCerrando((prev) => conSin(prev, eventId, false));
-      }, motion.duration.fast),
+      }, motion.duration.spring),
     );
   }
 
@@ -160,7 +160,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         <ExportCsvButton rows={rows} />
       </div>
 
-      <div className="overflow-x-auto border border-border-subtle">
+      <div className="tarjeta overflow-x-auto">
         <table className="w-full min-w-[760px] border-collapse text-left text-sm">
           <caption className="sr-only">
             {t(
@@ -170,7 +170,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
           </caption>
           <thead>
             {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-b border-border-strong bg-surface-raised">
+              <tr key={hg.id} className="border-b border-border-subtle text-[0.8125rem]">
                 <th className="w-8 py-2 pl-3">
                   <span className="sr-only">{t("Detalle", "Detail")}</span>
                 </th>
@@ -290,14 +290,21 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
   }, [eventId]);
 
   return (
-    // Entra desde opacidad 0 (@starting-style) y sale hacia 0 con la misma
-    // duración y curva.
-    <tr
-      className={`border-b border-border-subtle bg-surface-raised transition-opacity duration-(--motion-duration-fast) ease-(--motion-ease-out) starting:opacity-0 motion-reduce:transition-none ${
-        cerrando ? "opacity-0" : "opacity-100"
-      }`}
-    >
-      <td colSpan={colSpan} className="px-4 py-4">
+    // Crece desde su fila y vuelve a ella por el mismo camino (Tanda 12c,
+    // guía de Apple: origen anclado y muelle). La altura va de 0 a la del
+    // contenido con el truco de grid-template-rows 0fr → 1fr (sirve con
+    // altura desconocida y en todos los navegadores); entra desde 0 con
+    // @starting-style y, como es una transición, pulsar a mitad la invierte
+    // desde donde esté.
+    <tr className="border-b border-border-subtle bg-surface-raised">
+      <td colSpan={colSpan} className="p-0">
+        <div
+          className={`grid transition-[grid-template-rows,opacity] duration-(--motion-duration-spring) ease-(--motion-ease-spring) starting:grid-rows-[0fr] starting:opacity-0 motion-reduce:transition-none ${
+            cerrando ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+          }`}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="px-4 py-4">
         {state.status === "loading" && <AnalysisSkeleton label={t("Cargando análisis…", "Loading analysis…")} />}
         {state.status === "error" && (
           <p className="text-xs text-text-secondary">
@@ -312,6 +319,9 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
             <SignalAnalysis detail={state.detail} recommended={state.recommended} locale={locale} anclas={false} />
           </div>
         )}
+            </div>
+          </div>
+        </div>
       </td>
     </tr>
   );
@@ -324,10 +334,10 @@ function AnalysisSkeleton({ label }: { label: string }) {
     <div role="status">
       <span className="sr-only">{label}</span>
       <div aria-hidden="true" className="m-skeleton">
-        <div className="mb-4 h-16 border border-border-subtle bg-surface" />
+        <div className="mb-4 h-16 rounded-control bg-surface" />
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="h-24 border border-border-subtle bg-surface" />
+            <div key={i} className="h-24 rounded-control bg-surface" />
           ))}
         </div>
       </div>
