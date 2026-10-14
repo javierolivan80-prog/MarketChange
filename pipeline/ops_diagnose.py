@@ -94,6 +94,14 @@ QUERIES: list[tuple[str, str]] = [
         SELECT (SELECT count(*) FROM prices WHERE calidad_motivo IS NOT NULL) AS velas_marcadas,
                (SELECT count(DISTINCT ticker) FROM prices WHERE calidad_motivo IS NOT NULL) AS tickers,
                (SELECT count(*) FROM car_results WHERE calidad_excluido IS NOT NULL) AS car_excluidos"""),
+    # H-17 (Tanda 13): filings sin hora de aceptación (00:00 de Nueva York). Los
+    # de D0 = día del índice se guardaron con el supuesto optimista.
+    ("Eventos sin hora de publicación (H-17)", """
+        SELECT count(*) AS total,
+               count(*) FILTER (WHERE d0_close_date = (filed_at AT TIME ZONE 'America/New_York')::date) AS d0_dudoso,
+               min(d0_close_date) AS desde, max(d0_close_date) AS hasta
+        FROM events
+        WHERE (filed_at AT TIME ZONE 'America/New_York')::time = TIME '00:00'"""),
     ("Anteriores al corte (solo regla sin IA, H-06)", """
         SELECT count(*) AS filas, min(e.d0_close_date) AS desde, max(e.d0_close_date) AS hasta
         FROM event_analyses ea JOIN events e ON e.event_id = ea.event_id

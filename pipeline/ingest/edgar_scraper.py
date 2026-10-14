@@ -314,17 +314,23 @@ def classify_event_classes(item_codes: list[str]) -> list[str]:
 def compute_d0_close_date(filed_at: datetime) -> date:
     """D0 = fecha en que el evento se considera público al cierre de mercado.
 
-    Regla (ARCHITECTURE_LEAN.md §4): si el filing llega antes del cierre (16:00 ET)
-    en un día hábil, D0 es ese mismo día. Si llega después del cierre, o es
-    fin de semana, D0 pasa al siguiente día hábil.
+    Regla (ARCHITECTURE_LEAN.md §4): si el filing llega antes del cierre (16:00 ET,
+    13:00 los días de cierre anticipado, H-18) en un día hábil, D0 es ese
+    mismo día. Si llega después del cierre, o es fin de semana, D0 pasa al
+    siguiente día hábil.
+    Sin hora de aceptación (respaldo de scrape_day: las 00:00 del día del
+    índice, H-17) no se sabe si salió antes o después del cierre: se toma la
+    sesión siguiente, lo conservador (ver hora_publicacion.py).
     NOTA: EDGAR reporta la hora de aceptación en ET en el submission header
-    (campo "ACCEPTANCE-DATETIME"), no en el .idx. Este cálculo asume que
-    `filed_at` ya viene en hora ET — responsabilidad del caller.
+    (campo "ACCEPTANCE-DATETIME"), no en el .idx. Un `filed_at` con zona se
+    pasa a Nueva York; uno sin zona se toma como hora de Nueva York.
     """
-    from pipeline.ingest.market_calendar import festivos_del_anio
+    from pipeline.ingest.hora_publicacion import hora_desconocida
+    from pipeline.ingest.market_calendar import festivos_del_anio, hora_de_cierre
 
-    d = filed_at.date()
-    if filed_at.hour >= 16:
+    local = filed_at.astimezone(_ET) if filed_at.tzinfo else filed_at
+    d = local.date()
+    if hora_desconocida(filed_at) or local.time() >= hora_de_cierre(d):
         d += timedelta(days=1)
     # Fin de semana Y festivos de bolsa: un 8-K del Jueves Santo por la tarde
     # no es público "al cierre" de un Viernes Santo en que la bolsa no abre.

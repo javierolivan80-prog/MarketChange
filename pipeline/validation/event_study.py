@@ -22,6 +22,7 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 
 from pipeline.backtest.sample_split import date_bounds
+from pipeline.ingest.hora_publicacion import HORA_CONOCIDA_SQL
 
 MDE_POWER_CONSTANT = 2.8  # ver docstring del módulo — AUDIT_LEAN.md §2.2.3
 SIGNIFICANCE_ALPHA = 0.05
@@ -60,7 +61,7 @@ def _fetch_car_by_class(conn, window_days: int, sample: str | None = None) -> di
     start, end = date_bounds(sample)
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT DISTINCT ON (e.event_class, e.ticker, e.d0_close_date)
                    e.event_class, e.d0_close_date, cr.car,
                    CASE WHEN cr.resid_std > 0 AND cr.n_event_days > 0
@@ -69,6 +70,7 @@ def _fetch_car_by_class(conn, window_days: int, sample: str | None = None) -> di
             JOIN events e ON e.event_id = cr.event_id
             WHERE cr.window_days = %(window_days)s
               AND cr.calidad_excluido IS NULL  -- precios con una vela marcada (calidad_precios.py)
+              AND {HORA_CONOCIDA_SQL}  -- sin hora de publicación, D0 dudoso (H-17)
               AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
               AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
             ORDER BY e.event_class, e.ticker, e.d0_close_date, e.event_id

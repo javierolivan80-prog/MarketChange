@@ -89,6 +89,7 @@ from pipeline.backtest.portfolio_strategies import (
     compute_position_size_pct,
 )
 from pipeline.backtest.sample_split import date_bounds
+from pipeline.ingest.hora_publicacion import HORA_CONOCIDA_SQL
 from pipeline.ingest.splits import PRECIO_NEGOCIADO_SQL
 
 logger = logging.getLogger(__name__)
@@ -750,6 +751,8 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                   AND ea.decision_sin_ia->>'metodo' = %(metodo)s
                   AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
                   AND {PRECIO_D0_MINIMO_SQL}
+                  -- Sin hora de publicación, D0 es dudoso (H-17, hora_publicacion.py).
+                  AND {HORA_CONOCIDA_SQL}
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
                 ORDER BY e.ticker, e.d0_close_date, abs(rh.{ev_col}) DESC, e.event_id

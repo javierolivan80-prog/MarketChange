@@ -343,13 +343,20 @@ class TestSampleSplitFiltering:
         assert {e["ticker"] for e in events} == {"OOSEVENT"}
 
     def test_boundary_dates_land_on_the_correct_side(self, conn):
-        """31-dic-2023 (IN_SAMPLE_END, inclusive) y 1-ene-2024 (OOS_START,
-        inclusive) son el corte exacto que pide el plan — ambos deben caer
-        cada uno en su partición, ninguno se pierde ni se duplica."""
+        """El último D0 del In-Sample (antes del embargo, H-37) y el
+        1-ene-2024 (OOS_START, inclusive) caen cada uno en su partición; un
+        evento dentro del embargo (31-dic-2023) no cae en ninguna, a propósito:
+        sus operaciones se cerrarían con precios del OOS."""
         from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+        from pipeline.backtest.sample_split import ULTIMO_D0_IN_SAMPLE
 
         _seed_event_with_analysis(
-            conn, "1", "LASTINSAMPLE", date(2023, 12, 31),
+            conn, "3", "EMBARGO", date(2023, 12, 29),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "1", "LASTINSAMPLE", ULTIMO_D0_IN_SAMPLE,
             trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
             net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
         )

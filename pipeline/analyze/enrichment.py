@@ -371,19 +371,32 @@ def momento_de_publicacion(filed_at, d0) -> str | None:
         return None
     from zoneinfo import ZoneInfo
 
+    from pipeline.ingest.hora_publicacion import hora_desconocida
+    from pipeline.ingest.market_calendar import CIERRE_NORMAL, hora_de_cierre
+
     hora = filed_at.astimezone(ZoneInfo("America/New_York")) if getattr(filed_at, "tzinfo", None) else filed_at
-    if hora.date() < d0 and hora.hour >= 16:
-        momento = "después del cierre: la reacción es la del día siguiente (D0), entera"
+    if hora_desconocida(filed_at):
+        # Sin hora de aceptación (H-17): no se presenta la medianoche del
+        # respaldo como si fuera una hora real.
+        return (
+            f"Publicado el {hora:%Y-%m-%d}, hora de publicación desconocida: se toma D0 como la sesión "
+            "siguiente por si salió tras el cierre; si salió antes, parte de la reacción ya está en el precio de D0"
+        )
+    cierre = hora_de_cierre(hora.date())
+    # Los días de cierre anticipado (H-18), dicho explícitamente.
+    nota_cierre = f" (ese día la bolsa cerró a las {cierre:%H:%M})" if cierre != CIERRE_NORMAL else ""
+    if hora.date() < d0 and hora.time() >= cierre:
+        momento = f"después del cierre{nota_cierre}: la reacción es la del día siguiente (D0), entera"
     elif hora.date() < d0:
         momento = "antes de D0 (fuera de la sesión): la reacción de D0 la recoge entera"
     elif hora.hour < 9 or (hora.hour == 9 and hora.minute < 30):
         momento = "antes de la apertura de D0: la reacción de D0 la recoge entera"
-    elif hora.hour >= 16:
+    elif hora.time() >= cierre:
         # D0 debería ser el día siguiente (edgar_scraper); si no, se avisa igual.
-        momento = "después del cierre de ese mismo día: la reacción de D0 no la recoge"
+        momento = f"después del cierre de ese mismo día{nota_cierre}: la reacción de D0 no la recoge"
     else:
         momento = (
-            "durante la sesión de D0: la reacción de D0 es solo la de las horas que quedaban; "
+            f"durante la sesión de D0{nota_cierre}: la reacción de D0 es solo la de las horas que quedaban; "
             "si fue cerca del cierre, parte de la reacción llega después"
         )
     return f"Publicado el {hora:%Y-%m-%d} a las {hora:%H:%M} (hora de Nueva York), {momento}"

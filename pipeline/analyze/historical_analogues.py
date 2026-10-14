@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 
+from pipeline.ingest.hora_publicacion import HORA_CONOCIDA_SQL
+
 logger = logging.getLogger(__name__)
 
 # Umbral de shrinkage: por debajo de este nº de análogos, la estimación se
@@ -144,7 +146,7 @@ def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_e
     """
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT DISTINCT ON (e.ticker, e.d0_close_date) cr.car, cr.abnormal_volume_ratio
             FROM car_results cr
             JOIN events e ON e.event_id = cr.event_id
@@ -153,6 +155,7 @@ def get_historical_analogues(conn, event_class: str, as_of_date: date, exclude_e
               AND cr.event_id != %(exclude_event_id)s
               AND cr.window_days = %(window_days)s
               AND cr.calidad_excluido IS NULL  -- precios con una vela marcada (calidad_precios.py)
+              AND {HORA_CONOCIDA_SQL}  -- sin hora de publicación, D0 dudoso (H-17)
             ORDER BY e.ticker, e.d0_close_date, e.event_id
             """,
             {
@@ -184,7 +187,7 @@ def get_class_prior_mean(conn, event_class: str, window_days: int, as_of_date: d
     """
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT avg(car) * 100 AS mean_car_pct
             FROM (
                 SELECT DISTINCT ON (e.ticker, e.d0_close_date) cr.car
@@ -194,6 +197,7 @@ def get_class_prior_mean(conn, event_class: str, window_days: int, as_of_date: d
                   AND cr.window_days = %(window_days)s
                   AND e.d0_close_date < %(as_of_date)s::date - %(window_days)s
                   AND cr.calidad_excluido IS NULL  -- precios con una vela marcada
+                  AND {HORA_CONOCIDA_SQL}  -- sin hora de publicación (H-17)
                 ORDER BY e.ticker, e.d0_close_date, e.event_id
             ) unicos
             """,
