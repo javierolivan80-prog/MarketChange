@@ -41,9 +41,19 @@ export function ThemeToggle() {
   }
 
   return (
-    <Button variant="ghost" onClick={toggle} className="whitespace-nowrap text-xs">
-      <span className="dark:hidden">{t("Modo oscuro", "Dark mode")}</span>
-      <span className="hidden dark:inline">{t("Modo claro", "Light mode")}</span>
+    // Por debajo de 360px "Modo " se oculta a la vista (no al lector de
+    // pantalla, que sigue leyendo "Modo oscuro"): la fila del logo no cabía.
+    <Button variant="ghost" onClick={toggle} className="whitespace-nowrap text-xs max-[359px]:px-2">
+      <span className="dark:hidden">
+        <span className="max-[359px]:sr-only">{t("Modo ", "")}</span>
+        {/* Solo la primera letra (first-letter, no capitalize): en inglés
+            capitalize daba "Dark Mode". */}
+        <span className="max-[359px]:inline-block max-[359px]:first-letter:uppercase">{t("oscuro", "Dark mode")}</span>
+      </span>
+      <span className="hidden dark:inline">
+        <span className="max-[359px]:sr-only">{t("Modo ", "")}</span>
+        <span className="max-[359px]:inline-block max-[359px]:first-letter:uppercase">{t("claro", "Light mode")}</span>
+      </span>
     </Button>
   );
 }

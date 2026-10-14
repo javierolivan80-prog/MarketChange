@@ -9,8 +9,8 @@ import { getT } from "@/lib/locale";
 
 export function StatePage({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <main className="mx-auto max-w-3xl px-4 pb-4 sm:px-6">
-      <h1 className="mb-4 text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6 *:max-w-3xl">
+      <h1 className="mb-4 titulo-grande text-foreground">{title}</h1>
       {children}
     </main>
   );
@@ -18,7 +18,7 @@ export function StatePage({ title, children }: { title: string; children: React.
 
 export function StateBox({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="border border-border-subtle bg-surface p-4">
+    <div className="tarjeta p-4">
       <p className="mb-1 font-medium text-foreground">{title}</p>
       {children && <div className="text-sm text-text-secondary">{children}</div>}
     </div>

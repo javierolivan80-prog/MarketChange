@@ -2,7 +2,7 @@
 // puede animar con CSS (Recharts recibe duraciones como número). La fuente
 // de verdad es globals.css; motion.test.ts falla si se separan.
 export const motion = {
-  duration: { instant: 0, micro: 120, fast: 180, base: 240, data: 560, max: 800 },
+  duration: { instant: 0, micro: 120, fast: 180, base: 240, data: 400, spring: 235, "spring-fast": 176, max: 800 },
   stagger: 80,
 } as const;
 
@@ -23,8 +23,10 @@ export const chartTooltipMotion = {
   animationEasing: "ease-out",
   contentStyle: {
     background: "var(--surface-raised)",
-    border: "1px solid var(--border-strong)",
-    borderRadius: 0,
+    border: "1px solid var(--border-subtle)",
+    // Esquinas y sombra como el resto de superficies (Tanda 12c).
+    borderRadius: "0.625rem",
+    boxShadow: "var(--shadow-card)",
     color: "var(--foreground)",
     fontSize: "0.75rem",
   },

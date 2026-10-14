@@ -52,9 +52,9 @@ export default async function LargoPlazoPage() {
   const sinNota = scores.filter((s) => s.total_score === null);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="titulo-grande text-foreground">{title}</h1>
         <p className="num mt-1 text-sm text-text-secondary">
           {t(
             `Empresas ordenadas por calidad de negocio y precio, según sus cuentas anuales auditadas. Horizonte de años, no de días. Datos a ${formatDate(asOfDate, locale)} · ${scores.length} empresas analizadas.`,
@@ -64,7 +64,7 @@ export default async function LargoPlazoPage() {
       </header>
 
       {/* Aviso: esto no es asesoramiento */}
-      <div className="mb-6 border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800/60 dark:bg-amber-500/10">
+      <div className="mb-6 rounded-card border border-transparent bg-amber-50 p-4 text-sm contrast-more:border-border-strong dark:bg-amber-500/15">
         <p className="mb-1 font-medium text-amber-800 dark:text-amber-400">{t("Esto no es una recomendación de inversión", "This is not an investment recommendation")}</p>
         <p className="text-text-secondary">
           {t(
@@ -75,7 +75,7 @@ export default async function LargoPlazoPage() {
       </div>
 
       {/* Cómo se lee la nota */}
-      <section className="mb-6 border border-border-subtle p-4">
+      <section className="mb-6 tarjeta p-4">
         <p className="mb-2 text-sm font-medium text-foreground">{t("Cómo se calcula la nota", "How the score is calculated")}</p>
         <ul className="space-y-1 text-xs text-text-secondary">
           {[

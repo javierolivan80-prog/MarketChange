@@ -26,8 +26,8 @@ import { HBars } from "@/components/viz/Bars";
 function Section({ title, accent, children }: { title: string; accent?: "long" | "short"; children: React.ReactNode }) {
   const accentClass = accent === "long" ? "text-emerald-700 dark:text-emerald-400" : accent === "short" ? "text-rose-700 dark:text-rose-400" : "text-foreground";
   return (
-    <div className="border border-border-subtle bg-surface p-3">
-      <h2 className={`mb-1.5 text-xs font-semibold uppercase tracking-wide ${accentClass}`}>{title}</h2>
+    <div className="tarjeta p-4">
+      <h2 className={`mb-2 text-[0.9375rem] font-semibold tracking-[-0.005em] ${accentClass}`}>{title}</h2>
       <div className="space-y-1 text-text-secondary">{children}</div>
     </div>
   );
@@ -94,8 +94,8 @@ export function SignalAnalysis({
         </p>
       )}
       {/* Decisión recomendada primero: es la respuesta; lo demás es el porqué */}
-      <div className="mb-4 border border-border-strong bg-surface p-3">
-        <p className="mb-1 text-xs uppercase tracking-wide text-text-tertiary">
+      <div className="mb-4 tarjeta p-4">
+        <p className="mb-1 text-[0.8125rem] text-text-tertiary">
           {t("Decisión de la estrategia recomendada", "Recommended strategy's decision")} ({versionLabel(recommended, locale).toLowerCase()})
         </p>
         <div className="flex flex-wrap items-center gap-2">
@@ -270,8 +270,8 @@ export function SignalAnalysis({
         </Section>
       </div>
 
-      <div id={anclas ? "versiones" : undefined} className="mt-4 scroll-mt-4 border-t border-border-subtle pt-3">
-        <h2 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-foreground">{t("Las tres estrategias", "The three strategies")}</h2>
+      <div id={anclas ? "versiones" : undefined} className="mt-6 scroll-mt-4">
+        <h2 className="mb-3 text-[1.25rem] leading-tight font-semibold tracking-[-0.012em] text-foreground">{t("Las tres estrategias", "The three strategies")}</h2>
         {sinIa && (
           <p className="mb-2 text-xs text-text-tertiary">
             {t(
@@ -286,7 +286,7 @@ export function SignalAnalysis({
             const decision = decisionOf(detail, strategy);
             const isRec = strategy === recommended;
             return (
-              <div key={strategy} className={`border p-2 ${isRec ? "border-accent-500" : "border-border-subtle"} bg-surface`}>
+              <div key={strategy} className={`tarjeta p-3 ${isRec ? "ring-2 ring-accent-500" : ""}`}>
                 <p className="mb-1 flex items-center justify-between font-medium text-foreground">
                   <span>
                     {versionLabel(strategy, locale)}

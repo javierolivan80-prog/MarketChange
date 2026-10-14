@@ -26,7 +26,11 @@ export function LanguageToggle() {
   }
 
   return (
-    <div role="group" aria-label={t("Idioma", "Language")} className={`flex text-xs ${pending ? "opacity-60" : ""}`}>
+    // Control segmentado de Apple (Tanda 12c): pista translúcida y la opción
+    // elegida como una píldora encima. Misma altura total que antes (36px, 44
+    // con el dedo): la cuenta del sticky de la cabecera depende de ella. Con
+    // el dedo la pista va sin margen para que cada opción mida 44px.
+    <div role="group" aria-label={t("Idioma", "Language")} className={`flex rounded-full bg-fill p-0.5 text-xs pointer-coarse:p-0 ${pending ? "opacity-60" : ""}`}>
       {OPTIONS.map((o) => (
         <button
           key={o.value}
@@ -35,8 +39,10 @@ export function LanguageToggle() {
           onClick={() => choose(o.value)}
           aria-pressed={locale === o.value}
           title={o.name}
-          className={`min-h-9 px-2 font-mono pointer-coarse:min-h-11 pointer-coarse:px-3 active:bg-surface-pressed ${
-            locale === o.value ? "font-semibold text-foreground" : "text-text-tertiary hover:text-foreground"
+          className={`min-h-8 rounded-full px-2.5 font-medium transition-colors duration-(--motion-duration-micro) pointer-coarse:min-h-11 pointer-coarse:px-3 max-[359px]:px-2 ${
+            locale === o.value
+              ? "bg-surface text-foreground shadow-sm dark:bg-surface-pressed"
+              : "text-text-secondary hover:text-foreground active:bg-fill-strong"
           }`}
         >
           {o.label}

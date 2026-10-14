@@ -29,7 +29,7 @@ export function QualityCard({ row, rank, scoreColorClass }: { row: QualityScoreR
   const nDisponibles = row.components.filter((c) => c.score !== null).length;
 
   return (
-    <div className="border border-border-subtle">
+    <div className="tarjeta overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}

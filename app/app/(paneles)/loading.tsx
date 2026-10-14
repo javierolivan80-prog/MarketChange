@@ -14,29 +14,31 @@ import { getT } from "@/lib/locale";
 export default async function Loading() {
   const { t } = await getT();
   return (
-    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6" aria-busy="true">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6" aria-busy="true">
       <p className="sr-only">{t("Cargando…", "Loading…")}</p>
       {/* Misma forma que una página de datos (título, franja de cifras,
           tabla), para que al llegar el contenido no salte nada de sitio. El
           pulso es .m-skeleton: poca amplitud y nada con movimiento reducido. */}
       <div className="m-skeleton">
-        <div className="mb-3 h-7 w-48 bg-surface-raised" />
-        <div className="mb-6 h-4 w-80 max-w-full bg-surface-raised" />
-        <div className="mb-6 flex flex-wrap gap-4">
+        {/* Sobre el fondo, bloques con el relleno translúcido (bg-fill); dentro
+            de la tarjeta, con el de su superficie (Tanda 12c). */}
+        <div className="mb-3 h-9 w-56 rounded-control bg-fill" />
+        <div className="mb-6 h-4 w-80 max-w-full rounded-full bg-fill" />
+        <div className="tarjeta mb-6 grid grid-cols-2 gap-x-6 gap-y-5 p-4 sm:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
-              <div className="mb-2 h-3 w-20 bg-surface-raised" />
-              <div className="h-7 w-24 bg-surface-raised" />
+            <div key={i}>
+              <div className="mb-2 h-3 w-20 rounded-full bg-surface-raised" />
+              <div className="h-7 w-24 rounded-control bg-surface-raised" />
             </div>
           ))}
         </div>
-        <div className="border border-border-subtle">
-          <div className="h-9 border-b border-border-strong bg-surface-raised" />
+        <div className="tarjeta overflow-hidden">
+          <div className="h-9 border-b border-border-subtle" />
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <div key={i} className="flex h-10 items-center gap-4 border-b border-border-subtle px-3 last:border-b-0">
-              <div className="h-3 w-16 bg-surface-raised" />
-              <div className="h-3 flex-1 bg-surface-raised" />
-              <div className="h-3 w-12 bg-surface-raised" />
+              <div className="h-3 w-16 rounded-full bg-surface-raised" />
+              <div className="h-3 flex-1 rounded-full bg-surface-raised" />
+              <div className="h-3 w-12 rounded-full bg-surface-raised" />
             </div>
           ))}
         </div>

@@ -53,9 +53,9 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
   const long = plan.direction === "LONG";
 
   return (
-    <section className="mb-4 border border-border-strong bg-surface p-3" aria-labelledby={tituloId}>
+    <section className="mb-4 tarjeta p-4" aria-labelledby={tituloId}>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id={tituloId} className="text-xs font-semibold uppercase tracking-wide text-foreground">
+        <h2 id={tituloId} className="text-[1.0625rem] font-semibold tracking-[-0.01em] text-foreground">
           {t("Plan técnico", "Technical plan")}
         </h2>
         <p className={`text-sm font-medium ${plan.passes_filters ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
@@ -179,8 +179,8 @@ export function TechnicalPlanCard({ plan, locale = "es" }: { plan: TechnicalPlan
       </div>
 
       {d.exit_rules && d.exit_rules.length > 0 && (
-        <details className="mt-3 text-xs text-text-secondary">
-          <summary className="cursor-pointer">{t("Reglas de entrada y salida", "Entry and exit rules")}</summary>
+        <details suppressHydrationWarning className="mt-3 border-t border-border-subtle text-xs text-text-secondary [&>*:last-child]:pb-1">
+          <summary className="pt-2.5 pb-2 text-sm text-foreground pointer-coarse:py-3">{t("Reglas de entrada y salida", "Entry and exit rules")}</summary>
           <ul className="mt-1 list-inside list-disc space-y-0.5">
             {d.exit_rules.map((r) => (
               <li key={r}>{planText(r, locale)}</li>

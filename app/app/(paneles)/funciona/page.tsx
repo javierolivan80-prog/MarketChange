@@ -36,9 +36,9 @@ export async function generateMetadata() {
 // genérica).
 
 const OPTION_STYLES: Record<string, string> = {
-  A: "border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-500/10",
-  B: "border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-500/10",
-  C: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10",
+  A: "bg-emerald-500/10 dark:bg-emerald-400/10",
+  B: "bg-amber-500/10 dark:bg-amber-400/10",
+  C: "bg-rose-500/10 dark:bg-rose-400/10",
 };
 const OPTION_TEXT_STYLES: Record<string, string> = {
   A: "text-emerald-800 dark:text-emerald-400",
@@ -117,7 +117,7 @@ function DecisionCard({ title, decision, locale }: { title: string; decision: Ve
   const t = makeT(locale);
   const RELIABILITY = reliability(locale);
   return (
-    <div className={`border p-4 ${OPTION_STYLES[decision.option]}`}>
+    <div className={`rounded-card border border-transparent p-4 contrast-more:border-border-strong ${OPTION_STYLES[decision.option]}`}>
       <p className="mb-1 text-sm text-text-secondary">{title}</p>
       <p className={`mb-2 text-lg leading-snug font-semibold tracking-tight ${OPTION_TEXT_STYLES[decision.option]}`}>{RELIABILITY[decision.option].title}</p>
       <p className="mb-2 text-xs text-text-tertiary">{t("Criterios evaluados:", "Criteria checked:")}</p>
@@ -211,9 +211,9 @@ export default async function FuncionaPage() {
   const eventClasses = validationReport ? Object.keys(validationReport.event_study).sort() : [];
 
   return (
-    <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="titulo-grande text-foreground">{title}</h1>
         <p className="mt-1 text-sm text-text-secondary">
           {t(
             "Cómo de fiables son las señales: si los eventos mueven el precio de verdad, si la confianza declarada se cumple y cómo aguantan los resultados en condiciones peores.",
@@ -231,8 +231,8 @@ export default async function FuncionaPage() {
       {/* Veredicto + decisión por versión */}
       {validationReport && (
         <section className="mb-10">
-          <div className={`mb-4 border-2 p-5 ${OPTION_STYLES[validationReport.best_decision.option]}`}>
-            <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">
+          <div className={`mb-4 rounded-card border border-transparent p-5 contrast-more:border-border-strong ${OPTION_STYLES[validationReport.best_decision.option]}`}>
+            <p className="mb-1 text-[0.8125rem] text-text-secondary">
               {t("Calificación global · estrategia recomendada", "Overall rating · recommended strategy")}: {versionLabel(validationReport.best_version, locale)}
             </p>
             <p className={`mb-2 text-2xl leading-tight font-semibold tracking-tight ${OPTION_TEXT_STYLES[validationReport.best_decision.option]}`}>{RELIABILITY[validationReport.best_decision.option].title}</p>
@@ -266,10 +266,10 @@ export default async function FuncionaPage() {
           {eventClasses.length === 0 ? (
             <p className="text-sm italic text-text-tertiary">{t("Sin datos todavía.", "No data yet.")}</p>
           ) : (
-            <div className="overflow-x-auto border border-border-subtle">
+            <div className="tarjeta overflow-x-auto">
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
-                  <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+                  <tr className="border-b border-border-subtle text-[0.8125rem] text-text-secondary">
                     <th className="py-2 pl-3 pr-4 font-medium">{t("Tipo de evento", "Event type")}</th>
                     <th className="py-2 pr-4 text-right font-medium">{t("Casos", "Cases")}</th>
                     <th className="py-2 pr-4 text-right font-medium">{t("Movimiento típico", "Typical move")}</th>
@@ -298,7 +298,7 @@ export default async function FuncionaPage() {
           {t("Cuando dice “80% de confianza”, ¿acierta de verdad el 80% de las veces?", "When it says “80% confidence”, is it really right 80% of the time?")}
         </p>
         {VERSION_ORDER.some((ver) => report.versions[ver]?.confidence_calibration.no_aplica) ? (
-          <p className="border border-border-subtle bg-surface px-3 py-2 text-xs text-text-secondary">
+          <p className="rounded-control bg-fill px-3 py-2 text-xs text-text-secondary">
             <span className="mr-1 font-semibold">{t("No aplica.", "Not applicable.")}</span>
             {NO_APLICA_CONFIANZA(t)}
           </p>
@@ -308,7 +308,7 @@ export default async function FuncionaPage() {
             const diag = report.versions[ver].confidence_calibration;
             const { label, adjustment } = interpretCalibration(diag, t);
             return (
-              <div key={ver} className="min-w-0 border border-border-subtle bg-surface p-4">
+              <div key={ver} className="min-w-0 tarjeta p-4">
                 <h3 className="mb-3 text-base font-semibold text-foreground">{versionLabel(ver, locale)}</h3>
                 <CalibrationCurve buckets={diag.buckets} />
                 <p className="mb-3 mt-1 text-xs text-text-tertiary">
@@ -333,10 +333,10 @@ export default async function FuncionaPage() {
               "A result that stays positive in every scenario is more trustworthy than one that only works in the best case.",
             )}
           </p>
-          <div className="overflow-x-auto border border-border-subtle">
+          <div className="tarjeta overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
-                <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+                <tr className="border-b border-border-subtle text-[0.8125rem] text-text-secondary">
                   <th className="py-2 pl-3 pr-4 font-medium">{t("Escenario", "Scenario")}</th>
                   {VERSION_ORDER.map((ver) => (
                     <th key={ver} className="py-2 pr-4 text-right font-medium last:pr-3">
@@ -347,7 +347,7 @@ export default async function FuncionaPage() {
               </thead>
               <tbody>
                 {SCENARIO_ORDER.map((key) => (
-                  <tr key={key} className="border-b border-border-subtle">
+                  <tr key={key} className="border-b border-border-subtle last:border-b-0">
                     <td className="py-2 pl-3 pr-4 text-foreground">{SCENARIO_LABELS[key]}</td>
                     {VERSION_ORDER.map((ver) => {
                       const scenario = validationReport.sensitivity.scenarios[ver]?.[key];

@@ -136,10 +136,8 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
       setExpanded((prev) => conSin(prev, eventId, true));
       return;
     }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setExpanded((prev) => conSin(prev, eventId, false));
-      return;
-    }
+    // También con movimiento reducido: entonces solo se funde (ver abajo),
+    // en vez de desaparecer en el acto mientras que al abrir se fundía.
     setCerrando((prev) => conSin(prev, eventId, true));
     temporizadores.current.set(
       eventId,
@@ -147,7 +145,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         temporizadores.current.delete(eventId);
         setExpanded((prev) => conSin(prev, eventId, false));
         setCerrando((prev) => conSin(prev, eventId, false));
-      }, motion.duration.fast),
+      }, motion.duration["spring-fast"]),
     );
   }
 
@@ -160,7 +158,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
         <ExportCsvButton rows={rows} />
       </div>
 
-      <div className="overflow-x-auto border border-border-subtle">
+      <div className="tarjeta overflow-x-auto">
         <table className="w-full min-w-[760px] border-collapse text-left text-sm">
           <caption className="sr-only">
             {t(
@@ -170,7 +168,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
           </caption>
           <thead>
             {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-b border-border-strong bg-surface-raised">
+              <tr key={hg.id} className="border-b border-border-subtle text-[0.8125rem]">
                 <th className="w-8 py-2 pl-3">
                   <span className="sr-only">{t("Detalle", "Detail")}</span>
                 </th>
@@ -204,7 +202,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                       botones): el realce al pasar por encima ya prometía que
                       era pulsable. Con teclado, el botón ▸. */}
                   <tr
-                    className="cursor-pointer border-b border-border-subtle [-webkit-tap-highlight-color:transparent] hover:bg-surface-raised active:bg-surface-pressed"
+                    className="cursor-pointer border-b border-border-subtle last:border-b-0 [-webkit-tap-highlight-color:transparent] hover:bg-surface-raised active:bg-surface-pressed"
                     onClick={(e) => {
                       if ((e.target as HTMLElement).closest("a, button")) return;
                       // Seleccionar texto (arrastrar, doble clic) no despliega.
@@ -222,6 +220,7 @@ export function SignalsTable({ rows }: { rows: SignalFeedRow[] }) {
                         {/* Un solo glifo que gira: se lee como el mismo control cambiando de estado, no como dos iconos. */}
                         <span
                           aria-hidden="true"
+                          data-anima-con-puntero
                           className={`inline-block transition-transform duration-(--motion-duration-micro) ease-(--motion-ease-out) motion-reduce:transition-none ${isExpanded ? "rotate-90" : ""}`}
                         >
                           ▸
@@ -272,6 +271,12 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
   const [state, setState] = useState<DetailState>(() => analisisCargados.get(eventId) ?? { status: "loading" });
   const t = useT();
   const locale = useLocale();
+  // @starting-style solo en el primer fotograma (ver el comentario de abajo).
+  const [recienMontada, setRecienMontada] = useState(true);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setRecienMontada(false));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   useEffect(() => {
     if (analisisCargados.has(eventId)) return;
@@ -290,14 +295,30 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
   }, [eventId]);
 
   return (
-    // Entra desde opacidad 0 (@starting-style) y sale hacia 0 con la misma
-    // duración y curva.
-    <tr
-      className={`border-b border-border-subtle bg-surface-raised transition-opacity duration-(--motion-duration-fast) ease-(--motion-ease-out) starting:opacity-0 motion-reduce:transition-none ${
-        cerrando ? "opacity-0" : "opacity-100"
-      }`}
-    >
-      <td colSpan={colSpan} className="px-4 py-4">
+    // Crece desde su fila y vuelve a ella por el mismo camino (Tanda 12c,
+    // guía de Apple: origen anclado y muelle). Se anima la altura hasta
+    // height: auto (interpolate-size, en globals.css); el truco de
+    // grid-template-rows 0fr → 1fr no sirve dentro de un <td> (la celda toma
+    // la altura de la fila en una segunda pasada y quedaba una franja vacía).
+    // Donde no hay interpolate-size, la altura salta y solo se funde la
+    // opacidad. Entra desde 0 con @starting-style solo la primera vez: al
+    // ordenar, React mueve la fila y volvía a crecer desde 0. Como es una
+    // transición, pulsar a mitad la invierte desde donde esté.
+    // Tanda 12d (Emil): se despliega decenas de veces al día, así que entra
+    // en 235 ms y sale en 176 ms (más rápido que entrar); con el teclado no
+    // se anima (data-anima-con-puntero); con movimiento reducido solo se
+    // funde, al abrir y al cerrar: la altura se queda (motion-reduce:h-auto)
+    // mientras se desvanece y la fila se recoge de golpe al desmontarse.
+    <tr className="border-b border-border-subtle bg-surface-raised last:border-b-0">
+      <td colSpan={colSpan} className="p-0">
+        <div
+          data-anima-con-puntero
+          className={`overflow-hidden transition-[height,opacity] ease-(--motion-ease-spring) motion-reduce:transition-opacity ${
+            recienMontada ? "starting:h-0 starting:opacity-0" : ""
+          } ${cerrando ? "h-0 opacity-0 duration-(--motion-duration-spring-fast) motion-reduce:h-auto" : "h-auto opacity-100 duration-(--motion-duration-spring)"}`}
+        >
+          <div>
+            <div className="px-4 py-4">
         {state.status === "loading" && <AnalysisSkeleton label={t("Cargando análisis…", "Loading analysis…")} />}
         {state.status === "error" && (
           <p className="text-xs text-text-secondary">
@@ -312,6 +333,9 @@ function SignalRowDetail({ eventId, colSpan, cerrando }: { eventId: number; colS
             <SignalAnalysis detail={state.detail} recommended={state.recommended} locale={locale} anclas={false} />
           </div>
         )}
+            </div>
+          </div>
+        </div>
       </td>
     </tr>
   );
@@ -324,10 +348,10 @@ function AnalysisSkeleton({ label }: { label: string }) {
     <div role="status">
       <span className="sr-only">{label}</span>
       <div aria-hidden="true" className="m-skeleton">
-        <div className="mb-4 h-16 border border-border-subtle bg-surface" />
+        <div className="mb-4 h-16 rounded-control bg-surface" />
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="h-24 border border-border-subtle bg-surface" />
+            <div key={i} className="h-24 rounded-control bg-surface" />
           ))}
         </div>
       </div>

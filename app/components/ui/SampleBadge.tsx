@@ -25,7 +25,7 @@ const copy = (t: T): Record<"oos" | "in_sample" | "full", { label: string; text:
       "Resultados en el mismo periodo con el que se ajustó el sistema; suelen ser más optimistas que los futuros.",
       "Results over the same period used to tune the system; they tend to be more optimistic than future ones.",
     ),
-    tone: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800/60 dark:bg-amber-500/10 dark:text-amber-400",
+    tone: "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
   },
   full: {
     label: t("Histórico completo", "Full history"),
@@ -33,7 +33,7 @@ const copy = (t: T): Record<"oos" | "in_sample" | "full", { label: string; text:
       "Incluye el periodo con el que se ajustó el sistema, así que puede ser algo optimista.",
       "It includes the period used to tune the system, so it may be somewhat optimistic.",
     ),
-    tone: "border-border-subtle bg-surface-raised text-text-secondary",
+    tone: "bg-fill text-text-secondary",
   },
 });
 
@@ -47,13 +47,13 @@ const reglaSinIa = (t: T) =>
   );
 
 // `warning` se acepta por compatibilidad con los llamadores, pero no se pinta (ver arriba).
-// inset: dentro de otro bloque con borde (Inicio), sin borde propio para no
-// dibujar un recuadro dentro del recuadro.
+// inset: dentro de otra tarjeta (Inicio), sin esquinas propias para no
+// dibujar una caja dentro de la caja.
 export function SampleBadge({ sample, inset = false }: { sample: SampleSplit | undefined; warning?: string; inset?: boolean }) {
   const t = useT();
   const c = copy(t)[sample === "oos" ? "oos" : sample === "in_sample" ? "in_sample" : "full"];
   return (
-    <div className={`px-3 py-2 text-xs ${c.tone} ${inset ? "border-0" : "border"}`}>
+    <div className={`py-2 text-xs ${c.tone} ${inset ? "px-4" : "rounded-control border border-transparent px-3 contrast-more:border-border-strong"}`}>
       <span className="mr-1 font-semibold">{c.label}.</span>
       {c.text}
       <span className="mt-1 block">

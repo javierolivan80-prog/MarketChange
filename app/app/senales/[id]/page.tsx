@@ -32,13 +32,13 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
   if (!detail) notFound();
 
   return (
-    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
       <Breadcrumbs
         items={[{ label: t("Resumen", "Overview"), href: "/" }, { label: t("Señales", "Signals"), href: "/senales" }, { label: detail.ticker }]}
       />
       <header className="mb-5">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{detail.ticker}</h1>
+          <h1 className="titulo-grande text-foreground">{detail.ticker}</h1>
           <DirectionBadge value={detail.signal} />
         </div>
         <p className="mt-1 text-sm text-text-secondary">
@@ -49,20 +49,20 @@ export default async function SignalPage({ params }: { params: Promise<{ id: str
       </header>
       {/* Índice de la ficha: es larga, y sin él no se sabía qué venía después
           del primer bloque ni dónde estaba cada parte. */}
-      <nav aria-label={t("En esta página", "On this page")} className="mb-4 flex flex-wrap gap-x-4 gap-y-1 border-b border-border-subtle pb-2 text-sm">
+      <nav aria-label={t("En esta página", "On this page")} className="mb-5 flex flex-wrap gap-2 text-sm">
         {detail.technical && (
-          <a href="#plan" className="text-text-secondary hover:text-foreground">
+          <a href="#plan" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
             {t("Plan técnico", "Technical plan")}
           </a>
         )}
-        <a href="#analisis" className="text-text-secondary hover:text-foreground">
+        <a href="#analisis" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
           {t("Análisis del evento", "Event analysis")}
         </a>
-        <a href="#versiones" className="text-text-secondary hover:text-foreground">
+        <a href="#versiones" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
           {t("Las tres estrategias", "The three strategies")}
         </a>
         {detail.source_url && (
-          <a href={detail.source_url} target="_blank" rel="noopener noreferrer" className="text-text-secondary hover:text-foreground">
+          <a href={detail.source_url} target="_blank" rel="noopener noreferrer" className="rounded-full border border-transparent bg-fill px-3 py-1 text-foreground transition-colors duration-(--motion-duration-micro) hover:bg-fill-strong active:bg-fill-pressed contrast-more:border-border-strong pointer-coarse:py-3">
             {t("Filing original ↗", "Original filing ↗")}
           </a>
         )}

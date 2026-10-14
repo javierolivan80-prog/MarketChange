@@ -51,10 +51,10 @@ export default async function CarteraPage() {
   const { bias_report } = report;
 
   return (
-    <main className="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
       <header className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
+          <h1 className="titulo-grande text-foreground">{title}</h1>
           <ExportPdfButton report={report} />
         </div>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
@@ -85,8 +85,8 @@ export default async function CarteraPage() {
             pantalla: el veredicto interno de go/no-go del motor vive en
             /funciona, y el capital nominal del backtest no se muestra (las
             cifras van en %). */}
-        <details className="mt-4 text-sm">
-          <summary className="cursor-pointer text-text-secondary">{t("Cómo leer estas cifras", "How to read these figures")}</summary>
+        <details suppressHydrationWarning className="tarjeta mt-4 px-4 text-sm [&>*:last-child]:pb-4">
+          <summary className="py-3 text-foreground">{t("Cómo leer estas cifras", "How to read these figures")}</summary>
           <div className="mt-2 space-y-1 text-text-secondary">
             <p>
               {t(
@@ -138,7 +138,7 @@ export default async function CarteraPage() {
               {VERSION_ORDER.filter((v) => paperReport.versions[v]).map((version) => {
                 const v = paperReport.versions[version];
                 return (
-                  <div key={version} className="min-w-0 border border-border-subtle bg-surface p-4">
+                  <div key={version} className="min-w-0 tarjeta p-4">
                     <h3 className="mb-3 text-base font-semibold text-foreground">{versionLabel(version, locale)}</h3>
 
                     <dl className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">

@@ -27,10 +27,12 @@ export const dynamic = "force-dynamic";
 //
 // Mismo criterio de color que /funciona: A/B/C es el veredicto del propio
 // motor de validación, no P&L ni dirección.
+// Tanda 12c: el veredicto tiñe la cabecera de la tarjeta (relleno suave del
+// color del nivel), sin borde de color alrededor.
 const VERDICT_COPY: Record<string, { color: string; text: string }> = {
-  A: { color: "border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-500/10", text: "text-emerald-800 dark:text-emerald-400" },
-  B: { color: "border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-500/10", text: "text-amber-800 dark:text-amber-400" },
-  C: { color: "border-rose-300 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-500/10", text: "text-rose-800 dark:text-rose-400" },
+  A: { color: "bg-emerald-500/10 dark:bg-emerald-400/10", text: "text-emerald-800 dark:text-emerald-400" },
+  B: { color: "bg-amber-500/10 dark:bg-amber-400/10", text: "text-amber-800 dark:text-amber-400" },
+  C: { color: "bg-rose-500/10 dark:bg-rose-400/10", text: "text-rose-800 dark:text-rose-400" },
 };
 
 function abstentionLabel(category: AbstentionCategory, t: T): string {
@@ -52,9 +54,9 @@ const STALE_AFTER_HOURS = 60;
 
 function Stat({ label, value, hint, children }: { label: string; value: string; hint?: string; children?: React.ReactNode }) {
   return (
-    <div className="min-w-[140px] flex-1 border-l border-border-subtle pl-3">
-      <p className="mb-1 text-xs uppercase tracking-wide text-text-secondary">{label}</p>
-      <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{value}</p>
+    <div className="min-w-0">
+      <p className="mb-1 text-[0.8125rem] text-text-secondary">{label}</p>
+      <p className="num text-[1.75rem] leading-tight font-semibold tracking-[-0.02em] text-foreground">{value}</p>
       {children}
       {hint && <p className="mt-0.5 text-xs text-text-tertiary">{hint}</p>}
     </div>
@@ -94,10 +96,10 @@ export default async function InicioPage() {
   const isStale = hoursSince !== null && hoursSince > STALE_AFTER_HOURS;
 
   return (
-    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
 
       <header className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{t("Resumen", "Overview")}</h1>
+        <h1 className="titulo-grande text-foreground">{t("Resumen", "Overview")}</h1>
         <p className={`num text-xs ${isStale ? "text-amber-700 dark:text-amber-400" : "text-text-tertiary"}`}>
           {lastAnalyzed
             ? `${t("Actualizado", "Updated")}: ${formatDateTime(freshness.last_analyzed_at, locale)} · ${freshness.analyzed_last_24h} ${t(
@@ -122,7 +124,7 @@ export default async function InicioPage() {
           action={{ href: "/senales", label: t("Ver todas", "See all") }}
         />
         {recent.length === 0 ? (
-          <p className="border border-dashed border-border-subtle p-4 text-sm text-text-secondary">
+          <p className="tarjeta p-4 text-sm text-text-secondary">
             {t(
               "Ningún evento ha superado todavía los filtros para operar. La mayoría de eventos se descartan a propósito: el sistema solo señala los que tienen un valor esperado positivo después de costes.",
               "No event has passed the trading filters yet. Most events are discarded on purpose: the system only flags those with a positive expected value after costs.",
@@ -130,11 +132,11 @@ export default async function InicioPage() {
           </p>
         ) : (
           <>
-          <div className="overflow-x-auto border border-border-subtle">
+          <div className="tarjeta overflow-x-auto">
             <table className="w-full min-w-[860px] border-collapse text-left text-sm">
               <caption className="sr-only">{t("Señales operables más recientes con su plan técnico", "Latest tradable signals with their technical plan")}</caption>
               <thead>
-                <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+                <tr className="border-b border-border-subtle text-[0.8125rem] text-text-secondary">
                   <th scope="col" className="py-2 pl-3 pr-3 font-medium">{t("Símbolo", "Ticker")}</th>
                   <th scope="col" className="py-2 pr-3 font-medium">{t("Catalizador", "Catalyst")}</th>
                   <th scope="col" className="py-2 pr-3 text-right font-medium">{t("Confianza técnica", "Technical confidence")}</th>
@@ -157,7 +159,7 @@ export default async function InicioPage() {
               </thead>
               <tbody>
                 {recent.map((s) => (
-                  <tr key={s.event_id} className="border-b border-border-subtle">
+                  <tr key={s.event_id} className="border-b border-border-subtle last:border-b-0">
                     <td className="py-2 pl-3 pr-3">
                       <Link href={`/senales/${s.event_id}`} className="inline-flex items-center gap-2 hover:underline">
                         <span className="font-mono font-medium text-foreground">{s.ticker}</span>
@@ -220,7 +222,8 @@ export default async function InicioPage() {
               "As important as what gets traded: how many events were discarded and why.",
             )}
           />
-          <p className="num mb-2 text-sm text-text-secondary">
+          <div className="tarjeta p-4">
+          <p className="num mb-3 text-sm text-text-secondary">
             {abstention.analyzed} {t("eventos analizados", "events analysed")} · {abstention.traded} {t("superaron los filtros", "passed the filters")} ·{" "}
             {abstention.analyzed - abstention.traded} {t("descartados", "discarded")}
           </p>
@@ -235,6 +238,7 @@ export default async function InicioPage() {
               }}
             />
           )}
+          </div>
         </section>
       )}
 
@@ -251,8 +255,8 @@ export default async function InicioPage() {
           )}
           action={{ href: "/funciona", label: t("Ver por qué", "See why") }}
         />
-        <div className={`border ${verdict ? verdict.color : "border-border-subtle"}`}>
-          <div className="p-4">
+        <div className="tarjeta overflow-hidden">
+          <div className={`p-4 ${verdict ? verdict.color : ""}`}>
             {verdict ? (
               <>
                 <p className={`mb-1 text-lg leading-snug font-semibold tracking-tight ${verdict.text}`}>{RELIABILITY[summary.validation!.best_decision.option].title}</p>
@@ -278,14 +282,14 @@ export default async function InicioPage() {
             )}
           </div>
           {shown && shown.trade_metrics && shown.equity_metrics && (
-            <div className="border-t border-border-subtle bg-surface p-4">
-              <p className="mb-3 text-xs text-text-tertiary">
+            <div className="border-t border-border-subtle p-4">
+              <p className="mb-4 text-xs text-text-tertiary">
                 {t(
                   `Rentabilidad histórica de la estrategia ${versionLabel(shownVersion, locale).toLowerCase()}, aplicada a todos los eventos pasados, con cada operación cubierta con una posición contraria en el S&P 500.`,
                   `Historical performance of the ${versionLabel(shownVersion, locale).toLowerCase()} strategy, applied to all past events, with every trade hedged by an opposite S&P 500 position.`,
                 )}
               </p>
-              <div className="flex flex-wrap gap-y-4">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
                 <Stat
                   label={t("Acierto", "Win rate")}
                   value={shown.trade_metrics.win_rate !== null ? `${(shown.trade_metrics.win_rate * 100).toFixed(0)}%` : "—"}

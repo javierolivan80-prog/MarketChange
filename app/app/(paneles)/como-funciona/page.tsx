@@ -43,9 +43,9 @@ export default async function ComoFuncionaPage() {
   );
 
   return (
-    <main className="mx-auto max-w-3xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6 *:max-w-3xl">
       <header className="mb-8">
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{t("Cómo funciona", "How it works")}</h1>
+        <h1 className="titulo-grande text-foreground">{t("Cómo funciona", "How it works")}</h1>
         <p className="mt-1 text-sm text-text-secondary">
           {t("Qué hace el sistema, paso a paso, sin dar nada por sabido.", "What the system does, step by step, assuming no prior knowledge.")}
         </p>
@@ -161,7 +161,7 @@ export default async function ComoFuncionaPage() {
         </Step>
       </section>
 
-      <section className="mt-8 border-t border-border-subtle pt-6">
+      <section className="mt-10">
         <h2 className="mb-2 font-semibold text-foreground">{t("Aparte: el análisis de largo plazo", "Separately: the long-term analysis")}</h2>
         <p className="mb-2 text-sm text-text-secondary">
           {t("Todo lo de arriba va de ", "Everything above is about ")}
@@ -182,7 +182,7 @@ export default async function ComoFuncionaPage() {
         </p>
       </section>
 
-      <section className="mt-8 border-t border-border-subtle pt-6">
+      <section className="mt-10">
         <h2 className="mb-2 font-semibold text-foreground">{t("Reglas que el sistema nunca rompe", "Rules the system never breaks")}</h2>
         <ul className="list-inside list-disc space-y-1 text-sm text-text-secondary">
           <li>

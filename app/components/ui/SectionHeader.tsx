@@ -19,12 +19,14 @@ export function SectionHeader({
   return (
     <div className="mb-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 id={id} className="text-base font-semibold text-foreground">
+        {/* Tanda 12c: título de sección como en Apple (20 px, seminegrita,
+            espaciado ligeramente apretado) y acción "Ver todas ›". */}
+        <h2 id={id} className="text-[1.25rem] leading-tight font-semibold tracking-[-0.012em] text-foreground">
           {title}
         </h2>
         {action && (
           <Link href={action.href} className="text-sm text-accent-700 hover:underline dark:text-accent-400">
-            {action.label} →
+            {action.label} <span aria-hidden="true">›</span>
           </Link>
         )}
       </div>

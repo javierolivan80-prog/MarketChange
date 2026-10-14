@@ -8,8 +8,9 @@
 //
 // Se pinta ya en el servidor (si estaba cerrada, la oculta el script de
 // layout.tsx antes del primer pintado) para no desplazar la página al
-// hidratar. Al cerrarla se desvanece (ease-in) y después se desmonta; con
-// movimiento reducido desaparece en el acto.
+// hidratar. Al cerrarla se desvanece (más deprisa de lo que entró) y
+// después se desmonta; con movimiento reducido, o si se cierra con el
+// teclado (Tanda 12d), desaparece en el acto.
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -32,7 +33,7 @@ export function WelcomeNote() {
 
   function dismiss() {
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) setVisible(false);
+    if (reduced || document.documentElement.hasAttribute("data-teclado")) setVisible(false);
     else setLeaving(true);
     try {
       localStorage.setItem(KEY, "1");
@@ -47,7 +48,7 @@ export function WelcomeNote() {
     <aside
       data-welcome-note
       aria-label={t("Qué es MarketChange", "What MarketChange is")}
-      className={`mb-5 border border-accent-500/50 bg-surface p-4 text-sm ${leaving ? "m-exit" : "m-fade"}`}
+      className={`mb-5 tarjeta p-4 text-sm ${leaving ? "m-exit" : "m-fade"}`}
       onAnimationEnd={(e) => {
         if (leaving && e.target === e.currentTarget) setVisible(false);
       }}

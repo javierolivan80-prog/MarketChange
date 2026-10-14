@@ -42,9 +42,9 @@ export default async function HistorialPage() {
   const maxAbsPnl = Math.max(0, ...history.rows.map((r) => (r.pnl_pct !== null ? Math.abs(r.pnl_pct) : 0)));
 
   return (
-    <main className="mx-auto max-w-5xl px-4 pb-4 sm:px-6">
+    <main className="mx-auto max-w-6xl px-4 pb-4 sm:px-6">
       <header className="mb-5">
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight text-foreground">{title}</h1>
+        <h1 className="titulo-grande text-foreground">{title}</h1>
         <p className="mt-1 max-w-3xl text-sm text-text-secondary">
           {t(
             `Cada señal emitida por la estrategia ${versionLabel(version, locale).toLowerCase()}, con la hora a la que se publicó y lo que hizo después la acción frente al S&P 500 (cada operación se cubre con una posición contraria en SPY), medido con precios reales de mercado. Son resultados posteriores a cada señal, no una reconstrucción del pasado.`,
@@ -53,22 +53,22 @@ export default async function HistorialPage() {
         </p>
       </header>
 
-      <section className="mb-6 flex flex-wrap gap-x-8 gap-y-3">
+      <section className="tarjeta mb-6 grid grid-cols-2 gap-x-6 gap-y-5 p-4 sm:grid-cols-4">
         <div>
-          <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Señales", "Signals")}</p>
-          <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{history.rows.length}</p>
+          <p className="text-[0.8125rem] text-text-secondary">{t("Señales", "Signals")}</p>
+          <p className="num text-[1.75rem] leading-tight font-semibold tracking-[-0.02em] text-foreground">{history.rows.length}</p>
         </div>
         <div>
-          <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Cerradas", "Closed")}</p>
-          <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{history.n_closed}</p>
+          <p className="text-[0.8125rem] text-text-secondary">{t("Cerradas", "Closed")}</p>
+          <p className="num text-[1.75rem] leading-tight font-semibold tracking-[-0.02em] text-foreground">{history.n_closed}</p>
         </div>
         <div>
-          <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Acierto", "Win rate")}</p>
-          <p className="num text-2xl leading-tight font-semibold tracking-tight text-foreground">{history.win_rate !== null ? `${(history.win_rate * 100).toFixed(0)}%` : "—"}</p>
+          <p className="text-[0.8125rem] text-text-secondary">{t("Acierto", "Win rate")}</p>
+          <p className="num text-[1.75rem] leading-tight font-semibold tracking-[-0.02em] text-foreground">{history.win_rate !== null ? `${(history.win_rate * 100).toFixed(0)}%` : "—"}</p>
         </div>
         <div>
-          <p className="text-xs uppercase tracking-wide text-text-secondary">{t("Resultado medio", "Average result")}</p>
-          <p className="text-2xl leading-tight font-semibold tracking-tight">
+          <p className="text-[0.8125rem] text-text-secondary">{t("Resultado medio", "Average result")}</p>
+          <p className="text-[1.75rem] leading-tight font-semibold tracking-[-0.02em]">
             <SignedPct value={history.avg_pnl_pct} />
           </p>
         </div>
@@ -106,11 +106,11 @@ export default async function HistorialPage() {
         </p>
       )}
 
-      <div className="overflow-x-auto border border-border-subtle">
+      <div className="tarjeta overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-left text-sm">
           <caption className="sr-only">{t("Historial de señales emitidas y su resultado posterior", "Issued signals and their subsequent results")}</caption>
           <thead>
-            <tr className="border-b border-border-strong bg-surface-raised text-text-secondary">
+            <tr className="border-b border-border-subtle text-[0.8125rem] text-text-secondary">
               <th scope="col" className="py-2 pl-3 pr-4 font-medium">{t("Evento", "Event")}</th>
               <th scope="col" className="py-2 pr-4 font-medium">Ticker</th>
               <th scope="col" className="py-2 pr-4 font-medium">{t("Tipo", "Type")}</th>
@@ -122,7 +122,7 @@ export default async function HistorialPage() {
           </thead>
           <tbody>
             {history.rows.map((r) => (
-              <tr key={r.event_id} className="border-b border-border-subtle">
+              <tr key={r.event_id} className="border-b border-border-subtle last:border-b-0">
                 <td className="num py-2 pl-3 pr-4 text-text-secondary">{formatDate(r.d0_close_date, locale)}</td>
                 <td className="py-2 pr-4">
                   <Link href={`/senales/${r.event_id}`} className="font-mono font-medium text-foreground hover:underline">
