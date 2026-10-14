@@ -8,9 +8,11 @@ import pytest
 
 from pipeline.backtest.sample_split import (
     IN_SAMPLE_END,
+    IN_SAMPLE_START,
     OOS_START,
     SAMPLE_IN_SAMPLE,
     SAMPLE_OOS,
+    ULTIMO_D0_IN_SAMPLE,
     date_bounds,
     git_sha_corto,
     tag_suffix,
@@ -33,10 +35,13 @@ def test_in_sample_and_oos_are_contiguous_no_gap_no_overlap():
     assert OOS_START - IN_SAMPLE_END == timedelta(days=1)
 
 
-def test_date_bounds_in_sample_caps_at_in_sample_end_no_floor():
+def test_date_bounds_in_sample_va_de_backtest_start_al_embargo():
+    """H-37 (Tanda 13): el In-Sample empieza en BACKTEST_START (antes no
+    tenía suelo) y acaba antes de IN_SAMPLE_END, donde empieza el embargo
+    (test_fronteras.py comprueba cuánto dura)."""
     start, end = date_bounds(SAMPLE_IN_SAMPLE)
-    assert start is None
-    assert end == IN_SAMPLE_END
+    assert start == IN_SAMPLE_START
+    assert end == ULTIMO_D0_IN_SAMPLE < IN_SAMPLE_END
 
 
 def test_date_bounds_oos_floors_at_oos_start_no_cap():
@@ -73,7 +78,8 @@ def test_a_single_date_is_never_in_both_partitions():
         in_in_sample = d <= in_sample_end
         in_oos = d >= oos_start
         assert not (in_in_sample and in_oos), f"{d} cae en ambas particiones"
-        assert in_in_sample or in_oos, f"{d} no cae en ninguna partición"
+        # Solo el embargo (H-37) queda fuera de las dos, a propósito.
+        assert in_in_sample or in_oos or in_sample_end < d < oos_start, f"{d} no cae en ninguna partición"
 
 
 def test_tag_suffix_only_for_oos(monkeypatch):

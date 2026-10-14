@@ -13,6 +13,7 @@ Solo SELECTs, en una transacción READ ONLY: lanzarlo nunca cambia nada.
 from __future__ import annotations
 
 from pipeline.db.connection import get_connection
+from pipeline.ingest.hora_publicacion import D0_DUDOSO_SQL, HORA_DESCONOCIDA_SQL
 
 QUERIES: list[tuple[str, str]] = [
     ("Tamaño de la base de datos", """
@@ -94,6 +95,16 @@ QUERIES: list[tuple[str, str]] = [
         SELECT (SELECT count(*) FROM prices WHERE calidad_motivo IS NOT NULL) AS velas_marcadas,
                (SELECT count(DISTINCT ticker) FROM prices WHERE calidad_motivo IS NOT NULL) AS tickers,
                (SELECT count(*) FROM car_results WHERE calidad_excluido IS NOT NULL) AS car_excluidos"""),
+    # H-17 (Tanda 13): filings sin hora de aceptación (00:00 de Nueva York). Los
+    # de D0 = día del índice se guardaron con el supuesto optimista.
+    ("Eventos sin hora de publicación (H-17; hora_publicacion.py)", f"""
+        SELECT count(*) AS total, count(*) FILTER (WHERE {D0_DUDOSO_SQL}) AS d0_dudoso,
+               count(*) FILTER (WHERE e.created_at < TIMESTAMPTZ '2026-09-26 00:00+00') AS antes_de_la_hora_de_aceptacion,
+               min(e.d0_close_date) AS desde, max(e.d0_close_date) AS hasta,
+               (SELECT count(*) FROM events) AS de_todos_los_eventos,
+               current_setting('TimeZone') AS zona_de_la_base
+        FROM events e
+        WHERE {HORA_DESCONOCIDA_SQL}"""),
     ("Anteriores al corte (solo regla sin IA, H-06)", """
         SELECT count(*) AS filas, min(e.d0_close_date) AS desde, max(e.d0_close_date) AS hasta
         FROM event_analyses ea JOIN events e ON e.event_id = ea.event_id

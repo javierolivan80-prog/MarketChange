@@ -63,6 +63,7 @@ from pipeline.analyze.ev_engine import compute_ev
 from pipeline.analyze.guidance_detector import compute_novelty_signals
 from pipeline.analyze.historical_analogues import estimate_impact_for_event
 from pipeline.analyze.novelty import NoveltyInputs, compute_novelty
+from pipeline.ingest.hora_publicacion import D0_DUDOSO_SQL
 
 _FALLBACK_FILING_EXCERPT = "(sin texto de filing extraído todavía — ver ingest/filing_text.py)"
 
@@ -97,7 +98,11 @@ def _queue_filters(
     min_market_cap: float | None, require_text: bool, exclude_ids, require_d0_bar: bool = False,
     d0_desde: date | None = None, d0_antes_de: date | None = None,
 ) -> tuple[str, dict]:
-    where = ["ea.event_id IS NULL"]
+    # Sin hora de publicación y con D0 = el día del índice (guardados antes
+    # de la Tanda 13, H-17): ese D0 puede ser el día ANTERIOR a la noticia, y
+    # la IA leería como «reacción de D0» un día sin ella. No se gasta en
+    # ellos. Los nuevos sin hora ya llevan D0 = la sesión siguiente y sí van.
+    where = ["ea.event_id IS NULL", f"NOT {D0_DUDOSO_SQL}"]
     params: dict = {}
     # Fecha de corte de los modelos (BUGS_REPORT.md H-06): la cola de la IA
     # solo lleva eventos con D0 desde config.AI_VALIDATION_START; los
@@ -177,13 +182,18 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT count(*) AS pendientes,
+            SELECT count(*) FILTER (WHERE NOT """ + D0_DUDOSO_SQL + """) AS pendientes,
+                   -- Sin hora y con D0 = el día del índice (H-17): no van a la IA
+                   -- nunca; se cuentan aparte para que no parezcan pendientes.
+                   count(*) FILTER (WHERE """ + D0_DUDOSO_SQL + """) AS d0_dudoso,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS en_objetivo,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s
                                     AND (e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)
+                                    AND NOT """ + D0_DUDOSO_SQL + """
                                     AND """ + _D0_BAR_EXISTS + """
                                     AND %(inicio_ia)s::date IS NOT NULL AND e.d0_close_date >= %(inicio_ia)s) AS listos,
-                   count(*) FILTER (WHERE %(inicio_ia)s::date IS NULL OR e.d0_close_date < %(inicio_ia)s) AS antes_del_corte,
+                   count(*) FILTER (WHERE (%(inicio_ia)s::date IS NULL OR e.d0_close_date < %(inicio_ia)s)
+                                    AND NOT """ + D0_DUDOSO_SQL + """) AS antes_del_corte,
                    count(DISTINCT e.cik) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS empresas
             FROM events e
             JOIN universe u ON u.cik = e.cik
@@ -782,7 +792,9 @@ MOTIVO_ANTES_DEL_CORTE = "anterior a la fecha de corte de los modelos: la IA no 
 # v5 (Tanda 10): el aviso de supervivencia solo cuenta huecos reales hasta
 # D0 (sin información del futuro), y los descartes previos a la IA anteriores
 # al corte recalculan sus condiciones objetivas en vez de copiar el motivo.
-METODO_SIN_IA = "analogos_signo_v5"
+# v6 (Tanda 13): los análogos y el prior dejan fuera los eventos sin hora
+# de publicación (H-17), así que cambia la regla de los que los usaban.
+METODO_SIN_IA = "analogos_signo_v6"
 # Confianza de la regla histórica (ver regla_historica): fija, sin la IA.
 CONFIANZA_REGLA_HISTORICA = 100.0
 

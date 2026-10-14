@@ -40,6 +40,33 @@ SAMPLES = (SAMPLE_IN_SAMPLE, SAMPLE_OOS)
 IN_SAMPLE_END: date = date.fromisoformat(config.IN_SAMPLE_END)
 OOS_START: date = date.fromisoformat(config.OOS_START)
 
+# Inicio del In-Sample (BUGS_REPORT.md H-37): el documentado, BACKTEST_START.
+# Antes no tenía suelo y entraban los eventos de 2019-2020 que hubiera en la
+# base. Los análogos y el prior siguen usando todo lo anterior a cada evento.
+IN_SAMPLE_START: date = date.fromisoformat(config.BACKTEST_START)
+
+# Embargo antes del OOS (H-37). La operación más larga entra en la apertura
+# de D0+1 y dura hasta 20 sesiones (AGGRESSIVE): llega a la sesión D0+21. Un
+# evento del final del In-Sample se cerraba con precios del OOS, y su CAR a
+# 20 días naturales también los usaba: el In-Sample miraba un trozo del
+# periodo que se reserva para el final. Con el embargo, el último D0 del
+# In-Sample es el más tardío cuya sesión D0+21 aún cae antes de OOS_START; los
+# del medio no entran en ninguna de las dos muestras. test_fronteras.py
+# comprueba que cubre el holding máximo de las estrategias y el CAR.
+EMBARGO_SESIONES = 21
+
+
+def _ultimo_d0_in_sample() -> date:
+    from datetime import timedelta
+
+    from pipeline.ingest.market_calendar import dias_de_negociacion
+
+    sesiones = sorted(dias_de_negociacion(OOS_START - timedelta(days=90), OOS_START - timedelta(days=1)))
+    return sesiones[-(EMBARGO_SESIONES + 1)]
+
+
+ULTIMO_D0_IN_SAMPLE: date = _ultimo_d0_in_sample()
+
 # Cabecera visible en cualquier reporte/output generado con sample=SAMPLE_OOS
 # — el punto 3 del plan: que no se pueda confundir con un reporte in-sample
 # ni "colarse" a mirarlo sin darse cuenta de qué se está mirando.
@@ -60,12 +87,13 @@ def date_bounds(sample: str | None) -> tuple[date | None, date | None]:
     """(start_inclusive, end_inclusive) del filtro sobre d0_close_date.
     None en un extremo = sin límite por ese lado. sample=None = (None, None),
     es decir, sin filtro en absoluto (ver nota de diseño del docstring del
-    módulo)."""
+    módulo). El In-Sample va de BACKTEST_START al último D0 antes del
+    embargo, no hasta IN_SAMPLE_END (H-37)."""
     validate_sample(sample)
     if sample is None:
         return None, None
     if sample == SAMPLE_IN_SAMPLE:
-        return None, IN_SAMPLE_END
+        return IN_SAMPLE_START, ULTIMO_D0_IN_SAMPLE
     return OOS_START, None
 
 

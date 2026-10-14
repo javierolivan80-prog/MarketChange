@@ -17,7 +17,7 @@
 import type { SignalDetailData, StrategyVersion } from "@/lib/queries";
 import { DirectionBadge } from "@/components/ui/DirectionBadge";
 import { TechnicalPlanCard } from "@/components/TechnicalPlanCard";
-import { formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { MODELO_ANTES_DEL_CORTE, VERSION_ORDER, exitReasonLabel, versionLabel } from "@/lib/labels";
 import { makeT, type Locale } from "@/lib/i18n";
 import { planText } from "@/lib/planText";
@@ -335,7 +335,12 @@ export function SignalAnalysis({
           </a>
         )}
         <span>
-          {t("Publicado", "Filed")}: {formatDateTime(detail.filed_at, locale)}
+          {/* Sin hora de aceptación (H-17) la hora guardada es la medianoche
+              del respaldo: solo la fecha, y dicho. */}
+          {t("Publicado", "Filed")}:{" "}
+          {detail.filed_at_hora_desconocida
+            ? `${formatDate(detail.filed_at, locale)} ${t("(hora desconocida)", "(time unknown)")}`
+            : formatDateTime(detail.filed_at, locale)}
         </span>
         <span>
           {t("Analizado", "Analysed")}: {formatDateTime(detail.analyzed_at, locale)}

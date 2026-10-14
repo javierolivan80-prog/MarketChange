@@ -300,8 +300,11 @@ signo de los análogos y confianza fija en 100, por la misma fórmula de EV y
 abstención. La IA se valida solo con eventos posteriores al corte (paper
 trading, §3.10).
 
-**Solo In-Sample cada noche (H-07).** Sin flags, el comando mira hasta
-`config.IN_SAMPLE_END`. El Out-of-Sample se evalúa una vez y a mano: pestaña
+**Solo In-Sample cada noche (H-07).** Sin flags, el comando mira desde
+`config.BACKTEST_START` hasta el último D0 antes del embargo
+(`sample_split.ULTIMO_D0_IN_SAMPLE`, 2023-11-29): los eventos de las 21
+sesiones anteriores al OOS no entran en ninguna muestra, porque sus
+operaciones se cerrarían con precios del OOS (H-37). El Out-of-Sample se evalúa una vez y a mano: pestaña
 Actions → «OOS manual» → Run workflow, con un motivo. Cada lanzamiento queda
 apuntado en la tabla `oos_runs`; el informe lleva el sufijo `-OOS` y la app no
 lo muestra. En local: `python -m pipeline.backtest.portfolio_report --oos

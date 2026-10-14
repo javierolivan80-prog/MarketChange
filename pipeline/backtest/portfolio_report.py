@@ -29,6 +29,7 @@ from pipeline.backtest.portfolio_simulator import (
     TICKER_COBERTURA,
     VELA_MARCADA_EN_LA_OPERACION_SQL,
     VERSIONS,
+    fetch_events_for_version,
     simulate_portfolio,
 )
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
@@ -232,6 +233,9 @@ def run_full_backtest(conn, run_batch_tag: str, starting_capital: float = 100_00
         # Eventos que la regla operaría pero que se excluyen porque su ventana
         # toca una vela marcada por calidad_precios.py.
         "excluidos_por_calidad": excluidos_por_calidad(conn, sample),
+        # Y los que se excluyen por no saber a qué hora se publicó el filing
+        # (H-17): su D0 es dudoso.
+        "excluidos_por_hora_desconocida": excluidos_por_hora_desconocida(conn, sample),
         # Cobertura con SPY (Tanda 8): resultados frente al mercado, y cuántas
         # señales no se operaron por no haber apertura de SPY para cubrirlas.
         "cobertura": {"ticker": TICKER_COBERTURA, "senales_sin_cobertura": sin_cobertura},
@@ -264,6 +268,16 @@ def excluidos_por_calidad(conn, sample: str | None) -> int:
             {"start": start, "end": end, "metodo": METODO_SIN_IA},
         )
         return cur.fetchone()["n"]
+
+
+def excluidos_por_hora_desconocida(conn, sample: str | None) -> int:
+    """Operaciones que el backtest de Equilibrada pierde porque el filing no
+    tiene hora de publicación (H-17, hora_publicacion.py): la misma selección
+    de fetch_events_for_version (filtros y una por empresa y día), con y sin
+    ese filtro."""
+    con = fetch_events_for_version(conn, "BALANCED", sample=sample, con_hora_desconocida=True)
+    sin = fetch_events_for_version(conn, "BALANCED", sample=sample)
+    return len(con) - len(sin)
 
 
 def _store_report(conn, run_batch_tag: str, report: dict) -> None:

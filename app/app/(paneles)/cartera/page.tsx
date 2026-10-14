@@ -73,6 +73,17 @@ export default async function CarteraPage() {
         />
 
         <SampleBadge sample={report.sample} warning={report.oos_warning} />
+        {/* Mientras se recalcula la regla sin IA tras un cambio de método
+            (revisión de la Tanda 13), el backtest solo ve los eventos ya
+            recalculados: se dice, para no leer como definitivo un parcial. */}
+        {report.cobertura_regla && report.cobertura_regla.pendientes > 0 && (
+          <Callout kind="warning" className="mt-3">
+            {t(
+              `Resultados parciales: el método de decisión se está recalculando (${report.cobertura_regla.con_regla} de ${report.cobertura_regla.analisis} eventos listos). Las cifras cambiarán cuando termine.`,
+              `Partial results: the decision method is being recalculated (${report.cobertura_regla.con_regla} of ${report.cobertura_regla.analisis} events ready). The figures will change when it finishes.`,
+            )}
+          </Callout>
+        )}
         <div className="mb-4" />
 
         <div className="grid gap-4 lg:auto-cols-fr lg:grid-flow-col">

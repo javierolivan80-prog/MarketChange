@@ -27,7 +27,7 @@ no siguen ninguna regla.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 # Cierres que no obedecen a ninguna regla y hay que saberlos de memoria.
 # Solo los que caen dentro del histórico que usa el proyecto (BACKTEST_START
@@ -93,8 +93,10 @@ def festivos_del_anio(anio: int) -> set[date]:
     festivos.add(_domingo_de_pascua(anio) - timedelta(days=2))  # Viernes Santo
     festivos.add(_enesimo_dia_de_semana(anio, 5, 0, -1))   # Memorial: último lunes de mayo
 
-    # Juneteenth es festivo federal (y de la bolsa) solo desde 2021.
-    if anio >= 2021:
+    # Juneteenth: festivo federal desde junio de 2021, pero la bolsa cerró por
+    # primera vez en 2022 (el viernes 18-6-2021 hubo sesión normal; revisión
+    # adversarial de la Tanda 13).
+    if anio >= 2022:
         festivos.add(_observado(date(anio, 6, 19)))
 
     festivos.add(_observado(date(anio, 7, 4)))             # Independencia
@@ -120,3 +122,28 @@ def dias_de_negociacion(inicio: date, fin: date) -> set[date]:
             dias.add(d)
         d += timedelta(days=1)
     return dias
+
+
+# Cierres anticipados a las 13:00 (BUGS_REPORT.md H-18). Reglas de la NYSE,
+# estables en todo el histórico del proyecto: el día después de Acción de
+# Gracias, y el 3 de julio y el 24 de diciembre cuando caen de lunes a jueves
+# (en viernes son el festivo trasladado del 4 de julio o de Navidad, y en fin
+# de semana no hay sesión). Un filing de las 14:00 de esos días ya es
+# posterior al cierre: su D0 es la sesión siguiente.
+CIERRE_NORMAL = time(16, 0)
+CIERRE_ANTICIPADO = time(13, 0)
+
+
+def cierre_anticipado(d: date) -> bool:
+    """True si la bolsa cierra a las 13:00 ese día."""
+    if d.weekday() >= 5 or d in festivos_del_anio(d.year):
+        return False
+    accion_de_gracias = _enesimo_dia_de_semana(d.year, 11, 3, 4)
+    if d == accion_de_gracias + timedelta(days=1):
+        return True
+    return (d.month, d.day) in ((7, 3), (12, 24)) and d.weekday() <= 3
+
+
+def hora_de_cierre(d: date) -> time:
+    """Hora de cierre de la sesión (Nueva York): 13:00 o 16:00."""
+    return CIERRE_ANTICIPADO if cierre_anticipado(d) else CIERRE_NORMAL

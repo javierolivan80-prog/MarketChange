@@ -343,13 +343,20 @@ class TestSampleSplitFiltering:
         assert {e["ticker"] for e in events} == {"OOSEVENT"}
 
     def test_boundary_dates_land_on_the_correct_side(self, conn):
-        """31-dic-2023 (IN_SAMPLE_END, inclusive) y 1-ene-2024 (OOS_START,
-        inclusive) son el corte exacto que pide el plan — ambos deben caer
-        cada uno en su partición, ninguno se pierde ni se duplica."""
+        """El último D0 del In-Sample (antes del embargo, H-37) y el
+        1-ene-2024 (OOS_START, inclusive) caen cada uno en su partición; un
+        evento dentro del embargo (31-dic-2023) no cae en ninguna, a propósito:
+        sus operaciones se cerrarían con precios del OOS."""
         from pipeline.backtest.portfolio_simulator import fetch_events_for_version
+        from pipeline.backtest.sample_split import ULTIMO_D0_IN_SAMPLE
 
         _seed_event_with_analysis(
-            conn, "1", "LASTINSAMPLE", date(2023, 12, 31),
+            conn, "3", "EMBARGO", date(2023, 12, 29),
+            trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
+        )
+        _seed_event_with_analysis(
+            conn, "1", "LASTINSAMPLE", ULTIMO_D0_IN_SAMPLE,
             trade_decision_conservative="LONG", trade_decision_aggressive="NO_TRADE", trade_decision_balanced="NO_TRADE",
             net_conviction=0.8, confidence=90.0, ev_conservative=0.01, ev_aggressive=0.01, ev_balanced=0.01,
         )
@@ -363,6 +370,39 @@ class TestSampleSplitFiltering:
         oos_tickers = {e["ticker"] for e in fetch_events_for_version(conn, "CONSERVATIVE", sample="oos")}
         assert in_sample_tickers == {"LASTINSAMPLE"}
         assert oos_tickers == {"FIRSTOOS"}
+
+
+    def test_in_sample_no_usa_precios_del_oos_aunque_al_ticker_le_falten_velas(self, conn):
+        """H-37 (revisión adversarial de la Tanda 13): el embargo se mide con
+        el calendario de la bolsa, pero el holding cuenta las sesiones del
+        propio ticker. Con una vela de menos, la operación del último D0 del
+        In-Sample se cerraba el 2-1-2024 con precio del OOS, y la curva de
+        capital seguía hasta el último precio de la base. En el In-Sample los
+        precios se cortan antes del OOS: lo abierto se cierra en la última
+        sesión del In-Sample."""
+        from pipeline.backtest.portfolio_simulator import simulate_portfolio
+        from pipeline.backtest.sample_split import OOS_START, ULTIMO_D0_IN_SAMPLE
+
+        from pipeline.ingest.market_calendar import dias_de_negociacion
+
+        sesiones = sorted(dias_de_negociacion(ULTIMO_D0_IN_SAMPLE, ULTIMO_D0_IN_SAMPLE + timedelta(days=120)))
+        dias = [d for d in sesiones if d != date(2023, 12, 26)]
+        precios = [50.0 + 0.1 * i for i in range(len(dias))]
+        _seed_price_series(conn, "LARGO", dias, precios)
+        _seed_event_with_analysis(
+            conn, "1", "LARGO", ULTIMO_D0_IN_SAMPLE,
+            trade_decision_conservative="NO_TRADE", trade_decision_aggressive="LONG", trade_decision_balanced="NO_TRADE",
+            net_conviction=0.8, confidence=90.0, ev_conservative=0.05, ev_aggressive=0.05, ev_balanced=0.05,
+        )
+        resultado = simulate_portfolio(conn, "AGGRESSIVE", "embargo", sample="in_sample")
+        assert resultado["n_trades"] == 1
+        with conn.cursor() as cur:
+            cur.execute("SELECT exit_date FROM portfolio_trades WHERE run_batch_tag = 'embargo'")
+            salidas = [r["exit_date"] for r in cur.fetchall()]
+            cur.execute("SELECT max(trade_date) AS fin FROM portfolio_equity_curve WHERE run_batch_tag = 'embargo'")
+            fin_curva = cur.fetchone()["fin"]
+        assert salidas and all(d < OOS_START for d in salidas), salidas
+        assert fin_curva < OOS_START
 
 
 class TestForcedCloseWithDataGap:

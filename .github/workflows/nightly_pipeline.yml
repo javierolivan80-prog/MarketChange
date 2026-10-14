@@ -576,7 +576,7 @@ jobs:
         # así que reejecutarlo cada noche recalcula la cartera completa con
         # el run_batch_tag del día — no es incremental como los pasos previos.
         #
-        # Solo In-Sample (hasta config.IN_SAMPLE_END), sin flags: el OOS se
+        # Solo In-Sample (BACKTEST_START hasta el embargo previo al OOS, H-37), sin flags: el OOS se
         # evalúa UNA vez y a mano, con el workflow oos_manual.yml, que lo
         # deja apuntado en oos_runs (BUGS_REPORT.md H-07; decisión del
         # usuario, auditoría 2026-10-05). Mirarlo cada noche convertía el
