@@ -600,7 +600,8 @@ def _ops(pnls_por_mes: list[list[float]]) -> list[dict]:
     out = []
     for m, pnls in enumerate(pnls_por_mes):
         for j, p in enumerate(pnls):
-            out.append({"pnl_pct": p, "entry_date": date(2022 + m // 12, 1 + m % 12, 1 + j), "exit_date": date(2022 + m // 12, 1 + m % 12, 2 + j)})
+            dia = 1 + j % 27
+            out.append({"pnl_pct": p, "entry_date": date(2022 + m // 12, 1 + m % 12, dia), "exit_date": date(2022 + m // 12, 1 + m % 12, dia + 1)})
     return out
 
 
@@ -652,3 +653,82 @@ def test_agrupado_mantiene_el_5_por_ciento_con_operaciones_correlacionadas():
         falsos_agr += lo > 0 or hi < 0
     assert falsos_iid / reps > 0.15
     assert falsos_agr / reps < 0.08
+
+
+# Revisión adversarial de la Tanda 14.
+
+
+def test_con_un_mes_dominante_el_intervalo_sigue_en_el_5_por_ciento():
+    """Un mes con casi todas las operaciones (como al arrancar el historial)
+    y un efecto común en cada mes: con la t de G-1 y el error agrupado
+    clásico se equivocaba el 10-33 % de las veces."""
+    import numpy as np
+
+    from pipeline.backtest.portfolio_metrics import agrupar_por_fecha, intervalo_t_media_agrupado
+
+    rng = np.random.default_rng(1414)
+    falsos = hay = 0
+    for _ in range(500):
+        n_mes = rng.poisson(2, 36)
+        n_mes[rng.integers(36)] += 40
+        fechas, x = [], []
+        for m, k in enumerate(n_mes):
+            efecto = rng.normal(0, np.sqrt(0.5))
+            for j in range(k):
+                fechas.append(date(2021 + m // 12, 1 + m % 12, 1 + j % 28))
+                x.append(efecto + rng.normal(0, np.sqrt(0.5)))
+        grupos, _ = agrupar_por_fecha(fechas)
+        ic = intervalo_t_media_agrupado(x, grupos)
+        if ic:
+            hay += 1
+            falsos += ic[0] > 0 or ic[1] < 0
+    # Unas dos de cada tres muestras tienen 6 o más meses efectivos (las
+    # demás quedan sin intervalo, a propósito).
+    assert hay > 250
+    assert falsos / hay < 0.08
+
+
+def test_concentradas_en_pocos_meses_no_hay_intervalo():
+    """3, 40 y 8 operaciones en tres meses equivalen a menos de dos meses
+    repartidos: con tan pocos grupos el intervalo no informa (la t vale
+    12,7 con un grado de libertad)."""
+    ops = _ops([[0.3 + 0.01 * i for i in range(k)] for k in (3, 40, 8)])
+    m = compute_trade_metrics(ops)
+    assert m["avg_pnl_ic95"] is None and m["win_rate_ic95"] is None
+    assert m["ic_agrupacion"] == "mes" and m["ic_grupos_efectivos"] < 2
+
+
+def test_con_historia_larga_se_agrupa_por_trimestre():
+    from pipeline.backtest.portfolio_metrics import agrupar_por_fecha
+
+    fechas = [date(2021 + m // 12, 1 + m % 12, 10) for m in range(36) for _ in range(3)]
+    grupos, unidad = agrupar_por_fecha(fechas)
+    assert unidad == "trimestre" and len(set(grupos)) == 12
+    _, unidad = agrupar_por_fecha(fechas[: 3 * 18])  # 6 trimestres: por mes
+    assert unidad == "mes"
+
+
+def test_el_efecto_de_diseno_ensancha_el_acierto():
+    """Con los mismos grados de libertad, el acierto agrupado es más ancho
+    que el de Wilson con el n real cuando los aciertos se concentran en unos
+    meses (antes este test pasaba solo por la t)."""
+    from scipy import stats
+
+    from pipeline.backtest.portfolio_metrics import intervalo_wilson, intervalo_wilson_agrupado
+
+    # Seis meses de cinco: tres meses todo aciertos y tres todo fallos.
+    aciertos = [True] * 15 + [False] * 15
+    grupos = [m for m in range(6) for _ in range(5)]
+    lo, hi = intervalo_wilson_agrupado(aciertos, grupos)
+    lo_n, hi_n = intervalo_wilson(15, 30, float(stats.t.ppf(0.975, 5)))
+    assert (hi - lo) > 1.5 * (hi_n - lo_n)
+
+
+def test_las_metricas_agrupan_por_la_fecha_de_entrada():
+    """La clave es el mes de ENTRADA: dos operaciones que salen el mismo mes
+    pero entraron en meses distintos son dos grupos."""
+    from pipeline.backtest.portfolio_metrics import _fecha_de_entrada
+
+    assert _fecha_de_entrada({"entry_date": date(2024, 3, 31), "exit_date": date(2024, 4, 2)}) == date(2024, 3, 31)
+    assert _fecha_de_entrada({"entry_date": "", "exit_date": "2024-04-02"}) == date(2024, 4, 2)
+    assert _fecha_de_entrada({"entry_date": None, "exit_date": None}) is None

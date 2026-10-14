@@ -15,7 +15,18 @@ import {
   getSignalDetail,
   getSignalHistory,
   getSignalsFeed,
+  toDateStr,
 } from "./queries";
+
+// Revisión de la Tanda 14: node-postgres da las columnas DATE como un Date a
+// medianoche local; leerlo en UTC movía el día (y el mes) en zonas por
+// delante de UTC. Un Date local tiene que conservar su día en cualquier zona.
+test("toDateStr conserva el día de un DATE en cualquier zona horaria", () => {
+  assert.equal(toDateStr(new Date(2026, 9, 1)), "2026-10-01");
+  assert.equal(toDateStr(new Date(2026, 0, 31)), "2026-01-31");
+  assert.equal(toDateStr("2026-10-01"), "2026-10-01");
+  assert.equal(toDateStr(null), null);
+});
 
 const TEST_URL = process.env.TEST_DATABASE_URL;
 const SCHEMA = join(__dirname, "..", "..", "pipeline", "db", "schema.sql");
@@ -285,6 +296,24 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal(h.win_rate, 0);
     assert.equal(h.avg_pnl_pct, -1);
     assert.equal(h.rows.find((r) => r.ticker === "OLD")?.cubierta, false);
+  });
+
+  test("historial: con 24 cerradas en 8 meses hay intervalos (agrupados por mes de entrada)", async () => {
+    const pool = getPool();
+    for (let i = 0; i < 24; i++) {
+      const mes = String(1 + Math.floor(i / 3)).padStart(2, "0");
+      const id = await seedEvent({ ticker: `M${i}`, d0: `2026-${mes}-09`, decisions: ["NO_TRADE", "LONG", "LONG"] });
+      await pool.query(
+        `INSERT INTO paper_trades (run_batch_tag, week_start, week_end, event_id, version, direction, entry_date, entry_price,
+           exit_date, exit_price, exit_reason, status, pnl_pct, confidence, ev, prediction, spy_entry_price)
+         VALUES ('w1', $1, $1, $2, 'BALANCED', 'LONG', $1, 10, $1, 11, 'TAKE_PROFIT', 'CLOSED_TP', $3, 70, 0.01, 0.4, 400)`,
+        [`2026-${mes}-10`, id, i % 3 === 0 ? -1 : 1.5 + (i % 5) / 10]
+      );
+    }
+    const h = await getSignalHistory("BALANCED");
+    assert.equal(h.n_closed_cubiertas, 24);
+    assert.ok(h.avg_pnl_ic95 && h.avg_pnl_ic95[0] < h.avg_pnl_pct! && h.avg_pnl_ic95[1] > h.avg_pnl_pct!);
+    assert.ok(h.win_rate_ic95 && h.win_rate_ic95[0] < h.win_rate! && h.win_rate_ic95[1] > h.win_rate!);
   });
 
   test("las consultas no fallan si la base aún no tiene las columnas de la cobertura", async () => {

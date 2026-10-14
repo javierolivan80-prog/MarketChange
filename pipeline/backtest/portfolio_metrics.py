@@ -53,13 +53,13 @@ MIN_DAYS_FOR_ANNUALIZATION = 30
 # daba un intervalo demasiado estrecho: en una simulación en la que la mitad
 # de la varianza es común al mes, «se distingue de cero» salía en falso el
 # 15-26 % de las veces, y el acierto cubría el valor real solo el 79-92 %.
-# Ahora se agrupan por mes de entrada (como el event study): error agrupado
-# (CR1), nunca menor que el independiente, con una t de G-1 grados de
-# libertad (G = meses); el acierto, con Wilson sobre el n efectivo (n entre
-# el efecto de diseño) y ese mismo cuantil. En la simulación queda en el
-# 4-6 % y el 92-99 %. Con todas las operaciones en un mismo mes no hay
-# intervalo: no se puede medir cuánto se parecen. Sin correlación es algo
-# más prudente que antes (sobre todo con pocos meses): es el precio de no
+# Ahora se agrupan por mes (o trimestre) de entrada: error agrupado, nunca
+# menor que el independiente, con una t de pocos grados de libertad; el
+# acierto, con Wilson sobre el n efectivo (n entre el efecto de diseño) y ese
+# mismo cuantil. Los detalles y la simulación, más abajo (revisión
+# adversarial). Con las operaciones concentradas en pocos meses no hay
+# intervalo: no se puede medir cuánto se parecen. Sin correlación es más
+# prudente que antes (sobre todo con pocos meses): es el precio de no
 # suponer independencia.
 Z_95 = 1.959963984540054
 
@@ -92,70 +92,137 @@ def intervalo_t_media(valores: list[float]) -> tuple[float, float] | None:
     return media - margen, media + margen
 
 
+# Revisión adversarial de la Tanda 14:
+# - Con meses de tamaño muy distinto (un mes con casi todas las operaciones,
+#   como al arrancar el historial en papel), ese mes pesa casi todo en la
+#   media y su suma de desviaciones sale casi 0: el error agrupado no ve su
+#   efecto común y la t de G-1 grados de libertad se fiaba de meses casi
+#   vacíos (hasta un 33 % de falsos «distinto de cero»). Los grados de
+#   libertad salen ahora del número EFECTIVO de grupos, n²/Σn_g², que con
+#   grupos iguales es G.
+# - Por debajo de MIN_GRUPOS_EFECTIVOS no hay intervalo: con 2-5 grupos la t
+#   es tan grande (12,7 con uno de libertad) que el intervalo no informa y
+#   contradice lo que se ve (40 operaciones positivas «no se distinguen de
+#   cero»).
+# - Una operación dura hasta 20 sesiones y cruza de mes: con historia
+#   suficiente se agrupa por trimestre, que deja menos operaciones a caballo
+#   entre grupos.
+# - El error agrupado es el de jackknife por grupo (CR3; ver _varianzas).
+# Simulación final (media real 0; factor común diario a las operaciones
+# abiertas, efecto de mes y meses iguales, irregulares, con uno dominante o
+# muy densos): 2-6 % de falsos «distinto de cero» en casi todos los casos, y
+# hasta un 8-9 % con muchas operaciones solapadas en pocos trimestres; el
+# acierto cubre el valor real el 92-100 %. El independiente llegaba al
+# 15-50 %.
+MIN_GRUPOS_EFECTIVOS = 6
+MIN_TRIMESTRES_EFECTIVOS = 8
+
+
 def _claves_de_grupo(grupos: list) -> list:
     """None = un grupo propio (sin fecha no se puede agrupar)."""
     return [g if g is not None else ("sin-grupo", i) for i, g in enumerate(grupos)]
 
 
-def _varianzas(valores: np.ndarray, claves: list) -> tuple[float, float, int]:
-    """(varianza independiente de la media, varianza agrupada CR1, nº de
-    grupos)."""
+def _grupos_efectivos(claves: list) -> float:
+    """n²/Σn_g²: el número de grupos iguales que darían la misma precisión."""
+    if not claves:
+        return 0.0
+    tamanos: dict = defaultdict(int)
+    for k in claves:
+        tamanos[k] += 1
+    return len(claves) ** 2 / sum(t * t for t in tamanos.values())
+
+
+def _grados_de_libertad(n: int, claves: list) -> int | None:
+    """Grados de libertad del intervalo agrupado, o None si hay menos de
+    MIN_GRUPOS_EFECTIVOS grupos efectivos (entero hacia abajo: lo prudente,
+    y lo que también puede calcular la app)."""
+    g_ef = _grupos_efectivos(claves)
+    if g_ef < MIN_GRUPOS_EFECTIVOS:
+        return None
+    return int(min(n - 1, len(set(claves)) - 1, max(1, np.floor(g_ef - 1))))
+
+
+def _varianzas(valores: np.ndarray, claves: list) -> tuple[float, float]:
+    """(varianza independiente de la media, varianza agrupada por jackknife:
+    la media quitando cada grupo entero, CR3). Con grupos desiguales, el
+    error agrupado clásico (CR1) apenas ve el efecto común del grupo grande,
+    que pesa casi todo en la media; el jackknife sí (en la simulación, con
+    un mes dominante, del 10 % de falsos «distinto de cero» al 6 %)."""
     n = len(valores)
-    media = float(valores.mean())
-    sumas: dict = defaultdict(float)
-    for v, k in zip(valores, claves):
-        sumas[k] += float(v) - media
-    g = len(sumas)
     var_i = float(valores.var(ddof=1)) / n if n > 1 else 0.0
-    var_c = g / (g - 1) * sum(s * s for s in sumas.values()) / n**2 if g > 1 else float("nan")
-    return var_i, var_c, g
+    sumas: dict = defaultdict(float)
+    tamanos: dict = defaultdict(int)
+    for v, k in zip(valores, claves):
+        sumas[k] += float(v)
+        tamanos[k] += 1
+    g = len(sumas)
+    if g < 2:
+        return var_i, float("nan")
+    total = float(valores.sum())
+    medias_sin = np.array([(total - sumas[k]) / (n - tamanos[k]) for k in sumas])
+    var_c = (g - 1) / g * float(((medias_sin - medias_sin.mean()) ** 2).sum())
+    return var_i, var_c
 
 
 def intervalo_t_media_agrupado(valores: list[float], grupos: list) -> tuple[float, float] | None:
     """Intervalo al 95 % de la media con operaciones agrupadas (Tanda 14, ver
-    arriba). `grupos`: la clave de cada valor (el mes de entrada). None con
-    menos de INSUFFICIENT_SAMPLE_THRESHOLD valores o con un solo grupo."""
+    arriba). `grupos`: la clave de cada valor (su mes o trimestre). None con
+    menos de INSUFFICIENT_SAMPLE_THRESHOLD valores o de MIN_GRUPOS_EFECTIVOS
+    grupos efectivos."""
     n = len(valores)
     if n < INSUFFICIENT_SAMPLE_THRESHOLD:
+        return None
+    claves = _claves_de_grupo(grupos)
+    gl = _grados_de_libertad(n, claves)
+    if gl is None:
         return None
     from scipy import stats
 
     datos = np.asarray(valores, dtype=float)
-    var_i, var_c, g = _varianzas(datos, _claves_de_grupo(grupos))
-    if g < 2:
-        return None
+    var_i, var_c = _varianzas(datos, claves)
     media = float(datos.mean())
-    margen = float(stats.t.ppf(0.975, min(n - 1, g - 1)) * np.sqrt(max(var_i, var_c)))
+    margen = float(stats.t.ppf(0.975, gl) * np.sqrt(max(var_i, var_c)))
     return media - margen, media + margen
 
 
 def intervalo_wilson_agrupado(aciertos: list[bool], grupos: list) -> tuple[float, float] | None:
     """Wilson con operaciones agrupadas (Tanda 14): sobre el n efectivo (n
-    entre el efecto de diseño, nunca menor que 1) y con el cuantil t de G-1
-    grados de libertad. None sin operaciones o con un solo grupo."""
+    entre el efecto de diseño, nunca menor que 1) y con el cuantil t de los
+    mismos grados de libertad que la media. None sin operaciones o con menos
+    de MIN_GRUPOS_EFECTIVOS grupos efectivos."""
     n = len(aciertos)
     if n == 0:
+        return None
+    claves = _claves_de_grupo(grupos)
+    gl = _grados_de_libertad(n, claves)
+    if gl is None:
         return None
     from scipy import stats
 
     datos = np.asarray(aciertos, dtype=float)
-    var_i, var_c, g = _varianzas(datos, _claves_de_grupo(grupos))
-    if g < 2:
-        return None
+    var_i, var_c = _varianzas(datos, claves)
     efecto_de_diseno = max(1.0, var_c / var_i) if var_i > 0 else 1.0
-    z = float(stats.t.ppf(0.975, g - 1))
+    z = float(stats.t.ppf(0.975, gl))
     return intervalo_wilson(float(datos.sum()) / efecto_de_diseno, n / efecto_de_diseno, z)
 
 
-def _mes_de_entrada(t: dict):
-    """Clave de grupo de una operación: el mes de entrada (o de salida si no
-    hay entrada); None sin fechas."""
+def _fecha_de_entrada(t: dict) -> date | None:
+    """La fecha de entrada de una operación (o la de salida si no hay
+    entrada); None sin fechas. Una cadena vacía cuenta como sin fecha."""
     d = t.get("entry_date") or t.get("exit_date")
-    if d is None:
+    if not d:
         return None
-    if isinstance(d, str):
-        d = date.fromisoformat(d[:10])
-    return (d.year, d.month)
+    return date.fromisoformat(d[:10]) if isinstance(d, str) else d
+
+
+def agrupar_por_fecha(fechas: list) -> tuple[list, str]:
+    """Clave de grupo de cada operación y la unidad: trimestre de entrada si
+    hay al menos MIN_TRIMESTRES_EFECTIVOS trimestres efectivos; si no, mes."""
+    trimestres = [(d.year, (d.month - 1) // 3 + 1) if d else None for d in fechas]
+    if _grupos_efectivos(_claves_de_grupo(trimestres)) >= MIN_TRIMESTRES_EFECTIVOS:
+        return trimestres, "trimestre"
+    return [(d.year, d.month) if d else None for d in fechas], "mes"
 
 
 def compute_trade_metrics(trades: list[dict]) -> dict:
@@ -168,6 +235,7 @@ def compute_trade_metrics(trades: list[dict]) -> dict:
             "largest_win": None, "largest_loss": None,
             "consecutive_wins": 0, "consecutive_losses": 0,
             "win_rate_ic95": None, "avg_pnl_ic95": None, "avg_pnl_distinguible_de_cero": None,
+            "ic_agrupacion": None, "ic_grupos_efectivos": None,
         }
 
     pnls = [float(t["pnl_pct"]) for t in trades]
@@ -204,23 +272,27 @@ def compute_trade_metrics(trades: list[dict]) -> dict:
         "largest_loss": min(pnls),
         "consecutive_wins": consecutive_wins,
         "consecutive_losses": consecutive_losses,
-        **_incertidumbre(pnls, [_mes_de_entrada(t) for t in trades]),
+        **_incertidumbre(pnls, [_fecha_de_entrada(t) for t in trades]),
     }
 
 
-def _incertidumbre(pnls: list[float], meses: list) -> dict:
+def _incertidumbre(pnls: list[float], fechas: list) -> dict:
     """Intervalos al 95 % del acierto y del resultado medio por operación
-    (Tanda 11; el resultado medio es `expectancy`), agrupados por mes de
-    entrada (Tanda 14).
+    (Tanda 11; el resultado medio es `expectancy`), agrupados por mes o
+    trimestre de entrada (Tanda 14).
     `avg_pnl_distinguible_de_cero`: el intervalo del resultado medio no
-    incluye el 0 (None si no hay intervalo: menos de 20 operaciones o todas
-    en el mismo mes)."""
-    ic_acierto = intervalo_wilson_agrupado([p > 0 for p in pnls], meses)
-    ic_media = intervalo_t_media_agrupado(pnls, meses)
+    incluye el 0 (None si no hay intervalo: menos de 20 operaciones o de
+    MIN_GRUPOS_EFECTIVOS grupos efectivos). `ic_agrupacion` e
+    `ic_grupos_efectivos` dicen por qué falta, para que la app lo explique."""
+    grupos, unidad = agrupar_por_fecha(fechas)
+    ic_acierto = intervalo_wilson_agrupado([p > 0 for p in pnls], grupos)
+    ic_media = intervalo_t_media_agrupado(pnls, grupos)
     return {
         "win_rate_ic95": list(ic_acierto) if ic_acierto else None,
         "avg_pnl_ic95": list(ic_media) if ic_media else None,
         "avg_pnl_distinguible_de_cero": (ic_media[0] > 0 or ic_media[1] < 0) if ic_media else None,
+        "ic_agrupacion": unidad,
+        "ic_grupos_efectivos": round(_grupos_efectivos(_claves_de_grupo(grupos)), 2),
     }
 
 

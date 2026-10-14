@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { distingueDeCero, intervaloTMedia, intervaloTMediaAgrupado, intervaloWilson, intervaloWilsonAgrupado, mesDeEntrada, tStudent975 } from "./incertidumbre";
+import { agruparPorFecha, distingueDeCero, fechaDeEntrada, intervaloTMedia, intervaloTMediaAgrupado, intervaloWilson, intervaloWilsonAgrupado, tStudent975 } from "./incertidumbre";
 
 // La misma muestra de referencia que pipeline/tests/test_portfolio_metrics.py
 // (valores con scipy.stats.t): intervalo [−0,00199385, 0,96199385].
@@ -55,13 +55,40 @@ test("agrupado: un mes por operación es el de siempre; todas en un mes, sin int
   assert.ok(Math.abs(lo - -0.0019938518) < 1e-5 && Math.abs(hi - 0.9619938518) < 1e-5);
   assert.equal(intervaloTMediaAgrupado(MUESTRA_REF, MUESTRA_REF.map(() => "2024-01")), null);
   assert.equal(intervaloWilsonAgrupado(MUESTRA_REF.map((v) => v > 0), MUESTRA_REF.map(() => "2024-01")), null);
-  assert.equal(mesDeEntrada("2024-03-15", "2024-04-02"), "2024-03");
-  assert.equal(mesDeEntrada(null, "2024-04-02"), "2024-04");
-  assert.equal(mesDeEntrada(null, null), null);
+  assert.equal(fechaDeEntrada("2024-03-15", "2024-04-02"), "2024-03-15");
+  assert.equal(fechaDeEntrada("", "2024-04-02"), "2024-04-02");
+  assert.equal(fechaDeEntrada(null, null), null);
 });
 
 test("t de Student con pocos grados de libertad (tabla)", () => {
   assert.ok(Math.abs(tStudent975(1) - 12.7062047362) < 1e-9);
   assert.ok(Math.abs(tStudent975(5) - 2.5705818356) < 1e-9);
   assert.ok(Math.abs(tStudent975(30) - 2.0422724563) < 1e-9);
+});
+
+// Revisión adversarial de la Tanda 14: los mismos casos que el pipeline.
+test("agrupado: con historia larga, por trimestre (mismos valores que el pipeline)", () => {
+  const fechas: string[] = [];
+  const valores: number[] = [];
+  for (let m = 0; m < 36; m++) {
+    for (let j = 0; j < 3; j++) {
+      fechas.push(`${2021 + Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}-10`);
+      valores.push(((((m * 7 + j * 3) % 11) - 5) / 4));
+    }
+  }
+  const { grupos, unidad } = agruparPorFecha(fechas);
+  assert.equal(unidad, "trimestre");
+  assert.equal(new Set(grupos).size, 12);
+  const [lo, hi] = intervaloTMediaAgrupado(valores, grupos)!;
+  assert.ok(Math.abs(lo - -0.16582176751870523) < 1e-9 && Math.abs(hi - 0.17045139714833488) < 1e-9);
+  const [loW, hiW] = intervaloWilsonAgrupado(valores.map((v) => v > 0), grupos)!;
+  assert.ok(Math.abs(loW - 0.3612282993115125) < 1e-9 && Math.abs(hiW - 0.5678775795777516) < 1e-9);
+  assert.equal(agruparPorFecha(fechas.slice(0, 3 * 18)).unidad, "mes");
+});
+
+test("agrupado: concentradas en pocos meses, sin intervalo", () => {
+  const grupos = [...Array(3).fill("2026-01"), ...Array(40).fill("2026-02"), ...Array(8).fill("2026-03")];
+  const valores = grupos.map((_, i) => 0.3 + 0.01 * i);
+  assert.equal(intervaloTMediaAgrupado(valores, grupos), null);
+  assert.equal(intervaloWilsonAgrupado(valores.map((v) => v > 0), grupos), null);
 });
