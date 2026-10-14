@@ -105,6 +105,17 @@ export default async function HistorialPage() {
           )}
         </p>
       )}
+      {/* Tanda 14: los intervalos agrupan por mes de entrada; con 20 o más
+          cerradas, la única razón para no tener intervalo es que se
+          concentren en muy pocos meses. */}
+      {history.n_closed_cubiertas >= 20 && !history.avg_pnl_ic95 && (
+        <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
+          {t(
+            "Las señales cerradas se concentran en muy pocos meses: todavía no se puede saber cuánto dependen del azar el acierto y el resultado medio.",
+            "Closed signals are concentrated in very few months: it cannot yet be told how much the win rate and average result depend on chance.",
+          )}
+        </p>
+      )}
 
       <div className="tarjeta overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-left text-sm">

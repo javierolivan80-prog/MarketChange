@@ -9,7 +9,7 @@
 // paper_trading/report.py (Sharpe/Sortino/Calmar, calibración, submétricas
 // por tipo de evento, etc.) — reimplementar esas fórmulas aquí sería
 // mantener dos fuentes de verdad para el mismo número.
-import { intervaloTMedia, intervaloWilson } from "./incertidumbre";
+import { agruparPorFecha, fechaDeEntrada, intervaloTMediaAgrupado, intervaloWilsonAgrupado } from "./incertidumbre";
 import { getPool } from "./db";
 import { splitAiOutputs } from "./aiOutputs";
 
@@ -51,6 +51,11 @@ export interface PortfolioTradeMetrics {
   win_rate_ic95?: [number, number] | null;
   avg_pnl_ic95?: [number, number] | null;
   avg_pnl_distinguible_de_cero?: boolean | null;
+  /** Tanda 14: cómo se agruparon las operaciones para los intervalos y
+   * cuántos grupos efectivos hubo (sin intervalo por debajo de 6). Los
+   * informes anteriores no los traen. */
+  ic_agrupacion?: "mes" | "trimestre" | null;
+  ic_grupos_efectivos?: number | null;
 }
 
 export interface PortfolioEquityMetrics {
@@ -679,9 +684,14 @@ const VERSION_COLUMN: Record<StrategyVersion, string> = {
   AGGRESSIVE: "ea.trade_decision_aggressive",
 };
 
-function toDateStr(v: unknown): string | null {
+/** Columna DATE de Postgres como "AAAA-MM-DD". node-postgres la convierte en
+ * un Date a medianoche LOCAL: con toISOString (UTC), en una zona por delante
+ * de UTC salía el día anterior (revisión de la Tanda 14; en Vercel, en UTC,
+ * no se notaba). Se leen los campos locales. */
+export function toDateStr(v: unknown): string | null {
   if (v === null || v === undefined) return null;
-  return v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+  if (!(v instanceof Date)) return String(v);
+  return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
 }
 
 function toIso(v: unknown): string {
@@ -1148,6 +1158,7 @@ export async function getSignalHistory(version: StrategyVersion, limit = 200): P
   }));
   const closed = mapped.filter((r) => r.status !== null && r.status !== "OPEN" && r.pnl_pct !== null);
   const medibles = closed.filter((r) => r.cubierta === true);
+  const { grupos } = agruparPorFecha(medibles.map((r) => fechaDeEntrada(r.entry_date, r.exit_date)));
   return {
     version,
     rows: mapped,
@@ -1155,8 +1166,9 @@ export async function getSignalHistory(version: StrategyVersion, limit = 200): P
     n_open: mapped.filter((r) => r.status === "OPEN").length,
     win_rate: medibles.length > 0 ? medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length / medibles.length : null,
     avg_pnl_pct: medibles.length > 0 ? medibles.reduce((s, r) => s + (r.pnl_pct ?? 0), 0) / medibles.length : null,
-    win_rate_ic95: intervaloWilson(medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length, medibles.length),
-    avg_pnl_ic95: intervaloTMedia(medibles.map((r) => r.pnl_pct ?? 0)),
+    // Agrupadas por mes o trimestre de entrada (Tanda 14), como en el pipeline.
+    win_rate_ic95: intervaloWilsonAgrupado(medibles.map((r) => (r.pnl_pct ?? 0) > 0), grupos),
+    avg_pnl_ic95: intervaloTMediaAgrupado(medibles.map((r) => r.pnl_pct ?? 0), grupos),
     n_closed_cubiertas: medibles.length,
     n_closed_sin_cubrir: closed.length - medibles.length,
   };

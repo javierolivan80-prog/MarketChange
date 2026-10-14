@@ -14,7 +14,7 @@ import { DrawdownChart } from "./DrawdownChart";
 import { Callout } from "@/components/ui/Callout";
 import { SignedPct } from "@/components/ui/DirectionBadge";
 import { formatFracAsPct, formatIntervalo, formatPct, formatShare, formatNum, formatDrawdown } from "@/lib/format";
-import { MIN_OPERACIONES } from "@/lib/incertidumbre";
+import { MIN_GRUPOS_EFECTIVOS, MIN_OPERACIONES } from "@/lib/incertidumbre";
 import { eventClassLabel, exitReasonLabel, versionLabel } from "@/lib/labels";
 import { makeT, type Locale } from "@/lib/i18n";
 
@@ -85,8 +85,20 @@ export function PortfolioVersionCard({
             {tm.avg_pnl_distinguible_de_cero === false &&
               t(": no se distingue de cero", ": not distinguishable from zero")}
           </>
+        ) : tm.ic_grupos_efectivos != null && tm.ic_grupos_efectivos < MIN_GRUPOS_EFECTIVOS ? (
+          // Tanda 14: los intervalos agrupan por mes de entrada; con las
+          // operaciones concentradas en pocos meses no se puede medir cuánto
+          // se parecen (ni el acierto ni el resultado medio). Solo en los
+          // informes que traen el dato.
+          <>
+            {" · "}
+            {t(
+              "se concentran en muy pocos meses: todavía no se puede saber cuánto dependen del azar",
+              "they are concentrated in very few months: it cannot yet be told how much they depend on chance",
+            )}
+          </>
         ) : (
-          tm.win_rate_ic95 &&
+          tm.total_trades > 0 &&
           tm.total_trades < MIN_OPERACIONES && (
             <>
               {" · "}

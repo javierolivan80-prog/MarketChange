@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { distingueDeCero, intervaloTMedia, intervaloWilson, tStudent975 } from "./incertidumbre";
+import { agruparPorFecha, distingueDeCero, fechaDeEntrada, intervaloTMedia, intervaloTMediaAgrupado, intervaloWilson, intervaloWilsonAgrupado, tStudent975 } from "./incertidumbre";
 
 // La misma muestra de referencia que pipeline/tests/test_portfolio_metrics.py
 // (valores con scipy.stats.t): intervalo [−0,00199385, 0,96199385].
@@ -28,4 +28,67 @@ test("distinguible de cero: la referencia lo roza; desplazada +0,01, ya no", () 
   assert.equal(distingueDeCero(intervaloTMedia(MUESTRA_REF)), false);
   assert.equal(distingueDeCero(intervaloTMedia(MUESTRA_REF.map((v) => v + 0.01))), true);
   assert.equal(distingueDeCero(null), null);
+});
+
+// Tanda 14: la misma muestra agrupada que pipeline/tests/test_portfolio_metrics.py
+// (seis meses de cinco operaciones casi iguales), con los valores del pipeline.
+const MESES = [
+  [2.0, 2.1, 1.9, 2.2, 1.8], [1.5, 1.6, 1.4, 1.7, 1.3], [1.8, 1.9, 1.7, 2.0, 1.6],
+  [-0.4, -0.3, -0.5, -0.2, -0.6], [-0.2, -0.1, -0.3, 0.0, -0.4], [-0.6, -0.5, -0.7, -0.4, -0.8],
+];
+const VALORES = MESES.flat();
+const GRUPOS = MESES.flatMap((m, i) => m.map(() => `2022-${String(i + 1).padStart(2, "0")}`));
+
+test("agrupado por mes: los mismos valores que el pipeline y más ancho que el independiente", () => {
+  const [lo, hi] = intervaloTMediaAgrupado(VALORES, GRUPOS)!;
+  assert.ok(Math.abs(lo - -0.5802092580570604) < 1e-9 && Math.abs(hi - 1.946875924723727) < 1e-9);
+  const [loW, hiW] = intervaloWilsonAgrupado(VALORES.map((v) => v > 0), GRUPOS)!;
+  assert.ok(Math.abs(loW - 0.1255247014972204) < 1e-9 && Math.abs(hiW - 0.8744752985027796) < 1e-9);
+  const [loI, hiI] = intervaloTMedia(VALORES)!;
+  assert.ok(loI > 0 && hi - lo > 2 * (hiI - loI));
+  assert.equal(distingueDeCero([lo, hi]), false);
+});
+
+test("agrupado: un mes por operación es el de siempre; todas en un mes, sin intervalo", () => {
+  const unoPorMes = MUESTRA_REF.map((_, i) => `${2024 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`);
+  const [lo, hi] = intervaloTMediaAgrupado(MUESTRA_REF, unoPorMes)!;
+  assert.ok(Math.abs(lo - -0.0019938518) < 1e-5 && Math.abs(hi - 0.9619938518) < 1e-5);
+  assert.equal(intervaloTMediaAgrupado(MUESTRA_REF, MUESTRA_REF.map(() => "2024-01")), null);
+  assert.equal(intervaloWilsonAgrupado(MUESTRA_REF.map((v) => v > 0), MUESTRA_REF.map(() => "2024-01")), null);
+  assert.equal(fechaDeEntrada("2024-03-15", "2024-04-02"), "2024-03-15");
+  assert.equal(fechaDeEntrada("", "2024-04-02"), "2024-04-02");
+  assert.equal(fechaDeEntrada(null, null), null);
+});
+
+test("t de Student con pocos grados de libertad (tabla)", () => {
+  assert.ok(Math.abs(tStudent975(1) - 12.7062047362) < 1e-9);
+  assert.ok(Math.abs(tStudent975(5) - 2.5705818356) < 1e-9);
+  assert.ok(Math.abs(tStudent975(30) - 2.0422724563) < 1e-9);
+});
+
+// Revisión adversarial de la Tanda 14: los mismos casos que el pipeline.
+test("agrupado: con historia larga, por trimestre (mismos valores que el pipeline)", () => {
+  const fechas: string[] = [];
+  const valores: number[] = [];
+  for (let m = 0; m < 36; m++) {
+    for (let j = 0; j < 3; j++) {
+      fechas.push(`${2021 + Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}-10`);
+      valores.push(((((m * 7 + j * 3) % 11) - 5) / 4));
+    }
+  }
+  const { grupos, unidad } = agruparPorFecha(fechas);
+  assert.equal(unidad, "trimestre");
+  assert.equal(new Set(grupos).size, 12);
+  const [lo, hi] = intervaloTMediaAgrupado(valores, grupos)!;
+  assert.ok(Math.abs(lo - -0.16582176751870523) < 1e-9 && Math.abs(hi - 0.17045139714833488) < 1e-9);
+  const [loW, hiW] = intervaloWilsonAgrupado(valores.map((v) => v > 0), grupos)!;
+  assert.ok(Math.abs(loW - 0.3612282993115125) < 1e-9 && Math.abs(hiW - 0.5678775795777516) < 1e-9);
+  assert.equal(agruparPorFecha(fechas.slice(0, 3 * 18)).unidad, "mes");
+});
+
+test("agrupado: concentradas en pocos meses, sin intervalo", () => {
+  const grupos = [...Array(3).fill("2026-01"), ...Array(40).fill("2026-02"), ...Array(8).fill("2026-03")];
+  const valores = grupos.map((_, i) => 0.3 + 0.01 * i);
+  assert.equal(intervaloTMediaAgrupado(valores, grupos), null);
+  assert.equal(intervaloWilsonAgrupado(valores.map((v) => v > 0), grupos), null);
 });
