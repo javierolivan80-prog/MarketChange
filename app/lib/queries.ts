@@ -23,6 +23,13 @@ const NO_ES_OOS = "report_json->>'sample' IS DISTINCT FROM 'oos'";
  * descartes de la semana y no cuentan en el resumen de abstenciones. */
 const ANALIZADO_POR_LA_COLA = "ea.model_version_bull_bear <> 'SIN_IA_ANTES_DEL_CORTE'";
 
+// Filing sin hora de aceptación (BUGS_REPORT.md H-17): la misma condición que
+// pipeline/ingest/hora_publicacion.py (HORA_DESCONOCIDA_SQL); un test del
+// pipeline (test_fronteras.py) comprueba que no se separen. Su filed_at es la
+// medianoche del día del índice, no una hora real.
+export const HORA_DESCONOCIDA_SQL =
+  "(((e.filed_at AT TIME ZONE 'America/New_York')::time = TIME '00:00') OR (e.created_at < TIMESTAMPTZ '2026-09-26 00:00+00' AND (e.filed_at AT TIME ZONE 'UTC')::time = TIME '00:00'))";
+
 export type StrategyVersion = "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE";
 
 export interface PortfolioTradeMetrics {
@@ -185,6 +192,10 @@ export interface PortfolioReport {
   starting_capital: number;
   sample?: SampleSplit;
   oos_warning?: string;
+  /** Análisis con la regla sin IA del método vigente (BUGS_REPORT.md H-06):
+   * si quedan pendientes (al cambiar de método se recalcula por tandas, sin
+   * la IA), el backtest es parcial. Ausente en informes antiguos. */
+  cobertura_regla?: { analisis: number; con_regla: number; pendientes: number };
   versions: Record<StrategyVersion, PortfolioVersionReport>;
   bias_report: PortfolioBiasReport;
   recommendation: PortfolioRecommendation;
@@ -620,6 +631,8 @@ function toNum(v: unknown): number | null {
 export interface SignalDetailData extends SignalFeedRow {
   source_url: string;
   filed_at: string;
+  /** filed_at es el respaldo sin hora (H-17): solo vale la fecha. */
+  filed_at_hora_desconocida: boolean;
   analyzed_at: string;
   model_version_bull_bear: string;
   model_version_judge: string;
@@ -779,7 +792,8 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
   const { rows } = await pool.query(
     `${signalSelect(
       version,
-      `, e.source_url, e.filed_at, ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
+      `, e.source_url, e.filed_at, ${HORA_DESCONOCIDA_SQL} AS filed_at_hora_desconocida,
+         ea.analyzed_at, ea.model_version_bull_bear, ea.model_version_judge,
          ea.novelty_reasoning, ea.bull_analyst_output AS bull_output, ea.bear_analyst_output AS bear_output,
          ea.judge_output, ea.impact_estimation, ea.n_historical_analogues, ea.ev_calculation, ea.abstention_decision,
          ea.decision_sin_ia, u.company_name, ta.direction AS tech_direction, ta.entry_price, ta.stop_price, ta.target_price, ta.target2_price,
@@ -795,6 +809,7 @@ export async function getSignalDetail(eventId: number, version: StrategyVersion 
     ...mapFeedRow(r, version),
     source_url: r.source_url,
     filed_at: toIso(r.filed_at),
+    filed_at_hora_desconocida: r.filed_at_hora_desconocida === true,
     analyzed_at: toIso(r.analyzed_at),
     model_version_bull_bear: r.model_version_bull_bear,
     model_version_judge: r.model_version_judge,

@@ -29,6 +29,7 @@ from pipeline.backtest.portfolio_simulator import (
     TICKER_COBERTURA,
     VELA_MARCADA_EN_LA_OPERACION_SQL,
     VERSIONS,
+    fetch_events_for_version,
     simulate_portfolio,
 )
 from pipeline.backtest.portfolio_validation import compute_temporal_stability_report, validate_no_lookahead
@@ -48,7 +49,6 @@ from pipeline.backtest.sample_split import (
     registrar_oos,
     tag_suffix,
 )
-from pipeline.ingest.hora_publicacion import HORA_DESCONOCIDA_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -271,25 +271,13 @@ def excluidos_por_calidad(conn, sample: str | None) -> int:
 
 
 def excluidos_por_hora_desconocida(conn, sample: str | None) -> int:
-    """Eventos de la muestra que la regla sin IA operaría (en Equilibrada) y
-    que el backtest excluye porque el filing no tiene hora de publicación
-    (H-17, hora_publicacion.py)."""
-    start, end = date_bounds(sample)
-    with conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT count(*) AS n
-            FROM events e
-            JOIN event_analyses ea ON ea.event_id = e.event_id
-            WHERE ea.decision_sin_ia->'regla_historica'->'decisiones'->'BALANCED'->>'trade_decision' != 'NO_TRADE'
-              AND ea.decision_sin_ia->>'metodo' = %(metodo)s
-              AND {HORA_DESCONOCIDA_SQL}
-              AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
-              AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
-            """,
-            {"start": start, "end": end, "metodo": METODO_SIN_IA},
-        )
-        return cur.fetchone()["n"]
+    """Operaciones que el backtest de Equilibrada pierde porque el filing no
+    tiene hora de publicación (H-17, hora_publicacion.py): la misma selección
+    de fetch_events_for_version (filtros y una por empresa y día), con y sin
+    ese filtro."""
+    con = fetch_events_for_version(conn, "BALANCED", sample=sample, con_hora_desconocida=True)
+    sin = fetch_events_for_version(conn, "BALANCED", sample=sample)
+    return len(con) - len(sin)
 
 
 def _store_report(conn, run_batch_tag: str, report: dict) -> None:

@@ -93,8 +93,10 @@ def festivos_del_anio(anio: int) -> set[date]:
     festivos.add(_domingo_de_pascua(anio) - timedelta(days=2))  # Viernes Santo
     festivos.add(_enesimo_dia_de_semana(anio, 5, 0, -1))   # Memorial: último lunes de mayo
 
-    # Juneteenth es festivo federal (y de la bolsa) solo desde 2021.
-    if anio >= 2021:
+    # Juneteenth: festivo federal desde junio de 2021, pero la bolsa cerró por
+    # primera vez en 2022 (el viernes 18-6-2021 hubo sesión normal; revisión
+    # adversarial de la Tanda 13).
+    if anio >= 2022:
         festivos.add(_observado(date(anio, 6, 19)))
 
     festivos.add(_observado(date(anio, 7, 4)))             # Independencia

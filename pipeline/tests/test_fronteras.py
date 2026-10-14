@@ -71,6 +71,13 @@ def test_dias_sin_cierre_anticipado(d):
     assert not cierre_anticipado(d)
 
 
+def test_juneteenth_cierra_la_bolsa_desde_2022():
+    from pipeline.ingest.market_calendar import dias_de_negociacion, festivos_del_anio
+
+    assert date(2021, 6, 18) in dias_de_negociacion(date(2021, 6, 18), date(2021, 6, 18))
+    assert date(2022, 6, 20) in festivos_del_anio(2022)
+
+
 def test_un_dia_normal_cierra_a_las_16():
     from pipeline.ingest.market_calendar import hora_de_cierre
 
@@ -119,6 +126,17 @@ def test_hora_desconocida_solo_la_medianoche_exacta_de_nueva_york():
     # Medianoche UTC son las 19:00/20:00 del día anterior en Nueva York.
     assert not hora_desconocida(datetime(2024, 3, 14, 0, 0, tzinfo=UTC))
     assert not hora_desconocida(None)
+
+
+def test_la_app_usa_la_misma_condicion_de_hora_desconocida():
+    """La ficha de la app enseña solo la fecha cuando no hay hora (H-17):
+    su SQL tiene que ser exactamente el del pipeline."""
+    from pathlib import Path
+
+    from pipeline.ingest.hora_publicacion import HORA_DESCONOCIDA_SQL
+
+    queries = (Path(__file__).resolve().parents[2] / "app" / "lib" / "queries.ts").read_text()
+    assert f'"{HORA_DESCONOCIDA_SQL}"' in queries
 
 
 def test_la_ia_sabe_que_la_hora_es_desconocida():
@@ -298,3 +316,30 @@ def test_la_cola_de_la_ia_no_coge_un_d0_dudoso_pero_si_uno_ya_corregido(conn):
     ids = {r["event_id"] for r in fetch_events_needing_analysis(conn)}
     assert dudoso not in ids
     assert {corregido, con_hora} <= ids
+
+
+@db
+def test_filas_anteriores_a_la_hora_de_aceptacion_cuentan_como_sin_hora(conn):
+    """Revisión adversarial de la Tanda 13: hasta el 25-9-2026 (2c8e969)
+    scrape_day no leía la hora de aceptación y guardaba la medianoche SIN
+    zona; en una base en UTC queda a las 00:00 UTC (19:00/20:00 del día
+    anterior en Nueva York), así que «medianoche de Nueva York» no las veía.
+    Su D0 es el día del índice. Las de después (y los fixtures de los tests,
+    creados hoy) a esa hora son reales."""
+    from pipeline.analyze.event_analysis_pipeline import fetch_events_needing_analysis
+    from pipeline.analyze.historical_analogues import get_historical_analogues
+
+    medianoche_utc = datetime(2024, 3, 14, 0, 0, tzinfo=UTC)
+    antiguo = _evento(conn, "1", "ANTIGUO", date(2024, 3, 14), medianoche_utc, car=0.40)
+    _evento(conn, "2", "RECIENTE", date(2024, 3, 14), medianoche_utc, car=0.05)
+    pendiente = _evento(conn, "3", "COLA", date(2026, 9, 14), datetime(2026, 9, 14, 0, 0, tzinfo=UTC), analizado=False)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE events SET created_at = TIMESTAMPTZ '2026-09-20 06:00+00' WHERE event_id = ANY(%s)",
+            ([antiguo, pendiente],),
+        )
+    conn.commit()
+
+    analogos = get_historical_analogues(conn, "8K_2.02_EARNINGS", date(2025, 1, 1), -1, window_days=20)
+    assert [float(a["car"]) for a in analogos] == [pytest.approx(0.05)]
+    assert pendiente not in {r["event_id"] for r in fetch_events_needing_analysis(conn)}

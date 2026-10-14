@@ -19,7 +19,17 @@ logger = logging.getLogger(__name__)
 
 
 def get_connection() -> psycopg.Connection:
-    return psycopg.connect(config.DATABASE_URL, row_factory=dict_row, autocommit=False)
+    """Conexión con la sesión en UTC (revisión adversarial de la Tanda 13).
+    Producción y la CI ya están en UTC, pero no dependía de nosotros: con
+    otra zona, un `filed_at` guardado como fecha quedaba a otra hora, y la
+    regla de «hora desconocida» (hora_publicacion.py) o CURRENT_DATE en el
+    tope de gasto cambiaban según el servidor. Se fija con SET y un commit
+    (y no con `options` en la URL, que pisaría las de la URL del proveedor)."""
+    conn = psycopg.connect(config.DATABASE_URL, row_factory=dict_row, autocommit=False)
+    with conn.cursor() as cur:
+        cur.execute("SET TIME ZONE 'UTC'")
+    conn.commit()
+    return conn
 
 
 def init_schema(conn: psycopg.Connection) -> None:

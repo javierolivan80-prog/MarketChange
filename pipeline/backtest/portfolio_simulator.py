@@ -88,7 +88,7 @@ from pipeline.backtest.portfolio_strategies import (
     compute_ev_weighted_position_size_pct,
     compute_position_size_pct,
 )
-from pipeline.backtest.sample_split import date_bounds
+from pipeline.backtest.sample_split import OOS_START, SAMPLE_IN_SAMPLE, date_bounds
 from pipeline.ingest.hora_publicacion import HORA_CONOCIDA_SQL
 from pipeline.ingest.splits import PRECIO_NEGOCIADO_SQL
 
@@ -303,14 +303,16 @@ class SerieCobertura:
         return self.cierre_hasta(d, desde)
 
 
-def cargar_serie_cobertura(conn) -> SerieCobertura:
+def cargar_serie_cobertura(conn, antes_de: date | None = None) -> SerieCobertura:
     """Velas de SPY sin las marcadas por calidad_precios.py (decisión del
-    usuario: marcar y excluir): una vela dudosa cuenta como día sin vela."""
+    usuario: marcar y excluir): una vela dudosa cuenta como día sin vela.
+    Con `antes_de`, solo las anteriores a esa fecha (In-Sample, H-37)."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT trade_date, open_raw, close_raw FROM prices "
-            "WHERE ticker = %s AND calidad_motivo IS NULL ORDER BY trade_date",
-            (TICKER_COBERTURA,),
+            "WHERE ticker = %s AND calidad_motivo IS NULL AND (%s::date IS NULL OR trade_date < %s) "
+            "ORDER BY trade_date",
+            (TICKER_COBERTURA, antes_de, antes_de),
         )
         return SerieCobertura({r["trade_date"]: r for r in cur.fetchall()})
 
@@ -698,7 +700,9 @@ VELA_MARCADA_EN_LA_OPERACION_SQL = f"""
 """
 
 
-def fetch_events_for_version(conn, version: str, sample: str | None = None) -> list[dict]:
+def fetch_events_for_version(
+    conn, version: str, sample: str | None = None, *, con_hora_desconocida: bool = False
+) -> list[dict]:
     """Eventos con trade_decision != NO_TRADE para `version`. Trae SIEMPRE
     los 3 ev_* (no solo el de la versión) porque BALANCED y DYNAMIC necesitan
     ev_conservative Y ev_aggressive para decidir el estilo de ejecución
@@ -752,24 +756,28 @@ def fetch_events_for_version(conn, version: str, sample: str | None = None) -> l
                   AND NOT EXISTS ({VELA_MARCADA_EN_LA_OPERACION_SQL})
                   AND {PRECIO_D0_MINIMO_SQL}
                   -- Sin hora de publicación, D0 es dudoso (H-17, hora_publicacion.py).
-                  AND {HORA_CONOCIDA_SQL}
+                  -- con_hora_desconocida=True solo sirve para contar cuántas se pierden.
+                  AND ({HORA_CONOCIDA_SQL} OR %(con_hora_desconocida)s)
                   AND (%(start)s::date IS NULL OR e.d0_close_date >= %(start)s)
                   AND (%(end)s::date IS NULL OR e.d0_close_date <= %(end)s)
                 ORDER BY e.ticker, e.d0_close_date, abs(rh.{ev_col}) DESC, e.event_id
             ) unicos
             ORDER BY d0_close_date, abs({ev_col}) DESC, event_id
             """,
-            {"start": start, "end": end, "estrategia": estrategia, "metodo": METODO_SIN_IA},
+            {"start": start, "end": end, "estrategia": estrategia, "metodo": METODO_SIN_IA,
+             "con_hora_desconocida": con_hora_desconocida},
         )
         return cur.fetchall()
 
 
-def _load_ticker_prices(conn, ticker: str) -> dict[date, dict]:
+def _load_ticker_prices(conn, ticker: str, antes_de: date | None = None) -> dict[date, dict]:
+    """Velas del ticker; con `antes_de`, solo las anteriores a esa fecha (el
+    In-Sample no ve precios del OOS, H-37)."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT trade_date, open_raw, high_raw, low_raw, close_raw, volume, survivorship_warning "
-            "FROM prices WHERE ticker = %s ORDER BY trade_date",
-            (ticker,),
+            "FROM prices WHERE ticker = %s AND (%s::date IS NULL OR trade_date < %s) ORDER BY trade_date",
+            (ticker, antes_de, antes_de),
         )
         return {r["trade_date"]: r for r in cur.fetchall()}
 
@@ -1078,7 +1086,19 @@ def simulate_portfolio(
         logger.warning("Sin eventos con trade_decision para %s — nada que simular", version)
         return {"version": version, "n_trades": 0, "n_equity_days": 0}
 
+    # En el In-Sample, los precios se cortan antes del OOS (H-37, revisión de
+    # la Tanda 13): el embargo cuenta sesiones de la bolsa, pero el holding
+    # cuenta las del propio ticker, y con una vela de menos la operación del
+    # último D0 se cerraba con precio del OOS. Además, sin el corte la curva
+    # de capital seguía hasta el último precio de la base (años de días sin
+    # operaciones que hundían la rentabilidad anual y el Sharpe). Lo que siga
+    # abierto se cierra en la última vela del In-Sample (cierre forzado).
+    antes_de = OOS_START if sample == SAMPLE_IN_SAMPLE else None
     ticker_cache: dict[str, dict[date, dict]] = {}
+    if antes_de is not None:
+        for e in events:
+            if e["ticker"] not in ticker_cache:
+                ticker_cache[e["ticker"]] = _load_ticker_prices(conn, e["ticker"], antes_de=antes_de)
     entry_plan = _build_entry_plan(conn, version, events, ticker_cache)
     if not entry_plan:
         logger.warning("Ningún evento de %s tiene un plan de entrada válido", version)
@@ -1086,7 +1106,7 @@ def simulate_portfolio(
 
     # Pata de cobertura (docstring del módulo): SPY se carga aparte, no entra
     # en ticker_cache ni en el calendario maestro.
-    spy = cargar_serie_cobertura(conn)
+    spy = cargar_serie_cobertura(conn, antes_de=antes_de)
     n_sin_cobertura = 0
 
     # Memoria de tesis: calendario de TODOS los eventos nuevos por ticker (no

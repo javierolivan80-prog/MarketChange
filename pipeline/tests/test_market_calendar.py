@@ -138,12 +138,15 @@ def test_festivo_en_sabado_se_observa_el_viernes():
     assert date(2026, 7, 4) not in festivos
 
 
-def test_juneteenth_no_existe_antes_de_2021():
-    """Se hizo festivo federal en 2021. El histórico del proyecto empieza en
-    2021-01-01, pero tratarlo como festivo hacia atrás marcaría como cerrado
-    un día en que la bolsa abrió."""
+def test_juneteenth_cierra_la_bolsa_desde_2022():
+    """Se hizo festivo federal el 17-6-2021, pero la NYSE no cerró ese año: el
+    viernes 18-6-2021 hubo sesión normal (este test decía lo contrario hasta
+    la revisión adversarial de la Tanda 13). La bolsa cerró por primera vez
+    el lunes 20-6-2022 (el 19 cayó domingo). Tratarlo como festivo antes
+    marcaría como cerrado un día en que la bolsa abrió."""
     assert date(2020, 6, 19) not in festivos_del_anio(2020)
-    assert date(2021, 6, 18) in festivos_del_anio(2021)  # el 19 cayó sábado
+    assert date(2021, 6, 18) not in festivos_del_anio(2021)
+    assert date(2022, 6, 20) in festivos_del_anio(2022)
 
 
 def test_cierre_extraordinario_por_duelo_nacional():

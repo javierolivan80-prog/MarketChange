@@ -182,14 +182,18 @@ def analysis_queue_summary(conn, min_market_cap: float | None = None) -> dict:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT count(*) AS pendientes,
+            SELECT count(*) FILTER (WHERE NOT """ + D0_DUDOSO_SQL + """) AS pendientes,
+                   -- Sin hora y con D0 = el día del índice (H-17): no van a la IA
+                   -- nunca; se cuentan aparte para que no parezcan pendientes.
+                   count(*) FILTER (WHERE """ + D0_DUDOSO_SQL + """) AS d0_dudoso,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS en_objetivo,
                    count(*) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s
                                     AND (e.source <> 'EDGAR' OR e.filing_text IS NOT NULL)
                                     AND NOT """ + D0_DUDOSO_SQL + """
                                     AND """ + _D0_BAR_EXISTS + """
                                     AND %(inicio_ia)s::date IS NOT NULL AND e.d0_close_date >= %(inicio_ia)s) AS listos,
-                   count(*) FILTER (WHERE %(inicio_ia)s::date IS NULL OR e.d0_close_date < %(inicio_ia)s) AS antes_del_corte,
+                   count(*) FILTER (WHERE (%(inicio_ia)s::date IS NULL OR e.d0_close_date < %(inicio_ia)s)
+                                    AND NOT """ + D0_DUDOSO_SQL + """) AS antes_del_corte,
                    count(DISTINCT e.cik) FILTER (WHERE u.in_investable_universe AND u.market_cap_last_usd >= %(min_cap)s) AS empresas
             FROM events e
             JOIN universe u ON u.cik = e.cik
