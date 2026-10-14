@@ -220,6 +220,12 @@ Fecha: 2026-10-04 · Rama analizada: `claude/great-allen-nv7mdd` (= `claude/audi
       - El contador de excluidos no usaba la selección del backtest (una por empresa y día, filtros de precio y calidad).
       - La ficha de la app enseñaba la medianoche del respaldo como hora real: ahora solo la fecha y «hora desconocida» (misma condición SQL que el pipeline, con un test que lo comprueba).
     - Comprobado: 1130/1130 tests del pipeline (37 nuevos, en rojo antes del cambio), también con el servidor en otra zona horaria; 55/55 de la app; ruff, tsc y eslint limpios.
+  - Tanda 14 «Intervalos honestos» (2026-10-14; decisiones delegadas, opción recomendada). La limitación que declaró la Tanda 11 («los intervalos tratan las operaciones como independientes»):
+    - **El problema, medido:** las operaciones abiertas a la vez se mueven juntas (el mismo mercado, la misma temporada de resultados). En una simulación con media real 0 en la que parte de la varianza es común al mes, el intervalo independiente decía «se distingue de cero» en falso el 11-26 % de las veces (frente al 5 % nominal), y el del acierto cubría el valor real solo el 79-93 %.
+    - **El arreglo:** los dos intervalos se agrupan por mes de entrada, como el event study. Resultado medio: error agrupado (CR1), nunca menor que el independiente, con una t de G-1 grados de libertad (G = meses). Acierto: Wilson sobre el n efectivo (n entre el efecto de diseño) con ese mismo cuantil. En la misma simulación: 4-6 % de falsos «distinto de cero» y 92-99 % de cobertura del acierto. Sin correlación es algo más prudente que antes (1-4 %), sobre todo con pocos meses: es el precio de no suponer independencia.
+    - Con todas las operaciones en un mismo mes no hay intervalo (no se puede medir cuánto se parecen); Cartera e Historial lo explican.
+    - El mismo método en el pipeline (`portfolio_metrics.py`) y en la app (`incertidumbre.ts`, con la t exacta hasta 30 grados de libertad); un test comprueba que dan los mismos números.
+    - Comprobado: 1133/1133 tests del pipeline (una simulación entre ellos: el independiente se equivoca más del 15 % de las veces, el agrupado menos del 8 %), 58/58 de la app; ruff, tsc y eslint limpios.
 - **Pendientes de aprobación:** el resto.
 - **H-16** (ventana en días naturales frente a sesiones) se deja aparte a propósito. Cambiar la definición obliga a recalcular todos los CAR, y los de empresas no operadas ya no tienen precios guardados (ops_prune): habría que volver a descargarlos por tandas.
 
