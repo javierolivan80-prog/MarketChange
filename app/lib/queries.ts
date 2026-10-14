@@ -9,7 +9,7 @@
 // paper_trading/report.py (Sharpe/Sortino/Calmar, calibración, submétricas
 // por tipo de evento, etc.) — reimplementar esas fórmulas aquí sería
 // mantener dos fuentes de verdad para el mismo número.
-import { intervaloTMedia, intervaloWilson } from "./incertidumbre";
+import { intervaloTMediaAgrupado, intervaloWilsonAgrupado, mesDeEntrada } from "./incertidumbre";
 import { getPool } from "./db";
 import { splitAiOutputs } from "./aiOutputs";
 
@@ -1155,8 +1155,15 @@ export async function getSignalHistory(version: StrategyVersion, limit = 200): P
     n_open: mapped.filter((r) => r.status === "OPEN").length,
     win_rate: medibles.length > 0 ? medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length / medibles.length : null,
     avg_pnl_pct: medibles.length > 0 ? medibles.reduce((s, r) => s + (r.pnl_pct ?? 0), 0) / medibles.length : null,
-    win_rate_ic95: intervaloWilson(medibles.filter((r) => (r.pnl_pct ?? 0) > 0).length, medibles.length),
-    avg_pnl_ic95: intervaloTMedia(medibles.map((r) => r.pnl_pct ?? 0)),
+    // Agrupadas por mes de entrada (Tanda 14), como en el pipeline.
+    win_rate_ic95: intervaloWilsonAgrupado(
+      medibles.map((r) => (r.pnl_pct ?? 0) > 0),
+      medibles.map((r) => mesDeEntrada(r.entry_date, r.exit_date)),
+    ),
+    avg_pnl_ic95: intervaloTMediaAgrupado(
+      medibles.map((r) => r.pnl_pct ?? 0),
+      medibles.map((r) => mesDeEntrada(r.entry_date, r.exit_date)),
+    ),
     n_closed_cubiertas: medibles.length,
     n_closed_sin_cubrir: closed.length - medibles.length,
   };

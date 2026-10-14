@@ -105,6 +105,16 @@ export default async function HistorialPage() {
           )}
         </p>
       )}
+      {/* Tanda 14: los intervalos agrupan por mes de entrada; con todas en el
+          mismo mes no se puede medir cuánto se parecen. */}
+      {history.n_closed_cubiertas >= 20 && !history.avg_pnl_ic95 && (
+        <p className="mb-4 text-xs text-amber-700 dark:text-amber-400">
+          {t(
+            "Todas las señales cerradas entraron el mismo mes: todavía no se puede saber cuánto dependen del azar el acierto y el resultado medio.",
+            "All closed signals were entered in the same month: it cannot yet be told how much the win rate and average result depend on chance.",
+          )}
+        </p>
+      )}
 
       <div className="tarjeta overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-left text-sm">

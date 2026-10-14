@@ -253,8 +253,9 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal(h.win_rate, 1);
     assert.equal(h.avg_pnl_pct, 3.5);
     assert.equal(h.n_closed_sin_cubrir, 0);
-    // Tanda 11: con una sola cerrada hay intervalo del acierto (Wilson), no de la media.
-    assert.ok(h.win_rate_ic95 && h.win_rate_ic95[0] < 1 && h.win_rate_ic95[1] === 1);
+    // Tanda 14: los intervalos agrupan por mes de entrada; con una sola
+    // cerrada (un solo mes) no hay intervalo ni del acierto ni de la media.
+    assert.equal(h.win_rate_ic95, null);
     assert.equal(h.avg_pnl_ic95, null);
   });
 
@@ -278,9 +279,9 @@ describe("consultas del panel contra Postgres", { skip: !TEST_URL && "TEST_DATAB
     assert.equal(h.n_closed, 2);
     assert.equal(h.n_closed_sin_cubrir, 1);
     assert.equal(h.n_closed_cubiertas, 1);
-    // Tanda 11: el intervalo es de las cubiertas (0 de 1 ganadoras), no de las dos cerradas.
-    assert.equal(h.win_rate_ic95![0], 0);
-    assert.ok(h.win_rate_ic95![1] < 1);
+    // Tanda 11: las cifras son de las cubiertas (0 de 1 ganadoras), no de las
+    // dos cerradas; con una sola cubierta (un mes) no hay intervalo (Tanda 14).
+    assert.equal(h.win_rate_ic95, null);
     assert.equal(h.win_rate, 0);
     assert.equal(h.avg_pnl_pct, -1);
     assert.equal(h.rows.find((r) => r.ticker === "OLD")?.cubierta, false);

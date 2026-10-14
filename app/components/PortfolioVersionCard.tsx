@@ -85,14 +85,23 @@ export function PortfolioVersionCard({
             {tm.avg_pnl_distinguible_de_cero === false &&
               t(": no se distingue de cero", ": not distinguishable from zero")}
           </>
+        ) : tm.total_trades > 0 && tm.total_trades < MIN_OPERACIONES ? (
+          <>
+            {" · "}
+            {t(
+              `con menos de ${MIN_OPERACIONES} operaciones no se puede saber si el resultado medio es distinto de cero`,
+              `with fewer than ${MIN_OPERACIONES} trades it cannot be told whether the average result differs from zero`,
+            )}
+          </>
         ) : (
-          tm.win_rate_ic95 &&
-          tm.total_trades < MIN_OPERACIONES && (
+          tm.total_trades >= MIN_OPERACIONES && (
+            // Tanda 14: los intervalos agrupan por mes; con todas en el mismo
+            // mes no se puede medir cuánto se parecen.
             <>
               {" · "}
               {t(
-                `con menos de ${MIN_OPERACIONES} operaciones no se puede saber si el resultado medio es distinto de cero`,
-                `with fewer than ${MIN_OPERACIONES} trades it cannot be told whether the average result differs from zero`,
+                "todas en el mismo mes: no se puede saber cuánto dependen del azar",
+                "all in the same month: it cannot be told how much they depend on chance",
               )}
             </>
           )

@@ -560,8 +560,10 @@ def test_metricas_de_trade_con_incertidumbre():
     """El veredicto «se distingue de cero» sale del intervalo: la muestra de
     referencia lo roza (incluye el 0); desplazada +0,01, ya no. Con menos de
     20 operaciones no hay intervalo ni veredicto."""
+    # Una operación por mes (Tanda 14): sin operaciones que compartan mes, el
+    # intervalo agrupado del resultado medio es exactamente el de siempre.
     def _metricas(valores):
-        return compute_trade_metrics([{"pnl_pct": p, "exit_date": date(2024, 1, 1) + timedelta(days=i)} for i, p in enumerate(valores)])
+        return compute_trade_metrics([{"pnl_pct": p, "exit_date": date(2024 + i // 12, 1 + i % 12, 15)} for i, p in enumerate(valores)])
 
     roza = _metricas(MUESTRA_REF)
     assert roza["expectancy"] == pytest.approx(0.48)
@@ -570,11 +572,83 @@ def test_metricas_de_trade_con_incertidumbre():
     assert _metricas([v + 0.01 for v in MUESTRA_REF])["avg_pnl_distinguible_de_cero"] is True
     # Acierto: 13 de 20 ganadoras (las que dan > 0).
     assert roza["win_rate"] == pytest.approx(13 / 20)
+    # Wilson con el cuantil t de G-1 = 19 grados de libertad (Tanda 14), algo
+    # más ancho que con el normal: [0,43286, 0,81880] antes. Valores calculados
+    # aparte con la fórmula de Wilson y scipy.stats.t.ppf(0,975, 19).
     lo, hi = roza["win_rate_ic95"]
-    assert lo == pytest.approx(0.43286, abs=1e-5) and hi == pytest.approx(0.81880, abs=1e-5)
+    assert lo == pytest.approx(0.419078, abs=1e-5) and hi == pytest.approx(0.827018, abs=1e-5)
 
     pocas = _metricas([0.01, 5.0])
     assert pocas["avg_pnl_ic95"] is None and pocas["avg_pnl_distinguible_de_cero"] is None
 
     vacio = compute_trade_metrics([])
     assert vacio["win_rate_ic95"] is None and vacio["avg_pnl_ic95"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tanda 14: operaciones que comparten mes
+# ---------------------------------------------------------------------------
+# Las operaciones abiertas a la vez se mueven juntas (mismo mercado, misma
+# temporada de resultados): tratarlas como independientes da un intervalo
+# demasiado estrecho. Se agrupan por mes de entrada (como el event study):
+# resultado medio con error agrupado (CR1, nunca menor que el independiente)
+# y t de G-1 grados de libertad; acierto con Wilson sobre el n efectivo (n
+# entre el efecto de diseño) y el mismo cuantil.
+
+
+def _ops(pnls_por_mes: list[list[float]]) -> list[dict]:
+    out = []
+    for m, pnls in enumerate(pnls_por_mes):
+        for j, p in enumerate(pnls):
+            out.append({"pnl_pct": p, "entry_date": date(2022 + m // 12, 1 + m % 12, 1 + j), "exit_date": date(2022 + m // 12, 1 + m % 12, 2 + j)})
+    return out
+
+
+def test_operaciones_del_mismo_mes_ensanchan_el_intervalo():
+    from pipeline.backtest.portfolio_metrics import intervalo_t_media
+
+    # Seis meses: tres buenos y tres malos, cada uno con cinco operaciones
+    # casi iguales. Como independientes, 30 operaciones «se distinguen de
+    # cero»; en realidad son seis observaciones.
+    meses = [[2.0, 2.1, 1.9, 2.2, 1.8], [1.5, 1.6, 1.4, 1.7, 1.3], [1.8, 1.9, 1.7, 2.0, 1.6],
+             [-0.4, -0.3, -0.5, -0.2, -0.6], [-0.2, -0.1, -0.3, 0.0, -0.4], [-0.6, -0.5, -0.7, -0.4, -0.8]]
+    pnls = [p for mes in meses for p in mes]
+    lo_i, hi_i = intervalo_t_media(pnls)
+    assert lo_i > 0  # independiente: «se distingue de cero»
+    m = compute_trade_metrics(_ops(meses))
+    lo, hi = m["avg_pnl_ic95"]
+    assert (hi - lo) > 2 * (hi_i - lo_i)
+    assert m["avg_pnl_distinguible_de_cero"] is False
+    lo_w, hi_w = m["win_rate_ic95"]
+    from pipeline.backtest.portfolio_metrics import intervalo_wilson
+
+    lo_wi, hi_wi = intervalo_wilson(15, 30)
+    assert (hi_w - lo_w) > (hi_wi - lo_wi)
+
+
+def test_todas_en_el_mismo_mes_no_hay_intervalo():
+    """Con un solo mes no se puede medir cuánto se parecen las operaciones."""
+    m = compute_trade_metrics(_ops([[0.5 + 0.1 * i for i in range(25)]]))
+    assert m["avg_pnl_ic95"] is None and m["win_rate_ic95"] is None
+    assert m["avg_pnl_distinguible_de_cero"] is None
+
+
+def test_agrupado_mantiene_el_5_por_ciento_con_operaciones_correlacionadas():
+    """Simulación (media real 0; la mitad de la varianza es común al mes): el
+    intervalo independiente se equivoca bastante más del 5 %; el agrupado no."""
+    import numpy as np
+
+    from pipeline.backtest.portfolio_metrics import intervalo_t_media, intervalo_t_media_agrupado
+
+    rng = np.random.default_rng(14)
+    falsos_iid = falsos_agr = 0
+    reps = 600
+    for _ in range(reps):
+        grupos = np.repeat(np.arange(24), 4)
+        x = rng.normal(0, np.sqrt(0.5), 24)[grupos] + rng.normal(0, np.sqrt(0.5), len(grupos))
+        lo, hi = intervalo_t_media(list(x))
+        falsos_iid += lo > 0 or hi < 0
+        lo, hi = intervalo_t_media_agrupado(list(x), list(grupos))
+        falsos_agr += lo > 0 or hi < 0
+    assert falsos_iid / reps > 0.15
+    assert falsos_agr / reps < 0.08
